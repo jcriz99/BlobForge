@@ -25,7 +25,16 @@ Do not restart the project from an archived design. Continue from the working ve
 - `BlobForge/artifacts/`: diagnostic screenshots and other temporary visual verification output.
 - `BlobForge.slnx`: currently contains the BlobForge project. Pixel Forge Studio is built separately.
 
-This workspace may not have Git history. Treat all existing files and unrelated edits as user-owned. Do not delete, reset, or broadly rewrite work to obtain a clean state.
+This workspace is a Git repository with private remote `https://github.com/jcriz99/BlobForge` and `main` as its primary branch. Treat all existing files and unrelated edits as user-owned. Do not delete, reset, or broadly rewrite work to obtain a clean state.
+
+## Version control and disaster recovery
+
+- Git tracks the game/editor source, runtime art, editable `.pixelforge.json` projects, documentation, and project configuration.
+- `.gitignore` intentionally excludes `bin/`, `obj/`, `.publish/`, diagnostic artifacts, logs, and generated Pixel Forge exports. Do not casually force-add those changing outputs to normal source history.
+- `BlobForge/bin/CurrentBuild/` is nevertheless an important local deliverable. A source commit can rebuild the project, but it is not a substitute for preserving the exact known-good executable.
+- At meaningful playable milestones, zip the complete `CurrentBuild` folder and attach it to a **private GitHub Release** whose tag points at the matching source commit. This is the downloadable disaster-recovery/playable snapshot.
+- Do not delete redundant builds or other only-known-good output until the corresponding source commit is pushed and, when an exact executable matters, the release archive has been uploaded and verified. Keep `CurrentBuild` locally instead of accumulating many ad-hoc build directories.
+- Never commit or print GitHub credentials, tokens, local secrets, or user-specific authentication files.
 
 ## Project purpose
 
@@ -34,6 +43,22 @@ BlobForge is a 2D physical sandbox/factory game about handling living, destructi
 The core experience is that blobs have understandable weight, softness, cohesion, damage, and momentum. The player can grab, throw, crush, drill, tumble, vacuum, cut, and convey them. Machinery should act on the actual simulated body. Damage changes real material and can produce separated soft pieces, tissue, and blood rather than playing canned visual effects.
 
 The current executable is a focused Matter Lab/factory vertical slice built on a custom C#/.NET 8 soft-body engine. WinForms/GDI+ is the current working platform and test harness. SDL3/GPU material-field rendering is a future production direction, not an automatic rewrite task.
+
+Historic Unity chats are useful evidence of the intended feel, not implementation authority. The custom engine superseded the Unity implementation. Do not restore old Unity scripts, solver layering, or scene architecture merely because an archived conversation mentions them.
+
+## Blob feel and damage contract
+
+These requirements recur throughout the project history and are more important than preserving a particular solver technique:
+
+- Blobs should be soft, heavy, cohesive, and able to compress dramatically, including close to flat, while retaining area/matter continuity. They must not respond to pressure by teleporting, exploding, wrapping completely around an obstacle, tunneling through it, or becoming rigid.
+- Visual contour, contact points, collision, and material occupancy must agree at all times. No invisible protruding contacts, stale collision at an old wound position, oscillating alternate silhouettes, dangling orphan points, or lines extending beyond the body.
+- All blobs of an archetype should spawn with the same organic silhouette and physical feel; spawned copies must not silently become generic polygons or use a cheaper feel without an intentional representation transition.
+- Clicking anywhere on a pickable blob should produce a stable center/whole-body grab rather than stretching one edge particle. The grab should track strongly without desynchronizing, preserve believable throwing momentum and recoil, and remain constrained by walls and other matter even if the cursor moves outside the room.
+- Blob-on-blob support should come from deformation, friction, mass, and a lower blob forming a cradle. Do not fake stacking with glue/sticky constraints, and do not make piles weightless. Blobs may mush deeply against each other but may not permanently intertwine or occupy the same material space.
+- Damage is local. A tool or cursor damages only material it actually touches; unaffected perimeter regions should not globally dent or reshape without a physical reason.
+- A single right-click/gouge and a held right-drag slice are distinct gestures. A slice previews along the traversed body path and commits when it exits another edge or when the button is released; a click removes a localized chunk. Preserve these semantics unless the user explicitly redesigns the controls.
+- Removed/detached matter should match the actual excised silhouette, remain visible, collide as a real deformable piece, and then shed/dissipate progressively into pixels after impact when appropriate. Do not replace it with a generic circle, delete it instantly, or stagger its disappearance as an obvious canned sequence.
+- Wounds emit blood according to location and severity, then taper naturally. Blood and tissue must not remain trapped inside intact blob matter, and damage must not manufacture or silently erase large amounts of matter.
 
 ## Current factory loop
 
@@ -48,12 +73,17 @@ The current executable is a focused Matter Lab/factory vertical slice built on a
 - Bay 4 is a hand-operated vacuum nozzle and hose. The hose connects to the rear of the nozzle; hose bulges use the hose color. Completion releases the blob promptly and must not leave an indefinite blood drain or a blocked queue.
 - Bay 5 is a one-pass laser/filter interaction. One completed right-to-left pass processes a blob and resets promptly; the same blob must not require repeated passes.
 - Later bays make extracted blood count progressively more toward the basin.
+- Processing should leave a visible remnant of the blob/tissue to reach the output cart rather than annihilating every blob before the end by default.
+- Every bay has a readable status light: green when available and red when busy, blocked, or locked. Prefer these in-world signals over explanatory labels floating above machinery.
 - Loose blood/tissue travels through visible machine drains into the glass basin. Suspended drops can float briefly and dissolve into the conserved cellular fluid rather than disappearing on contact.
 - The basin contains its blood: no stains should appear beneath it. Interior glass, walls, submerged pipe portions, and pipe-mouth edges may become wet or stained in physically plausible ways.
-- Basin bubbles begin only around 35% fill. Diego is currently disabled/dormant.
+- Basin bubbles begin only around 35% fill. Diego is currently disabled/dormant; preserve his art and code. If re-enabled, he is a basin inhabitant that may consume stored blood, walks in the correct direction, renders in front of the blood but behind the front glass, and must not destabilize the fluid.
 - At 100% basin capacity, machinery turns red and locks safely. It must never crash or overfill. The in-world blood-exchange/shop foundation can spend basin value and is intended to host later upgrades.
 - The final conveyor transfers blobs and loose matter into a physically containing output cart. The cart and doorway can receive blood stains without matter clipping through the cart walls.
 - Pause Settings currently contains fullscreen, debug, gravity, and persistent Master/SFX/Music volume sliders. Existing game and machinery cues use the SFX bus; the reserved future music channel uses the Music bus. Per-asset sound-file selection does not belong in the in-game Settings screen.
+- New major machinery/gameplay components should expose an authoring/configuration cue path and per-cue gain routed through the SFX bus. Player Settings should expose bus volumes, not development-time file pickers.
+- The blood-exchange/shop UI is part of the physical factory wall. It may cover only background negative space, must conform to the receiving-tub underside and adjacent architecture, must not overlap gameplay fixtures, and should close gaps rather than creating a floating overlay.
+- User-created conveyors and hanging lanterns are authoring fixtures. Preserve conveyor move/resize/speed/reverse/delete behavior and lantern placement/cable-length/delete behavior when changing layout or input routing.
 
 ## Product and visual goals
 
@@ -65,6 +95,15 @@ The current executable is a focused Matter Lab/factory vertical slice built on a
 - Prefer physics-driven motion where it materially improves understanding. Scripted staging is acceptable for a mechanical carrier or door, but do not pin a blob to canned positions once it is inside a physical container.
 - Preserve matter and fluid continuity unless an explicit gameplay rule consumes it.
 - The basin is Noita-inspired, not a mandate to reproduce Noita exactly. Favor conserved, contained, natural-looking cellular liquid with rough/sloshing surfaces over sand piles, vertical columns, sawtooth equalization, or unconstrained per-pixel cost.
+
+## Blood and stain contract
+
+- Blood stains the exact surface region it touches, not an entire terrain tile or machinery component because one pixel made contact.
+- Stains are persistent because a future cleaning mechanic is planned. They may dry, darken, and lose wet shine, but must not automatically disappear. Fresh blood should be able to widen an old path or find a neighboring path instead of merely replaying one identical streak.
+- Splashes, streaks, and 2.5D drips need natural variation in width, length, branching, and occasional falling droplets. Dense wet areas may travel across multiple adjacent tiles/surfaces under gravity; avoid uniform straight one-tile lines.
+- Stains must remain attached to real visible surfaces, layer in front of the face they coat, and never float in empty space. Left/right walls, conveyors, machinery, the doorway, and other stainable surfaces should behave consistently.
+- Moving surfaces such as conveyor loops should carry blood around their actual path. Containers such as the basin and output cart must prevent exterior floor stains or side clipping unless matter physically spills over an opening.
+- Preserve the current staining system carefully. Visual cleanup must not erase persistence, wall dripping, surface-local placement, or bounded performance.
 
 ## Mandatory art workflow: Pixel Forge MCP
 
@@ -94,6 +133,7 @@ If the editor lacks a capability required for the requested asset, extend `Pixel
 - Logical world: fixed 1280×720 with correct letterboxing and pointer mapping.
 - Performance is gameplay-critical. Machinery activation must not collapse the frame rate.
 - The station render benchmark has a hard 13.5 ms average-frame regression ceiling. Treat a regression near or above this as a release blocker.
+- Long term, the game should support tens to hundreds of blobs/objects through sleeping, spatial partitioning, representation tiers, pile-specific simulation, and bounded contact work. This does **not** mean hundreds of full-quality awake soft bodies at once. Important, grabbed, exposed, or actively processed blobs keep premium physics; distant/buried/resting matter may use cheaper but still physical representations.
 - Avoid allocations, image resampling, topology rebuilds, full-screen blends, file I/O, or media-player state churn in per-frame/fixed-update paths.
 - Static factory/machinery structure should remain cached. Dynamic matter and moving machine parts should be bounded and layered deliberately.
 - Physics, rendered contours, and collision should derive from authoritative material state rather than independent approximations that can visibly disagree.
@@ -122,6 +162,7 @@ If the editor lacks a capability required for the requested asset, extend `Pixel
 - Use the `pixel_forge` MCP tools for all required pixel-art creation and editing.
 - Use local image inspection for diagnostic screenshots and exported sprites. Check full-resolution pixel edges and important crops.
 - Use Windows computer control when a WinForms interaction must be reproduced and verified in the actual app, especially menus, sliders, focus, fullscreen, and mouse gestures.
+- Before taking interactive control of the user's PC, give a clear pre-control confirmation/notice so the user does not press keys or fight the mouse. Do not send Escape or otherwise interrupt the running game before that notice. When control is released, give a simple, clear completion signal. Prefer headless diagnostics when they can prove the same behavior.
 - Use the browser UI at `http://127.0.0.1:4876` for human inspection of Pixel Forge projects when helpful; MCP remains the required automation/editing path.
 - Use web research only when the request calls for it or a technical claim needs current primary documentation. External inspiration does not override this project's measured behavior or art pipeline.
 
@@ -152,6 +193,8 @@ Publish the build the user should launch:
 dotnet publish .\BlobForge\BlobForge.csproj -c Release -o .\BlobForge\bin\CurrentBuild
 .\BlobForge\bin\CurrentBuild\BlobForge.exe --window-smoke-test
 ```
+
+For a milestone/disaster-recovery release, archive the entire verified folder (executable, runtime files, and `Assets/`) and attach it to a private GitHub Release whose tag targets the matching commit. Verify the release is private and the archive is downloadable before deleting older known-good builds.
 
 Pixel Forge Studio:
 
