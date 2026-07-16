@@ -1,0 +1,54 @@
+.project-controls {
+  min-width: 0;
+}
+
+.project-controls input,
+.project-controls select {
+  background: #1d2332;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+
+.project-controls input {
+  width: 150px;
+  min-width: 105px;
+}
+
+.project-controls #projectSelect {
+  width: min(320px, 28vw);
+  min-width: 180px;
+}
+
+.project-controls #projectCategory {
+  width: 112px;
+  min-width: 105px;
+}
+
+.project-controls optgroup {
+  background: #121722;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.project-controls option {
+  color: var(--text);
+  font-weight: 400;
+}
+
+dialog select {
+  background: #0f131d;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+@media (max-width: 1180px) {
+  .project-controls input {
+    width: 112px;
+  }
+
+  .project-controls #projectSelect {
+    width: 220px;
+  }
+}

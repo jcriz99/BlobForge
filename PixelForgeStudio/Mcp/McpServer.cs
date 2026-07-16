@@ -1,0 +1,217 @@
+using System.Text.Json;
+using PixelForgeStudio.Core;
+
+namespace PixelForgeStudio.Mcp;
+
+public sealed class McpServer(ProjectStore store)
+{
+    private readonly Exporter _exporter = new(store);
+    private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { PropertyNameCaseInsensitive = true };
+
+    public async Task Run()
+    {
+        Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+        string? line;
+        while ((line = await Console.In.ReadLineAsync()) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement; var method = root.GetProperty("method").GetString() ?? "";
+                if (!root.TryGetProperty("id", out var id)) continue;
+                var result = await Dispatch(method, root.TryGetProperty("params", out var ps) ? ps : default);
+                Write(new { jsonrpc = "2.0", id = JsonSerializer.Deserialize<object>(id.GetRawText()), result });
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    using var failed = JsonDocument.Parse(line);
+                    var id = failed.RootElement.TryGetProperty("id", out var i) ? JsonSerializer.Deserialize<object>(i.GetRawText()) : null;
+                    Write(new { jsonrpc = "2.0", id, error = new { code = -32603, message = ex.Message } });
+                }
+                catch { Console.Error.WriteLine(ex); }
+            }
+        }
+    }
+
+    private async Task<object> Dispatch(string method, JsonElement ps) => method switch
+    {
+        "initialize" => new
+        {
+            protocolVersion = ps.ValueKind == JsonValueKind.Object && ps.TryGetProperty("protocolVersion", out var pv) ? pv.GetString() : "2025-06-18",
+            capabilities = new { tools = new { listChanged = false }, resources = new { subscribe = false, listChanged = true } },
+            serverInfo = new { name = "pixel-forge-studio", version = "1.0.0" },
+            instructions = "Create and edit indexed-color pixel art projects, preview frames, and export PNG sprites or engine packs. Coordinates are zero-based from the top-left."
+        },
+        "ping" => new { },
+        "tools/list" => new { tools = ToolDefinitions() },
+        "tools/call" => await CallTool(ps.GetProperty("name").GetString()!, ps.TryGetProperty("arguments", out var a) ? a : Empty()),
+        "resources/list" => new { resources = store.List().Select(p => ResourceFor(p)).ToArray() },
+        "resources/read" => await ReadResource(ps.GetProperty("uri").GetString()!),
+        _ => throw new InvalidOperationException($"Unsupported MCP method '{method}'.")
+    };
+
+    private static JsonElement Empty() => JsonDocument.Parse("{}").RootElement.Clone();
+    private static object ResourceFor(object item)
+    {
+        var el = JsonSerializer.SerializeToElement(item);
+        var name = (el.TryGetProperty("name", out var lower) ? lower : el.GetProperty("Name")).GetString()!;
+        return new { uri = $"pixelforge://projects/{name}", name, mimeType = "application/json", description = $"Pixel Forge project {name}" };
+    }
+
+    private async Task<object> ReadResource(string uri)
+    {
+        const string prefix = "pixelforge://projects/";
+        if (!uri.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Unknown resource URI.");
+        var p = await store.Load(Uri.UnescapeDataString(uri[prefix.Length..]));
+        return new { contents = new[] { new { uri, mimeType = "application/json", text = JsonSerializer.Serialize(p, _json) } } };
+    }
+
+    private async Task<object> CallTool(string name, JsonElement a)
+    {
+        object payload;
+        switch (name)
+        {
+            case "project_list": payload = store.List(); break;
+            case "project_create":
+                payload = await store.Create(Str(a, "name"), Int(a, "width"), Int(a, "height"), Int(a, "frames", 1),
+                    a.TryGetProperty("palette", out var pal) ? pal.EnumerateArray().Select(x => x.GetString()!) : null,
+                    Bool(a, "overwrite"), a.TryGetProperty("category", out var category) ? category.GetString() : null); break;
+            case "project_get":
+            {
+                var p = await store.Load(Str(a, "name")); var frame = Int(a, "frame", 0);
+                payload = Bool(a, "includePixels") ? p : new { p.Name, p.Category, p.Width, p.Height, p.Palette, Layers = p.Layers.Select((l, i) => new { index = i, l.Id, l.Name, l.Visible, l.Opacity }), p.FrameDurationsMs, p.Tags, p.Revision, p.UpdatedAt, ascii = ProjectOps.Ascii(p, frame) };
+                break;
+            }
+            case "project_delete": payload = new { deleted = store.Delete(Str(a, "name")) }; break;
+            case "project_preview":
+            {
+                var p = await store.Load(Str(a, "name")); var frame = Int(a, "frame", 0); var png = PngCodec.RenderFrame(p, frame, Int(a, "scale", 8));
+                return new { content = new object[] { TextContent($"{p.Name}, frame {frame}, {p.Width}x{p.Height}, revision {p.Revision}"), new { type = "image", data = Convert.ToBase64String(png), mimeType = "image/png" } } };
+            }
+            case "palette_add":
+            {
+                var p = await store.Load(Str(a, "name")); var index = ProjectOps.Color(p, Str(a, "color")); await store.Save(p); payload = new { index, color = p.Palette[index], p.Revision }; break;
+            }
+            case "palette_set":
+            {
+                var p = await store.Load(Str(a, "name")); var index = Int(a, "index"); if (index < 0 || index >= p.Palette.Count) throw new ArgumentOutOfRangeException("index");
+                p.Palette[index] = ColorUtil.NormalizeHex(Str(a, "color")); await store.Save(p); payload = new { index, color = p.Palette[index], p.Revision }; break;
+            }
+            case "layer_add":
+            {
+                var p = await store.Load(Str(a, "name")); var l = PixelLayer.Create(Str(a, "layerName", "Layer"), p.FrameCount, p.Width * p.Height);
+                var index = Math.Clamp(Int(a, "index", p.Layers.Count), 0, p.Layers.Count); p.Layers.Insert(index, l); await store.Save(p); payload = new { index, l.Id, l.Name, p.Revision }; break;
+            }
+            case "layer_update":
+            {
+                var p = await store.Load(Str(a, "name")); var l = ProjectOps.Layer(p, Str(a, "layer", ""));
+                if (a.TryGetProperty("newName", out var nn)) l.Name = nn.GetString()?.Trim() ?? l.Name;
+                if (a.TryGetProperty("visible", out var v)) l.Visible = v.GetBoolean();
+                if (a.TryGetProperty("opacity", out var o)) l.Opacity = Math.Clamp(o.GetDouble(), 0, 1);
+                await store.Save(p); payload = new { l.Id, l.Name, l.Visible, l.Opacity, p.Revision }; break;
+            }
+            case "layer_delete":
+            {
+                var p = await store.Load(Str(a, "name")); if (p.Layers.Count == 1) throw new InvalidOperationException("Cannot delete the final layer.");
+                var l = ProjectOps.Layer(p, Str(a, "layer", "")); p.Layers.Remove(l); await store.Save(p); payload = new { deleted = l.Name, p.Revision }; break;
+            }
+            case "frame_add":
+            {
+                var p = await store.Load(Str(a, "name")); if (p.FrameCount >= 256) throw new InvalidOperationException("Frame limit reached.");
+                var copy = Int(a, "copyFrom", -1); var index = Math.Clamp(Int(a, "index", p.FrameCount), 0, p.FrameCount);
+                p.FrameDurationsMs.Insert(index, Int(a, "durationMs", 100));
+                foreach (var l in p.Layers) l.Frames.Insert(index, copy >= 0 && copy < p.FrameCount - 1 ? (int[])l.Frames[copy].Clone() : Enumerable.Repeat(-1, p.Width * p.Height).ToArray());
+                await store.Save(p); payload = new { index, frames = p.FrameCount, p.Revision }; break;
+            }
+            case "frame_delete":
+            {
+                var p = await store.Load(Str(a, "name")); if (p.FrameCount == 1) throw new InvalidOperationException("Cannot delete the final frame."); var frame = Int(a, "frame");
+                p.FrameDurationsMs.RemoveAt(frame); foreach (var l in p.Layers) l.Frames.RemoveAt(frame); await store.Save(p); payload = new { frames = p.FrameCount, p.Revision }; break;
+            }
+            case "frame_duration":
+            {
+                var p = await store.Load(Str(a, "name")); var frame = Int(a, "frame"); p.FrameDurationsMs[frame] = Math.Clamp(Int(a, "durationMs"), 16, 60000); await store.Save(p); payload = new { frame, durationMs = p.FrameDurationsMs[frame], p.Revision }; break;
+            }
+            case "pixels_set":
+            {
+                var p = await store.Load(Str(a, "name")); var l = ProjectOps.Layer(p, Str(a, "layer", "")); var frame = Int(a, "frame", 0); var count = 0;
+                foreach (var point in a.GetProperty("pixels").EnumerateArray())
+                {
+                    var color = ProjectOps.Color(p, point.TryGetProperty("color", out var c) ? c.GetString() : (a.TryGetProperty("color", out var gc) ? gc.GetString() : null),
+                        point.TryGetProperty("paletteIndex", out var pi) ? pi.GetInt32() : (a.TryGetProperty("paletteIndex", out var gpi) ? gpi.GetInt32() : null), true);
+                    ProjectOps.SetPixel(p, l, frame, point.GetProperty("x").GetInt32(), point.GetProperty("y").GetInt32(), color); count++;
+                }
+                await store.Save(p); payload = new { changed = count, p.Revision }; break;
+            }
+            case "draw_line": case "draw_rect": case "draw_ellipse": case "flood_fill":
+            {
+                var p = await store.Load(Str(a, "name")); var l = ProjectOps.Layer(p, Str(a, "layer", "")); var frame = Int(a, "frame", 0);
+                var color = ProjectOps.Color(p, a.TryGetProperty("color", out var c) ? c.GetString() : null, a.TryGetProperty("paletteIndex", out var pi) ? pi.GetInt32() : null, true);
+                if (name == "draw_line") ProjectOps.Line(p, l, frame, Int(a, "x1"), Int(a, "y1"), Int(a, "x2"), Int(a, "y2"), color);
+                if (name == "draw_rect") ProjectOps.Rect(p, l, frame, Int(a, "x"), Int(a, "y"), Int(a, "width"), Int(a, "height"), color, Bool(a, "filled"));
+                if (name == "draw_ellipse") ProjectOps.Ellipse(p, l, frame, Int(a, "cx"), Int(a, "cy"), Int(a, "rx"), Int(a, "ry"), color, Bool(a, "filled"));
+                var filled = name == "flood_fill" ? ProjectOps.Fill(p, l, frame, Int(a, "x"), Int(a, "y"), color) : 0;
+                await store.Save(p); payload = new { changed = name == "flood_fill" ? filled : -1, p.Revision }; break;
+            }
+            case "canvas_clear":
+            {
+                var p = await store.Load(Str(a, "name")); var l = ProjectOps.Layer(p, Str(a, "layer", "")); var frame = Int(a, "frame", 0);
+                Array.Fill(l.Frames[frame], -1); await store.Save(p); payload = new { cleared = true, p.Revision }; break;
+            }
+            case "transform":
+            {
+                var p = await store.Load(Str(a, "name")); var l = ProjectOps.Layer(p, Str(a, "layer", "")); ProjectOps.Transform(p, l, Int(a, "frame", 0), Str(a, "operation"), Int(a, "amount", 1));
+                await store.Save(p); payload = new { transformed = true, p.Revision }; break;
+            }
+            case "export_asset":
+            {
+                var p = await store.Load(Str(a, "name")); var result = await _exporter.Export(p, Str(a, "format", "png"), Int(a, "scale", 1), Int(a, "frame", 0));
+                payload = new { result.FileName, path = Path.Combine(store.ExportRoot, p.Name, result.FileName), bytes = result.Data.Length, result.ContentType }; break;
+            }
+            default: throw new InvalidOperationException($"Unknown tool '{name}'.");
+        }
+        return new { content = new[] { TextContent(JsonSerializer.Serialize(payload, _json)) }, structuredContent = payload };
+    }
+
+    private static object TextContent(string text) => new { type = "text", text };
+    private static string Str(JsonElement a, string name, string? fallback = null) => a.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null ? v.GetString()! : fallback ?? throw new InvalidDataException($"Missing '{name}'.");
+    private static int Int(JsonElement a, string name, int fallback = int.MinValue) => a.TryGetProperty(name, out var v) ? v.GetInt32() : fallback != int.MinValue ? fallback : throw new InvalidDataException($"Missing '{name}'.");
+    private static bool Bool(JsonElement a, string name, bool fallback = false) => a.TryGetProperty(name, out var v) ? v.GetBoolean() : fallback;
+
+    private static object[] ToolDefinitions()
+    {
+        static object T(string name, string description, object properties, string[]? required = null) => new { name, description, inputSchema = new { type = "object", properties, required = required ?? [] } };
+        var project = new { name = new { type = "string", description = "Project name" } };
+        var target = new { name = project.name, layer = new { type = "string", description = "Layer name, ID, or zero-based index; defaults to top layer" }, frame = new { type = "integer", minimum = 0, description = "Zero-based frame" } };
+        var color = new { color = new { type = "string", description = "#RRGGBB or transparent" }, paletteIndex = new { type = "integer", minimum = -1, description = "Palette index; -1 is transparent" } };
+        return
+        [
+            T("project_list", "List all local pixel-art projects.", new { }),
+            T("project_create", "Create a new indexed-color project.", new { name = project.name, category = new { type="string", @enum=ProjectCategory.All, @default=ProjectCategory.MiscArt }, width = new { type="integer", minimum=1, maximum=512 }, height = new { type="integer", minimum=1, maximum=512 }, frames = new { type="integer", minimum=1, maximum=256, @default=1 }, palette = new { type="array", items=new { type="string" } }, overwrite = new { type="boolean", @default=false } }, ["name","width","height"]),
+            T("project_get", "Read project metadata and an ASCII composite; optionally include all indexed pixels.", new { name=project.name, frame=target.frame, includePixels=new { type="boolean", @default=false } }, ["name"]),
+            T("project_preview", "Return a rendered PNG preview directly to the MCP client.", new { name=project.name, frame=target.frame, scale=new { type="integer", minimum=1, maximum=64, @default=8 } }, ["name"]),
+            T("project_delete", "Permanently delete a pixel-art project.", project, ["name"]),
+            T("palette_add", "Add a color if needed and return its palette index.", new { name=project.name, color=color.color }, ["name","color"]),
+            T("palette_set", "Replace a palette color, updating every pixel that uses that index.", new { name=project.name, index=new { type="integer", minimum=0 }, color=color.color }, ["name","index","color"]),
+            T("layer_add", "Add a transparent layer.", new { name=project.name, layerName=new { type="string" }, index=new { type="integer", minimum=0 } }, ["name"]),
+            T("layer_update", "Rename a layer or change visibility/opacity.", new { name=project.name, layer=target.layer, newName=new { type="string" }, visible=new { type="boolean" }, opacity=new { type="number", minimum=0, maximum=1 } }, ["name","layer"]),
+            T("layer_delete", "Delete a layer.", new { name=project.name, layer=target.layer }, ["name","layer"]),
+            T("frame_add", "Insert a blank frame or duplicate an existing one.", new { name=project.name, index=new { type="integer", minimum=0 }, copyFrom=new { type="integer", minimum=-1 }, durationMs=new { type="integer", minimum=16, @default=100 } }, ["name"]),
+            T("frame_delete", "Delete an animation frame.", new { name=project.name, frame=target.frame }, ["name","frame"]),
+            T("frame_duration", "Set animation frame duration in milliseconds.", new { name=project.name, frame=target.frame, durationMs=new { type="integer", minimum=16, maximum=60000 } }, ["name","frame","durationMs"]),
+            T("pixels_set", "Set many individual pixels in one atomic edit. Each point may override the shared color.", new { name=project.name, layer=target.layer, frame=target.frame, color=color.color, paletteIndex=color.paletteIndex, pixels=new { type="array", minItems=1, items=new { type="object", properties=new { x=new { type="integer" }, y=new { type="integer" }, color=color.color, paletteIndex=color.paletteIndex }, required=new[]{"x","y"} } } }, ["name","pixels"]),
+            T("draw_line", "Draw a one-pixel Bresenham line.", new { name=project.name, layer=target.layer, frame=target.frame, x1=new {type="integer"}, y1=new {type="integer"}, x2=new {type="integer"}, y2=new {type="integer"}, color=color.color, paletteIndex=color.paletteIndex }, ["name","x1","y1","x2","y2"]),
+            T("draw_rect", "Draw an outline or filled pixel rectangle.", new { name=project.name, layer=target.layer, frame=target.frame, x=new {type="integer"}, y=new {type="integer"}, width=new {type="integer",minimum=1}, height=new {type="integer",minimum=1}, filled=new {type="boolean",@default=false}, color=color.color, paletteIndex=color.paletteIndex }, ["name","x","y","width","height"]),
+            T("draw_ellipse", "Draw an outline or filled pixel ellipse.", new { name=project.name, layer=target.layer, frame=target.frame, cx=new {type="integer"}, cy=new {type="integer"}, rx=new {type="integer",minimum=0}, ry=new {type="integer",minimum=0}, filled=new {type="boolean",@default=false}, color=color.color, paletteIndex=color.paletteIndex }, ["name","cx","cy","rx","ry"]),
+            T("flood_fill", "Flood-fill a contiguous area on one layer.", new { name=project.name, layer=target.layer, frame=target.frame, x=new {type="integer"}, y=new {type="integer"}, color=color.color, paletteIndex=color.paletteIndex }, ["name","x","y"]),
+            T("canvas_clear", "Clear one layer frame to transparency.", new { name=project.name, layer=target.layer, frame=target.frame }, ["name"]),
+            T("transform", "Flip or wrap-shift one layer frame.", new { name=project.name, layer=target.layer, frame=target.frame, operation=new {type="string", @enum=new[]{"flip-horizontal","flip-vertical","shift-x","shift-y"}}, amount=new {type="integer",@default=1} }, ["name","operation"]),
+            T("export_asset", "Export frame PNG, spritesheet PNG, JSON, or a Godot/Unity/MonoGame engine pack ZIP.", new { name=project.name, format=new {type="string",@enum=new[]{"png","spritesheet","pack","json"}}, scale=new {type="integer",minimum=1,maximum=64,@default=1}, frame=target.frame }, ["name","format"])
+        ];
+    }
+
+    private static void Write(object value) => Console.WriteLine(JsonSerializer.Serialize(value));
+}

@@ -1,0 +1,27 @@
+# .NET build and publish output
+**/bin/
+**/obj/
+**/.publish/
+**/artifacts/
+
+# Pixel Forge generated exports (editable .pixelforge.json sources remain tracked)
+PixelForgeStudio/PixelForgeData/exports/
+
+# Local IDE and user state
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Runtime logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+

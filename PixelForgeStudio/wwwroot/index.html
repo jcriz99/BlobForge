@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pixel Forge Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="project-browser.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">PF</span><div><strong>Pixel Forge</strong><small>AI-native sprite studio</small></div></div>
+    <div class="project-controls">
+      <input id="projectSearch" type="search" placeholder="Search projects…" aria-label="Search projects" autocomplete="off">
+      <select id="projectSelect" aria-label="Project grouped by category"></select>
+      <select id="projectCategory" aria-label="Category" title="Move the open project to another section">
+        <option>Tilesets</option><option>Objects</option><option>Misc Art</option>
+      </select>
+      <button id="newProject" class="button">New</button>
+      <button id="saveProject" class="button accent">Save <kbd>Ctrl S</kbd></button>
+    </div>
+    <div id="mcpStatus" class="mcp-status"><span></span> MCP workspace linked</div>
+  </header>
+
+  <main class="workspace">
+    <aside class="tool-rail panel" aria-label="Drawing tools">
+      <button class="tool active" data-tool="pencil" title="Pencil (P)">✎<small>Pencil</small></button>
+      <button class="tool" data-tool="eraser" title="Eraser (E)">◇<small>Eraser</small></button>
+      <button class="tool" data-tool="fill" title="Fill (F)">▰<small>Fill</small></button>
+      <button class="tool" data-tool="picker" title="Picker (I)">⌾<small>Picker</small></button>
+      <button class="tool" data-tool="line" title="Line (L)">╱<small>Line</small></button>
+      <button class="tool" data-tool="rect" title="Rectangle (R)">□<small>Rect</small></button>
+      <div class="rail-break"></div>
+      <button id="undo" class="tool" title="Undo (Ctrl+Z)">↶<small>Undo</small></button>
+      <button id="redo" class="tool" title="Redo (Ctrl+Y)">↷<small>Redo</small></button>
+      <button id="gridToggle" class="tool active" title="Toggle grid">#<small>Grid</small></button>
+    </aside>
+
+    <section class="stage-panel panel">
+      <div class="stage-toolbar">
+        <div><strong id="projectTitle">No project</strong><span id="dimensions"></span></div>
+        <div class="zoom-control"><button id="zoomOut">−</button><span id="zoomLabel">1200%</span><button id="zoomIn">+</button></div>
+      </div>
+      <div id="canvasWrap" class="canvas-wrap"><canvas id="canvas" width="32" height="32"></canvas><div id="cursorInfo">x 0 · y 0</div></div>
+      <div class="timeline">
+        <div class="timeline-head"><strong>Animation</strong><button id="play">▶</button><button id="addFrame">+ Frame</button><button id="deleteFrame">−</button><label><input id="onion" type="checkbox"> Onion</label></div>
+        <div id="frames" class="frames"></div>
+      </div>
+    </section>
+
+    <aside class="inspector">
+      <section class="panel inspector-section">
+        <div class="section-title"><strong>Palette</strong><span id="colorHex">#0b1020</span></div>
+        <div id="palette" class="palette"></div>
+        <div class="color-add"><input id="colorInput" type="color" value="#ffcc66"><button id="addColor">Add color</button></div>
+      </section>
+      <section class="panel inspector-section layers-section">
+        <div class="section-title"><strong>Layers</strong><div><button id="addLayer">+</button><button id="deleteLayer">−</button></div></div>
+        <div id="layers" class="layers"></div>
+      </section>
+      <section class="panel inspector-section export-section">
+        <div class="section-title"><strong>Export</strong><select id="exportScale"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></div>
+        <div class="export-grid"><button data-export="png">Frame PNG</button><button data-export="spritesheet">Sprite sheet</button><button data-export="pack" class="wide">Engine pack <small>Godot · Unity · MonoGame</small></button><button data-export="json" class="wide">Project JSON</button></div>
+      </section>
+    </aside>
+  </main>
+
+  <dialog id="newDialog">
+    <form id="newForm" method="dialog">
+      <div class="dialog-head"><span class="brand-mark">PF</span><div><h2>New pixel project</h2><p>Indexed color, animation-ready.</p></div></div>
+      <label>Name<input name="name" value="hero-sprite" required pattern="[A-Za-z0-9 _-]+"></label>
+      <label>Section<select name="category"><option>Objects</option><option>Tilesets</option><option>Misc Art</option></select></label>
+      <div class="field-row"><label>Width<input name="width" type="number" min="1" max="512" value="32" required></label><label>Height<input name="height" type="number" min="1" max="512" value="32" required></label><label>Frames<input name="frames" type="number" min="1" max="256" value="1" required></label></div>
+      <div class="dialog-actions"><button type="button" id="cancelNew">Cancel</button><button class="accent" value="create">Create project</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
