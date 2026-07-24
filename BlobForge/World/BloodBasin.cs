@@ -14,6 +14,9 @@ public sealed class BloodBasin
     private const int VisualSurfaceFilterRadius = 9;
     private const int MaximumInteriorStains = 20;
     private const int MaximumSuspendedDrops = 96;
+    private const int MaximumSurfaceSplashes = 64;
+    private const int MaximumSurfaceRipples = 18;
+    private const int MaximumFrontOverflowStains = 10;
     private static readonly int[] NaturalSurfaceOrder = BuildNaturalSurfaceOrder();
 
     private readonly bool[] _cells = new bool[FluidGridWidth * FluidGridHeight];
@@ -23,7 +26,11 @@ public sealed class BloodBasin
     private readonly float[] _heights = new float[ColumnCount];
     private readonly List<BasinInteriorStain> _interiorStains = new(MaximumInteriorStains);
     private readonly List<BasinSuspendedDrop> _suspendedDrops = new(MaximumSuspendedDrops);
+    private readonly List<BasinSurfaceSplash> _surfaceSplashes = new(MaximumSurfaceSplashes);
+    private readonly List<BasinSurfaceRipple> _surfaceRipples = new(MaximumSurfaceRipples);
     private readonly List<BasinPipeStain> _pipeStains = new(8);
+    private readonly List<BasinFrontOverflowStain> _frontOverflowStains =
+        new(MaximumFrontOverflowStains);
     private float _availableFood;
     private float _availableDrinkVolume;
     private float _simulationAccumulator;
@@ -40,6 +47,7 @@ public sealed class BloodBasin
     private float _sloshPhase;
     private float _sloshDirection = 1f;
     private int _inflowVisualSerial;
+    private int _overflowSideSerial;
 
     public BloodBasin(float left, float top, float width, float height)
     {
@@ -70,6 +78,7 @@ public sealed class BloodBasin
     public float CurrentFluidVolume { get; private set; }
     public float PendingFluidVolume { get; private set; }
     public float TotalSpent { get; private set; }
+    public float TotalOverflowed { get; private set; }
     public float FluidCapacity => Width * (Height - 12f);
     public float StoredVolume => Math.Clamp(CurrentFluidVolume + PendingFluidVolume, 0f, FluidCapacity);
     public float SpendableBlood => CurrentFluidVolume;
@@ -91,7 +100,11 @@ public sealed class BloodBasin
     public float SloshAmplitude => _sloshAmplitude;
     public IReadOnlyList<BasinInteriorStain> InteriorStains => _interiorStains;
     public IReadOnlyList<BasinSuspendedDrop> SuspendedDrops => _suspendedDrops;
+    public IReadOnlyList<BasinSurfaceSplash> SurfaceSplashes => _surfaceSplashes;
+    public IReadOnlyList<BasinSurfaceRipple> SurfaceRipples => _surfaceRipples;
     public IReadOnlyList<BasinPipeStain> PipeStains => _pipeStains;
+    public IReadOnlyList<BasinFrontOverflowStain> FrontOverflowStains =>
+        _frontOverflowStains;
 
     public bool ContainsHorizontal(float x) => x >= Left + 8f && x <= Right - 8f;
 
@@ -224,7 +237,27 @@ public sealed class BloodBasin
         });
         PendingFluidVolume += fluidVolume;
         TotalDeposited += fluidVolume;
+        RegisterSurfaceImpact(x, downwardSpeed, radius, fluidVolume);
         RegisterInflowVisual(x, downwardSpeed, fluidVolume);
+    }
+
+    /// <summary>
+    /// Records the displacement caused by matter striking a completely full
+    /// pool. The displaced amount is deliberately excluded from stored and
+    /// spendable blood; the original granular particle remains physical and is
+    /// emitted over a lip by ProcessingLine.
+    /// </summary>
+    public bool RegisterOverflowImpact(float x, float downwardSpeed, float radius, float displacedVolume)
+    {
+        displacedVolume = MathF.Max(0f, displacedVolume);
+        TotalOverflowed += displacedVolume;
+        RegisterSurfaceImpact(x, downwardSpeed, radius, displacedVolume);
+        RegisterInflowVisual(x, downwardSpeed, displacedVolume, stainPipe: false);
+        _overflowSideSerial++;
+        RegisterFrontOverflowStain(downwardSpeed, displacedVolume);
+        // Drain position must not bias the exterior spill. Strict alternation keeps
+        // long full-basin runs evenly distributed across both lips.
+        return (_overflowSideSerial & 1) != 0;
     }
 
     public bool TrySpend(float amount)
@@ -247,6 +280,7 @@ public sealed class BloodBasin
         if (_simulationAccumulator < 1f / 60f) return;
         _simulationAccumulator %= 1f / 60f;
         StepSuspendedDrops(1f / 60f);
+        StepSurfaceImpacts(1f / 60f);
         StepInteriorEffects(1f / 60f);
         if (!_fluidActive || _fluidCellCount == 0) return;
         StepFluidCells();
@@ -335,6 +369,75 @@ public sealed class BloodBasin
         _suspendedDrops.RemoveAt(index);
     }
 
+    private void RegisterSurfaceImpact(float x, float downwardSpeed, float radius, float fluidVolume)
+    {
+        if (CurrentFluidVolume < FluidCellVolume * 4f || downwardSpeed < 18f) return;
+        var surface = Math.Clamp(SurfaceYAt(x), FluidTop + 3f, FluidBottom - 2f);
+        var strength = Math.Clamp(
+            downwardSpeed / 150f + radius * 0.12f + fluidVolume / FluidCellVolume * 0.018f,
+            0.22f,
+            1.35f);
+        var count = Math.Clamp(2 + (int)(strength * 4.2f), 2, 8);
+        var serial = _inflowVisualSerial + 1;
+        for (var splash = 0; splash < count; splash++)
+        {
+            if (_surfaceSplashes.Count >= MaximumSurfaceSplashes)
+                _surfaceSplashes.RemoveAt(0);
+            var centered = count <= 1 ? 0f : splash / (float)(count - 1) * 2f - 1f;
+            var variation = (byte)(serial * 59 + splash * 83);
+            var jitter = ((variation & 7) - 3f) * 0.34f;
+            var velocityX = centered * (22f + strength * 34f) + jitter;
+            var upwardSpeed = (34f + strength * 66f) * (0.78f + ((variation >> 3) & 3) * 0.10f);
+            _surfaceSplashes.Add(new BasinSurfaceSplash
+            {
+                X = Math.Clamp(x + centered * (2f + radius * 0.45f), Left + 8f, Right - 8f),
+                Y = surface - 2f,
+                VelocityX = velocityX,
+                VelocityY = -upwardSpeed,
+                Radius = 1f + (variation & 1) * 0.65f + strength * 0.28f,
+                Age = 0f,
+                Lifetime = 0.28f + ((variation >> 5) & 3) * 0.055f,
+                Variation = variation
+            });
+        }
+
+        if (_surfaceRipples.Count >= MaximumSurfaceRipples) _surfaceRipples.RemoveAt(0);
+        _surfaceRipples.Add(new BasinSurfaceRipple
+        {
+            X = Math.Clamp(x, Left + 10f, Right - 10f),
+            Age = 0f,
+            Lifetime = 0.34f + MathF.Min(0.16f, strength * 0.08f),
+            Strength = strength,
+            Variation = (byte)(serial * 71)
+        });
+    }
+
+    private void StepSurfaceImpacts(float dt)
+    {
+        for (var i = _surfaceSplashes.Count - 1; i >= 0; i--)
+        {
+            var splash = _surfaceSplashes[i];
+            splash.Age += dt;
+            splash.VelocityY += 285f * dt;
+            splash.VelocityX *= MathF.Exp(-dt * 0.55f);
+            splash.X = Math.Clamp(splash.X + splash.VelocityX * dt, Left + 7f, Right - 7f);
+            splash.Y += splash.VelocityY * dt;
+            var returnedToSurface = splash.Age > 0.09f &&
+                                    splash.Y >= SurfaceYAt(splash.X) - splash.Radius * 0.15f;
+            if (splash.Age >= splash.Lifetime || returnedToSurface)
+                _surfaceSplashes.RemoveAt(i);
+            else
+                _surfaceSplashes[i] = splash;
+        }
+        for (var i = _surfaceRipples.Count - 1; i >= 0; i--)
+        {
+            var ripple = _surfaceRipples[i];
+            ripple.Age += dt;
+            if (ripple.Age >= ripple.Lifetime) _surfaceRipples.RemoveAt(i);
+            else _surfaceRipples[i] = ripple;
+        }
+    }
+
     private void StepCreature(float dt)
     {
         CreaturePhase = (CreaturePhase + dt * (1.2f + CreatureScale * 0.18f)) % (MathF.PI * 2f);
@@ -382,7 +485,7 @@ public sealed class BloodBasin
 
     }
 
-    private void RegisterInflowVisual(float x, float downwardSpeed, float fluidVolume)
+    private void RegisterInflowVisual(float x, float downwardSpeed, float fluidVolume, bool stainPipe = true)
     {
         _inflowVisualSerial++;
         var normalizedX = Math.Clamp((x - Left) / Width, 0f, 1f);
@@ -397,7 +500,7 @@ public sealed class BloodBasin
         _sloshDirection = normalizedX < 0.5f ? 1f : -1f;
         _sloshPhase += (normalizedX - 0.5f) * 0.42f;
         FluidVisualRevision++;
-        RegisterPipeStain(x, downwardSpeed, fluidVolume);
+        if (stainPipe) RegisterPipeStain(x, downwardSpeed, fluidVolume);
 
         var variation = (byte)((_inflowVisualSerial * 73 + (int)(normalizedX * 127f)) & 255);
         if (_inflowVisualSerial % 5 == 0 || downwardSpeed >= 110f)
@@ -460,6 +563,68 @@ public sealed class BloodBasin
             (byte)(_inflowVisualSerial * 47)));
     }
 
+    private void RegisterFrontOverflowStain(float downwardSpeed, float displacedVolume)
+    {
+        var hash = unchecked((uint)(_overflowSideSerial * 747796405 + 2891336453));
+        hash ^= hash >> 16;
+        var variation = (byte)(hash >> 24);
+        var width = 2.5f + ((hash >> 8) & 7) * 0.65f;
+        var length = Math.Clamp(
+            17f + downwardSpeed * 0.045f +
+            displacedVolume / MathF.Max(FluidCellVolume, 0.001f) * 2.25f,
+            20f,
+            64f);
+        var maximumLength = MathF.Max(Height + 190f, 760f - Top);
+        if (_frontOverflowStains.Count < MaximumFrontOverflowStains)
+        {
+            var span = MathF.Max(24f, Width - 96f);
+            var x = Left + 48f + (hash & 0xFFFF) / 65535f * span;
+            var nearestIndex = -1;
+            var nearestDistance = float.MaxValue;
+            for (var attempt = 0; attempt < 7; attempt++)
+            {
+                nearestIndex = -1;
+                nearestDistance = float.MaxValue;
+                for (var index = 0; index < _frontOverflowStains.Count; index++)
+                {
+                    var distance = MathF.Abs(_frontOverflowStains[index].X - x);
+                    if (distance >= nearestDistance) continue;
+                    nearestDistance = distance;
+                    nearestIndex = index;
+                }
+                if (nearestDistance >= 19f) break;
+                hash = unchecked(hash * 1664525u + 1013904223u);
+                x = Left + 48f + (hash & 0xFFFF) / 65535f * span;
+            }
+            if (nearestIndex < 0 || nearestDistance >= 14f)
+            {
+                _frontOverflowStains.Add(new BasinFrontOverflowStain(
+                    x, width, length, 1f, variation));
+                return;
+            }
+        }
+        var selected = (int)((hash >> 12) % (uint)_frontOverflowStains.Count);
+        var existing = _frontOverflowStains[selected];
+        var widthChange = ((hash >> 20) & 3) switch
+        {
+            0 => -0.45f,
+            3 => 0.8f,
+            _ => 0.2f
+        };
+        _frontOverflowStains[selected] = existing with
+        {
+            Width = Math.Clamp(
+                MathF.Max(existing.Width, width) + widthChange,
+                2.5f,
+                9.5f),
+            Length = MathF.Min(maximumLength,
+                MathF.Max(existing.Length, length) +
+                29f + (hash & 15) * 1.4f +
+                displacedVolume / MathF.Max(FluidCellVolume, 0.001f)),
+            Wetness = MathF.Min(1f, existing.Wetness + 0.24f)
+        };
+    }
+
     public BasinPipeStain? PipeStainNear(float x)
     {
         BasinPipeStain? closest = null;
@@ -520,6 +685,17 @@ public sealed class BloodBasin
                 Length = nextLength,
                 Wetness = nextWetness,
                 Age = stain.Age + dt
+            };
+        }
+        for (var i = 0; i < _frontOverflowStains.Count; i++)
+        {
+            var stain = _frontOverflowStains[i];
+            _frontOverflowStains[i] = stain with
+            {
+                Wetness = MathF.Max(0.14f, stain.Wetness - dt * 0.022f),
+                Length = MathF.Min(MathF.Max(Height + 190f, 760f - Top),
+                    stain.Length + dt *
+                    (24f + stain.Wetness * 44f + stain.Variation % 5 * 2.5f))
             };
         }
         for (var i = 0; i < _pipeStains.Count; i++)
@@ -779,9 +955,37 @@ public struct BasinSuspendedDrop
     public byte Variation { get; internal set; }
 }
 
+public struct BasinSurfaceSplash
+{
+    public float X { get; internal set; }
+    public float Y { get; internal set; }
+    public float VelocityX { get; internal set; }
+    public float VelocityY { get; internal set; }
+    public float Radius { get; internal set; }
+    public float Age { get; internal set; }
+    public float Lifetime { get; internal set; }
+    public byte Variation { get; internal set; }
+}
+
+public struct BasinSurfaceRipple
+{
+    public float X { get; internal set; }
+    public float Age { get; internal set; }
+    public float Lifetime { get; internal set; }
+    public float Strength { get; internal set; }
+    public byte Variation { get; internal set; }
+}
+
 public readonly record struct BasinPipeStain(
     float X,
     float Amount,
     float Wetness,
     float Length,
+    byte Variation);
+
+public readonly record struct BasinFrontOverflowStain(
+    float X,
+    float Width,
+    float Length,
+    float Wetness,
     byte Variation);

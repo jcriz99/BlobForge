@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Numerics;
 using BlobForge.Physics;
@@ -28,6 +29,32 @@ public sealed class GameRenderer
     private static readonly Lazy<Bitmap?> DrillLeverHeldSprite = new(() => LoadAsset("DrillLeverHeld.png"));
     private static readonly Lazy<Bitmap?> DrumRotorSprite = new(() => LoadAsset("DrumRotor.png"));
     private static readonly Lazy<Bitmap?> DrumHandwheelSprite = new(() => LoadAsset("DrumHandwheel.png"));
+    private static readonly Lazy<Bitmap?> FactoryWorkerSprite = new(() => LoadAsset("FactoryWorker.png"));
+    private static readonly Lazy<Bitmap?> OverheadTubeSprite = new(() => LoadAsset("OverheadTube.png"));
+    private static readonly Lazy<Bitmap?> ContinuousEndDrainSprite = new(() => LoadAsset("ContinuousEndDrain.png"));
+    private static readonly Lazy<Bitmap?> KnifeSprite = new(() => LoadAsset("ButcherCleaver.png"));
+    private static readonly Lazy<Bitmap?> KnifeHolsterSprite = new(() => LoadAsset("ButcherCleaverRack.png"));
+    private static readonly Lazy<Bitmap?> CleaverHeavyImpactSprite = new(() => LoadAsset("CleaverHeavyImpact.png"));
+    private static readonly Lazy<Bitmap?[]> ArsenalToolFrames = new(() =>
+        LoadHorizontalFrames("TestArsenalTools.png", 96, 64, PhysicalKnife.ArsenalVariantCount));
+    private static readonly Lazy<Bitmap?[]> DeployedSlingshotFrames = new(() =>
+        LoadHorizontalFrames("SlingshotDeployed.png", 96, 192, 3));
+    private static readonly Lazy<bool[][]> ArsenalToolAlphaMasks = new(() =>
+        BuildAlphaMasks(ArsenalToolFrames.Value));
+    private static readonly Lazy<Bitmap?> SawProjectileSprite = new(() => LoadAsset("SawProjectile.png"));
+    private static readonly Lazy<Bitmap?[]> RatProjectileFrames = new(() =>
+        LoadHorizontalFrames("RatProjectile.png", 16, 10, 2));
+    private static readonly Lazy<Bitmap?[]> RatDisplayFrames = new(() =>
+        ScaleFrames(RatProjectileFrames.Value, 24, 15));
+    private static readonly Lazy<Bitmap?[]> ElementalEffectFrames = new(() =>
+        LoadHorizontalFrames("ElementalEffects.png", 32, 16, 8));
+    private static readonly Lazy<Bitmap?[]> AcidSurfaceDisplayFrames = new(() =>
+        ScaleFrames(ElementalEffectFrames.Value, 64, 20));
+    private static readonly Lazy<Bitmap?[]> AcidCoatDisplayFrames = new(() =>
+        ScaleFrames(ElementalEffectFrames.Value, 48, 16));
+    private static readonly Lazy<Bitmap?> CuteBlobFaceSprite = new(() => LoadAsset("CuteBlobFace.png"));
+    private static readonly Lazy<Bitmap?> ConveyorWallPortalSprite = new(() => LoadAsset("ConveyorWallPortal.png"));
+    private static readonly Lazy<Bitmap?> WorkerInfrastructureSprite = new(() => LoadAsset("WorkerInfrastructure.png"));
     private static readonly Lazy<Bitmap?> VacuumNozzleSprite = new(() => LoadAsset("VacuumNozzle.png"));
     private static readonly Lazy<Bitmap?> VacuumCouplerSprite = new(() => LoadAsset("VacuumCoupler.png"));
     private static readonly Lazy<Bitmap?> RustyDrainPipeSprite = new(() => LoadAsset("RustyDrainPipe.png"));
@@ -47,10 +74,112 @@ public sealed class GameRenderer
     private static readonly Lazy<Bitmap?> VacuumFrameDisplay = new(() => LoadScaledAsset("VacuumFrame.png", 108, 151));
     private static readonly Lazy<Bitmap?> FilterFrameDisplay = new(() => LoadScaledAsset("FilterFrame.png", 108, 151));
     private static readonly Lazy<Bitmap?> BasinEndcapDisplay = new(() => LoadScaledAsset("BasinEndcap.png", 24, 105));
+    private static readonly Lazy<Bitmap?> OverheadTubeForegroundStrip =
+        new(() => BuildOverheadTubeStrip(frame: 2));
     private readonly Font _hudFont = new("Consolas", 10.5f, FontStyle.Regular, GraphicsUnit.Point);
     private readonly Font _titleFont = new("Segoe UI Semibold", 17f, FontStyle.Bold, GraphicsUnit.Point);
     private readonly Font _shopFont = new("Consolas", 7f, FontStyle.Bold, GraphicsUnit.Point);
     private readonly Font _shopSmallFont = new("Consolas", 6f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _toolPromptKeyFont = new("Consolas", 9f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _arsenalTitleFont = new("Consolas", 17f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _arsenalItemFont = new("Consolas", 10f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _arsenalDetailFont = new("Consolas", 8f, FontStyle.Regular, GraphicsUnit.Point);
+    private readonly SolidBrush _toolPromptBackBrush = new(Color.FromArgb(220, 8, 13, 17));
+    private readonly SolidBrush _toolPromptKeyBrush = new(Color.FromArgb(255, 230, 181, 58));
+    private readonly SolidBrush _arsenalPanelBrush = new(Color.FromArgb(242, 8, 13, 17));
+    private readonly SolidBrush _arsenalCardBrush = new(Color.FromArgb(235, 23, 35, 42));
+    private readonly SolidBrush _arsenalSelectedBrush = new(Color.FromArgb(245, 52, 71, 80));
+    private readonly SolidBrush _arsenalTitleBrush = new(Color.FromArgb(255, 101, 230, 223));
+    private readonly SolidBrush _arsenalTextBrush = new(Color.FromArgb(255, 175, 193, 194));
+    private readonly SolidBrush _arsenalHintBrush = new(Color.FromArgb(255, 230, 181, 58));
+    private readonly Pen _arsenalBorderPen = new(Color.FromArgb(255, 83, 106, 116), 2f);
+    private readonly Pen _arsenalSelectedPen = new(Color.FromArgb(255, 101, 230, 223), 2f);
+    private readonly Pen _arsenalNailTracePen = new(Color.FromArgb(230, 230, 181, 58), 1.5f);
+    private readonly Pen _arsenalShotgunTracePen = new(Color.FromArgb(185, 255, 211, 105), 1.25f);
+    private readonly Pen _arsenalMagnumTracePen = new(Color.FromArgb(245, 220, 241, 238), 2.5f);
+    private readonly Pen _arsenalSmgTracePen = new(Color.FromArgb(215, 101, 230, 223), 1.25f);
+    private readonly Pen _arsenalPunchTracePen = new(Color.FromArgb(225, 238, 32, 42), 5f)
+    {
+        StartCap = LineCap.Round,
+        EndCap = LineCap.Round
+    };
+    private readonly Pen _arsenalExplosionPen = new(Color.FromArgb(235, 255, 105, 34), 4f);
+    private readonly SolidBrush _blackHoleBrush = new(Color.FromArgb(255, 5, 8, 12));
+    private readonly Pen _blackHoleRingPen = new(Color.FromArgb(230, 101, 230, 223), 2f);
+    private readonly SolidBrush _flameBrush = new(Color.FromArgb(235, 198, 65, 53));
+    private readonly SolidBrush _iceProjectileBrush = new(Color.FromArgb(235, 217, 255, 255));
+    private readonly SolidBrush _acidBrush = new(Color.FromArgb(220, 78, 224, 157));
+    private readonly SolidBrush _waterBrush = new(Color.FromArgb(220, 101, 230, 223));
+    private readonly SolidBrush _baseballBrush = new(Color.FromArgb(255, 217, 255, 255));
+    private readonly Pen _iceBlockPen = new(Color.FromArgb(235, 101, 230, 223), 3f);
+    private readonly SolidBrush _iceBlockBrush = new(Color.FromArgb(82, 101, 230, 223));
+    private readonly Pen _lightningPen = new(Color.FromArgb(245, 230, 181, 58), 3f);
+    private readonly Pen _saberSizzlePen = new(Color.FromArgb(235, 217, 255, 255), 1.5f);
+    private readonly Pen[] _heavyBloodBridgePens =
+    {
+        new(Color.FromArgb(245, 116, 5, 12), 4.5f),
+        new(Color.FromArgb(220, 104, 4, 10), 3.5f),
+        new(Color.FromArgb(175, 86, 4, 9), 2.5f),
+        new(Color.FromArgb(115, 64, 3, 7), 1.5f)
+    };
+    private readonly Pen[] _heavyBloodBridgeHighlightPens =
+    {
+        new(Color.FromArgb(210, 238, 28, 32), 1.5f),
+        new(Color.FromArgb(175, 206, 20, 25), 1.25f),
+        new(Color.FromArgb(125, 164, 13, 19), 1f),
+        new(Color.FromArgb(70, 118, 8, 14), 1f)
+    };
+    private readonly Pen _toolRotationCirclePen = new(Color.FromArgb(205, 101, 230, 223), 1.5f);
+    private readonly Pen _toolRotationLinePen = new(Color.FromArgb(245, 240, 195, 75), 2.5f);
+    private readonly Pen _grenadeArcPen = new(Color.FromArgb(215, 101, 230, 223), 1.5f)
+    {
+        DashStyle = DashStyle.Dash
+    };
+    private readonly Pen _grenadeBouncePen = new(Color.FromArgb(235, 240, 195, 75), 2f);
+    private readonly Pen _slingshotRubberBackPen = new(Color.FromArgb(255, 23, 35, 42), 6f)
+    {
+        StartCap = LineCap.Round,
+        EndCap = LineCap.Round
+    };
+    private readonly Pen _slingshotRubberPen = new(Color.FromArgb(255, 166, 107, 63), 3f)
+    {
+        StartCap = LineCap.Round,
+        EndCap = LineCap.Round
+    };
+    private readonly SolidBrush _nailProjectileBrush = new(Color.FromArgb(255, 230, 181, 58));
+    private readonly SolidBrush _shotgunProjectileBrush = new(Color.FromArgb(255, 255, 211, 105));
+    private readonly SolidBrush _magnumProjectileBrush = new(Color.FromArgb(255, 220, 241, 238));
+    private readonly SolidBrush _smgProjectileBrush = new(Color.FromArgb(255, 101, 230, 223));
+    private readonly SolidBrush[] _toolChargeBackBrushes =
+    {
+        new(Color.FromArgb(82, 8, 13, 17)),
+        new(Color.FromArgb(112, 8, 13, 17)),
+        new(Color.FromArgb(154, 8, 13, 17)),
+        new(Color.FromArgb(210, 8, 13, 17))
+    };
+    private readonly SolidBrush[] _toolChargeGhostBrushes =
+    {
+        new(Color.FromArgb(30, 101, 230, 223)),
+        new(Color.FromArgb(42, 101, 230, 223)),
+        new(Color.FromArgb(58, 101, 230, 223)),
+        new(Color.FromArgb(74, 101, 230, 223))
+    };
+    private readonly SolidBrush[] _toolChargeFillBrushes =
+    {
+        new(Color.FromArgb(108, 101, 230, 223)),
+        new(Color.FromArgb(150, 101, 230, 223)),
+        new(Color.FromArgb(205, 101, 230, 223)),
+        new(Color.FromArgb(255, 101, 230, 223))
+    };
+    private readonly Pen[] _toolChargeBorderPens =
+    {
+        new(Color.FromArgb(88, 85, 113, 123), 1f),
+        new(Color.FromArgb(122, 85, 113, 123), 1f),
+        new(Color.FromArgb(172, 85, 113, 123), 1f),
+        new(Color.FromArgb(235, 85, 113, 123), 1f)
+    };
+    private readonly SolidBrush _toolChargeFullBrush = new(Color.FromArgb(255, 240, 195, 75));
+    private readonly Pen _toolPromptBorderPen = new(Color.FromArgb(235, 85, 113, 123), 1f);
     private readonly Pen _constraintPen = new(Color.FromArgb(65, 255, 255, 255), 1f);
     private readonly SolidBrush _debugSupportedParticleBrush = new(Color.Gold);
     private readonly SolidBrush _debugParticleBrush = new(Color.FromArgb(155, 255, 255, 255));
@@ -61,10 +190,37 @@ public sealed class GameRenderer
     private readonly GraphicsPath _debugSupportedParticlePath = new(FillMode.Winding);
     private readonly GraphicsPath _bloodGranularPath = new(FillMode.Winding);
     private readonly GraphicsPath _bloodGranularHighlightPath = new(FillMode.Winding);
+    private readonly GraphicsPath _acidGranularPath = new(FillMode.Winding);
+    private readonly GraphicsPath _acidGranularHighlightPath = new(FillMode.Winding);
     private readonly GraphicsPath _tissueGranularPath = new(FillMode.Winding);
     private readonly GraphicsPath _tissueGranularDarkPath = new(FillMode.Winding);
     private readonly GraphicsPath _tissueGranularCorePath = new(FillMode.Winding);
-    private readonly Bitmap _debugPanel = new(286, 426);
+    private readonly GraphicsPath _tissueGranularMintPath = new(FillMode.Winding);
+    private readonly GraphicsPath _tissueGranularTealPath = new(FillMode.Winding);
+    private readonly GraphicsPath _foregroundBloodSpillPath = new(FillMode.Winding);
+    private readonly GraphicsPath _foregroundBloodSpillHighlightPath = new(FillMode.Winding);
+    private readonly GraphicsPath _foregroundTissueSpillPath = new(FillMode.Winding);
+    private readonly GraphicsPath _foregroundTissueSpillDarkPath = new(FillMode.Winding);
+    private readonly GraphicsPath _foregroundTissueSpillMintPath = new(FillMode.Winding);
+    private readonly GraphicsPath _foregroundTissueSpillTealPath = new(FillMode.Winding);
+    private readonly GraphicsPath _conveyorBodyPath = new(FillMode.Winding);
+    private readonly GraphicsPath _conveyorEdgePath = new();
+    private readonly GraphicsPath _conveyorRollerPath = new(FillMode.Winding);
+    private readonly GraphicsPath _conveyorSpokePath = new();
+    private readonly GraphicsPath _conveyorHubPath = new(FillMode.Winding);
+    private readonly GraphicsPath _conveyorTreadPath = new();
+    private readonly GraphicsPath _conveyorTrackPath = new();
+    private readonly GraphicsPath _conveyorMotionPath = new();
+    private Bitmap? _systemConveyorStaticCache;
+    private ConveyorBelt? _systemConveyorStaticSource;
+    private Vector2 _systemConveyorStaticPosition;
+    private float _systemConveyorStaticWidth;
+    private float _systemConveyorStaticHeight;
+    private int _systemConveyorStaticTop;
+    private readonly GraphicsPath _blobRuntimePath = new(FillMode.Winding);
+    private readonly GraphicsPath _blobPixelOutlinePath = new(FillMode.Winding);
+    private readonly Bitmap _debugPanel = new(318, 640);
+    private readonly Bitmap _displayDebugPanel = new(360, 282);
     private long _nextDebugPanelRefresh;
     private readonly SolidBrush[] _wetStainBrushes =
     {
@@ -116,20 +272,41 @@ public sealed class GameRenderer
     private readonly Pen _conveyorTrackPen = new(Color.FromArgb(225, 157, 181, 198), 3f);
     private readonly Pen _conveyorTreadPen = new(Color.FromArgb(205, 30, 37, 46), 2f);
     private readonly Pen _conveyorSpokePen = new(Color.FromArgb(190, 123, 145, 160), 1.5f);
-    private readonly SolidBrush _blobDarkBrush = new(Color.FromArgb(255, 4, 6, 8));
+    private readonly SolidBrush _blobDarkBrush = new(Color.FromArgb(255, 118, 203, 180));
     private readonly SolidBrush _blobDebrisDarkBrush = new(Color.FromArgb(255, 72, 7, 18));
-    private readonly SolidBrush _blobGrabbedDarkBrush = new(Color.FromArgb(255, 13, 3, 8));
-    private readonly SolidBrush _blobMachineLitDarkBrush = new(Color.FromArgb(255, 45, 5, 14));
-    private readonly SolidBrush _blobPixelRedBrush = new(Color.FromArgb(255, 238, 18, 30));
-    private readonly SolidBrush _blobGrabbedPixelBrush = new(Color.FromArgb(255, 255, 65, 93));
-    private readonly SolidBrush _blobMachineLitPixelBrush = new(Color.FromArgb(255, 255, 35, 47));
+    private readonly SolidBrush _blobGrabbedDarkBrush = new(Color.FromArgb(255, 169, 232, 207));
+    private readonly SolidBrush _blobMachineLitDarkBrush = new(Color.FromArgb(255, 143, 220, 196));
+    private readonly SolidBrush _blobPixelRedBrush = new(Color.FromArgb(255, 47, 125, 115));
+    private readonly SolidBrush _blobGrabbedPixelBrush = new(Color.FromArgb(255, 243, 243, 220));
+    private readonly SolidBrush _blobMachineLitPixelBrush = new(Color.FromArgb(255, 77, 161, 142));
+    private readonly SolidBrush[] _blobHitFlashBrushes =
+    {
+        new(Color.FromArgb(52, 235, 35, 42)),
+        new(Color.FromArgb(92, 235, 35, 42)),
+        new(Color.FromArgb(132, 235, 35, 42)),
+        new(Color.FromArgb(180, 235, 35, 42))
+    };
     private readonly SolidBrush _bloodPixelBrush = new(Color.FromArgb(245, 176, 3, 15));
     private readonly SolidBrush _bloodPixelHighlightBrush = new(Color.FromArgb(245, 255, 18, 16));
+    private readonly SolidBrush _acidPixelBrush = new(Color.FromArgb(245, 42, 184, 91));
+    private readonly SolidBrush _acidPixelHighlightBrush = new(Color.FromArgb(245, 133, 255, 121));
     private readonly SolidBrush _tissuePixelCoreBrush = new(Color.FromArgb(255, 4, 6, 8));
     private readonly SolidBrush _tissuePixelRimBrush = new(Color.FromArgb(255, 238, 18, 30));
     private readonly SolidBrush _tissuePixelRimDarkBrush = new(Color.FromArgb(245, 150, 13, 34));
-    private Rectangle[] _blobPixelOutlineRectangles = new Rectangle[256];
-    private int _blobPixelOutlineRectangleCount;
+    private readonly SolidBrush _tissuePixelMintBrush = new(Color.FromArgb(255, 118, 203, 180));
+    private readonly SolidBrush _tissuePixelTealBrush = new(Color.FromArgb(255, 47, 125, 115));
+    private readonly Font _basinMeterFont = new("Consolas", 7f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly SolidBrush _basinRimDarkBrush = new(Color.FromArgb(255, 20, 29, 35));
+    private readonly SolidBrush _basinRimBrush = new(Color.FromArgb(255, 95, 119, 128));
+    private readonly SolidBrush _basinHighlightBrush = new(Color.FromArgb(255, 156, 182, 188));
+    private readonly SolidBrush _basinHazardBrush = new(Color.FromArgb(255, 230, 181, 58));
+    private readonly SolidBrush _basinLevelDarkBrush = new(Color.FromArgb(220, 103, 6, 20));
+    private readonly SolidBrush _basinLevelBrightBrush = new(Color.FromArgb(225, 235, 18, 24));
+    private readonly SolidBrush _basinMeterTextBrush = new(Color.FromArgb(245, 197, 231, 229));
+    private readonly SolidBrush _basinMeterBackBrush = new(Color.FromArgb(220, 12, 18, 22));
+    private readonly ConditionalWeakTable<SoftBody, BlobRenderScratch> _blobRenderScratch = new();
+    private readonly PointF[] _fragmentPolygonPoints = new PointF[7];
+    private readonly PointF[] _detachedFragmentPoints = new PointF[4];
     private DestructibleGrid? _bloodSurfaceClipGrid;
     private int _bloodSurfaceClipRevision = -1;
     private Region? _bloodSurfaceClip;
@@ -155,6 +332,9 @@ public sealed class GameRenderer
     private readonly float[] _lightHitDistances = new float[73];
     private readonly PointF[] _lightSidePolygon = new PointF[22];
     private readonly PointF[] _lightCenterPolygon = new PointF[66];
+    private Vector2[] _lightBodyCenters = new Vector2[32];
+    private float[] _lightBodyRadii = new float[32];
+    private int _lightBodyCount;
     private readonly PointF[] _shopPanelPolygon = new PointF[7];
 
     public bool DebugDraw { get; set; }
@@ -164,8 +344,46 @@ public sealed class GameRenderer
     public double PresentMs { get; set; }
     public double FixedUpdateMs { get; set; }
     public double AudioUpdateMs { get; set; }
+    public double PaintJitterMs { get; set; }
+    public double PaintMeanMs { get; set; }
+    public double PaintDeviationMs { get; set; }
+    public double PaintMaximumMs { get; set; }
+    public double HostPumpGapMs { get; set; }
+    public double SimulationGapMs { get; set; }
+    public double RenderDeadlineLateMs { get; set; }
+    public long UiAllocatedBytesPerPaint { get; set; }
+    public long SimulationAllocatedBytesPerFrame { get; set; }
+    public int MaxStepBatch { get; set; }
+    public int PaintSpikeCount { get; set; }
+    public int RenderDeadlineMisses { get; set; }
+    public int PaintCount { get; set; }
+    public int RenderRequestCount { get; set; }
+    public int DisplayWidth { get; set; }
+    public int DisplayHeight { get; set; }
+    public int DisplayRefreshHz { get; set; }
+    public int DisplayDpi { get; set; }
+    public int ClientWidth { get; set; }
+    public int ClientHeight { get; set; }
+    public int SurfaceWidth { get; set; }
+    public int SurfaceHeight { get; set; }
+    public int InternalRenderWidth { get; set; }
+    public int InternalRenderHeight { get; set; }
+    public int ViewportWidth { get; set; }
+    public int ViewportHeight { get; set; }
+    public int PaintClipWidth { get; set; }
+    public int PaintClipHeight { get; set; }
+    public int ResizeEventCount { get; set; }
+    public int FullscreenToggleCount { get; set; }
+    public int EnvironmentCacheBuildCount { get; private set; }
+    public int RenderTargetBuildCount { get; } = 1;
+    public string FullscreenMode { get; set; } = "windowed";
+    public string PresentationMode { get; set; } = "native direct";
     public int LightingCacheBuildCount { get; private set; }
     public int DynamicLightingBuildCount { get; private set; }
+    public double DynamicLightingBuildMsTotal { get; private set; }
+    public double DynamicLightingRaycastMsTotal { get; private set; }
+    public double DynamicLightingRasterMsTotal { get; private set; }
+    public double LastDynamicLightingBuildMs { get; private set; }
     public bool ProfileStages { get; set; }
     public double EnvironmentStageMs { get; private set; }
     public double MachineryBackStageMs { get; private set; }
@@ -173,8 +391,64 @@ public sealed class GameRenderer
     public double MachineryFrontStageMs { get; private set; }
     public double LightingStageMs { get; private set; }
     public double UiStageMs { get; private set; }
+    public double ConveyorStageMs { get; private set; }
+    public double BasinBackStageMs { get; private set; }
+    public double StainStageMs { get; private set; }
+    public double GranularStageMs { get; private set; }
+    public double BlobStageMs { get; private set; }
 
-    public void Draw(Graphics g, Size viewport, BlobWorld world, SoftBody? grabbed, IReadOnlyList<Vector2>? pendingSlice = null)
+    public const int ArsenalItemCount = PhysicalKnife.ArsenalVariantCount + 1;
+    public bool ArsenalMenuOpen { get; set; }
+    public int ArsenalMenuSelection { get; set; }
+
+    private const int ArsenalMenuColumns = 5;
+    private const int ArsenalMenuX = 54;
+    private const int ArsenalMenuY = 78;
+    private const int ArsenalCardWidth = 226;
+    private const int ArsenalCardHeight = 112;
+    private const int ArsenalCardGap = 7;
+
+    private static readonly string[] ArsenalNames =
+    {
+        "BUTCHER CLEAVER", "LIGHTSABER", "NAIL GUN", "SHOTGUN", "MAGNUM", "SMG",
+        "BLADE SHOOTER", "CHIPPER VAC", "SLEDGEHAMMER", "BLOB SLINGSHOT",
+        "WALL PIKE", "BOXING GLOVE", "GRENADES", "WHIRLWIND AXE",
+        "BLACK HOLE", "RAT GUN", "ENLARGER", "FLAMETHROWER", "FREEZE RAY",
+        "LIGHTNING COIL", "ACID LOBBER", "WATER DOLL", "BAT + BALL"
+    };
+
+    private static readonly string[] ArsenalPrimaryActions =
+    {
+        "Hold: charge, release physical chop", "LMB ignite/swing; Z de-ignite", "Click: heavy wall-pinning nail", "Click: pellet projectiles + recoil",
+        "Hold steady; release deep round", "Hold: automatic projectiles + climb", "Hold spin, release saw disc",
+        "Hold: suction and progressive shred", "Hold raise, release blunt smash", "Load blob, pull back, release",
+        "LMB place; slam blob on tip", "Hold/release: charged piston punch", "Hold LMB: aim arc; RMB cancel",
+        "Hold: charge, release cleaver arc",
+        "Click: mini singularity", "Click: launch chewing rat", "Hold: auto-aim growth pulses",
+        "Hold: close flame stream", "Click: freeze into throwable block",
+        "Click: chaining arc seed", "Hold/release: lob melting acid",
+        "Click: large slow tear", "Lob ball, then bat it"
+    };
+
+    private static readonly Point[] ArsenalToolAnchors =
+    {
+        new(71, 32), new(63, 44), new(70, 35), new(61, 42), new(33, 43),
+        new(72, 41), new(69, 33), new(72, 40), new(55, 55), new(79, 32),
+        new(68, 34), new(48, 42), new(68, 40),
+        new(70, 40), new(70, 41), new(70, 41), new(70, 42),
+        new(70, 42), new(70, 42), new(70, 42), new(66, 43), new(68, 39)
+    };
+
+    public int HitTestArsenalMenu(Vector2 point)
+    {
+        if (!ArsenalMenuOpen) return -1;
+        for (var i = 0; i < ArsenalItemCount; i++)
+            if (GetArsenalCardBounds(i).Contains((int)point.X, (int)point.Y)) return i;
+        return -1;
+    }
+
+    public void Draw(Graphics g, Size viewport, BlobWorld world, SoftBody? grabbed,
+        IReadOnlyList<Vector2>? pendingSlice = null, Vector2? toolPromptPosition = null)
     {
         var stageStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -184,20 +458,47 @@ public sealed class GameRenderer
             EnvironmentStageMs = Stopwatch.GetElapsedTime(stageStart).TotalMilliseconds;
             stageStart = Stopwatch.GetTimestamp();
         }
+        var detailStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
         DrawConveyors(g, world.Conveyors);
+        if (ProfileStages)
+        {
+            ConveyorStageMs = Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
+            detailStart = Stopwatch.GetTimestamp();
+        }
         DrawProcessingLineBack(g, world.ProcessingLine);
+        if (ProfileStages)
+            BasinBackStageMs = Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
         if (ProfileStages)
         {
             MachineryBackStageMs = Stopwatch.GetElapsedTime(stageStart).TotalMilliseconds;
             stageStart = Stopwatch.GetTimestamp();
         }
+        detailStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
         DrawBloodSurfaceStains(g, world.Grid, world.Conveyors);
+        if (ProfileStages)
+        {
+            StainStageMs = Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
+            detailStart = Stopwatch.GetTimestamp();
+        }
         DrawGranular(g, world.Granular, GranularKind.Blood);
+        DrawGranular(g, world.Granular, GranularKind.Acid);
+        if (ProfileStages)
+        {
+            GranularStageMs = Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
+            detailStart = Stopwatch.GetTimestamp();
+        }
         foreach (var body in world.Bodies)
             if (!ReferenceEquals(body, world.ProcessingLine?.DrumLockedBody))
-                DrawBlob(g, body, body == grabbed);
+                DrawBlob(g, body, body == grabbed, body.VisualRotation);
+        if (ProfileStages)
+        {
+            BlobStageMs = Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
+            detailStart = Stopwatch.GetTimestamp();
+        }
         DrawHoldingChamber(g, world.HoldingChamber);
         DrawGranular(g, world.Granular, GranularKind.Tissue);
+        if (ProfileStages)
+            GranularStageMs += Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
         if (ProfileStages)
         {
             MatterStageMs = Stopwatch.GetElapsedTime(stageStart).TotalMilliseconds;
@@ -207,6 +508,10 @@ public sealed class GameRenderer
         // matter—including blood, chunks and intact blobs—must remain behind
         // its shell. Lighting and UI intentionally render afterward.
         DrawProcessingLineFront(g, world.ProcessingLine);
+        DrawForegroundGranularSpills(g, world.Granular);
+        DrawDrumLoadingForeground(g, world.ProcessingLine);
+        DrawKnifeHeavyImpact(g, world.Knife);
+        DrawKnife(g, world.Knife);
         DrawBreakerBox(g, world.ProcessingLine);
         if (ProfileStages)
         {
@@ -221,6 +526,9 @@ public sealed class GameRenderer
             DrawFixtureEditHandles(g, world.HoldingChamber, world.ProcessingLine);
             DrawSlicePreview(g, pendingSlice);
             DrawInstructions(g, viewport);
+            DrawProcessedCounter(g, world.ProcessingLine, viewport);
+            DrawToolPrompt(g, toolPromptPosition);
+            DrawToolChargeBar(g, world.Knife);
             if (DebugDraw) DrawDebug(g, world);
         }
         DrawLighting(g, viewport, world);
@@ -235,10 +543,94 @@ public sealed class GameRenderer
             DrawFixtureEditHandles(g, world.HoldingChamber, world.ProcessingLine);
             DrawSlicePreview(g, pendingSlice);
             DrawInstructions(g, viewport);
+            DrawProcessedCounter(g, world.ProcessingLine, viewport);
+            DrawToolPrompt(g, toolPromptPosition);
+            DrawToolChargeBar(g, world.Knife);
             if (DebugDraw) DrawDebug(g, world);
         }
+        DrawArsenalMenu(g, viewport);
         if (ProfileStages)
             UiStageMs = Stopwatch.GetElapsedTime(stageStart).TotalMilliseconds;
+    }
+
+    private void DrawArsenalMenu(Graphics g, Size viewport)
+    {
+        if (!ArsenalMenuOpen) return;
+        var width = ArsenalMenuColumns * ArsenalCardWidth + (ArsenalMenuColumns - 1) * ArsenalCardGap;
+        var panel = new Rectangle(ArsenalMenuX - 18, 40, width + 36, Math.Min(viewport.Height - 58, 632));
+        g.FillRectangle(_arsenalPanelBrush, panel);
+        g.DrawRectangle(_arsenalBorderPen, panel);
+        g.DrawString("TEST ARSENAL", _arsenalTitleFont, _arsenalTitleBrush, panel.X + 18, panel.Y + 10);
+        g.DrawString("I / ESC close   arrows move   ENTER/click swaps   RMB-drag rotates equipped tool",
+            _arsenalDetailFont, _arsenalHintBrush, panel.X + 230, panel.Y + 17);
+
+        var tools = ArsenalToolFrames.Value;
+        for (var i = 0; i < ArsenalItemCount; i++)
+        {
+            var card = GetArsenalCardBounds(i);
+            var selected = i == ArsenalMenuSelection;
+            g.FillRectangle(selected ? _arsenalSelectedBrush : _arsenalCardBrush, card);
+            g.DrawRectangle(selected ? _arsenalSelectedPen : _arsenalBorderPen, card);
+            g.DrawString(ArsenalNames[i], _arsenalItemFont,
+                selected ? _arsenalTitleBrush : _arsenalTextBrush, card.X + 8, card.Y + 7);
+            if (i == 0)
+            {
+                var cleaver = KnifeSprite.Value;
+                if (cleaver is not null) g.DrawImageUnscaled(cleaver, card.X + 19, card.Y + 47);
+            }
+            else
+            {
+                var frame = tools[i - 1];
+                if (frame is not null) g.DrawImageUnscaled(frame, card.X + 7, card.Y + 35);
+            }
+            g.DrawString(ArsenalPrimaryActions[i], _arsenalDetailFont, _arsenalTextBrush,
+                new RectangleF(card.X + 108, card.Y + 38, card.Width - 116, card.Height - 45));
+        }
+    }
+
+    private static Rectangle GetArsenalCardBounds(int index)
+    {
+        var column = index % ArsenalMenuColumns;
+        var row = index / ArsenalMenuColumns;
+        return new Rectangle(
+            ArsenalMenuX + column * (ArsenalCardWidth + ArsenalCardGap),
+            ArsenalMenuY + row * (ArsenalCardHeight + ArsenalCardGap),
+            ArsenalCardWidth,
+            ArsenalCardHeight);
+    }
+
+    private static Bitmap?[] LoadHorizontalFrames(string fileName, int frameWidth, int frameHeight, int count)
+    {
+        var frames = new Bitmap?[count];
+        using var sheet = LoadAsset(fileName);
+        if (sheet is null || sheet.Width < frameWidth * count || sheet.Height < frameHeight) return frames;
+        for (var i = 0; i < count; i++)
+            frames[i] = sheet.Clone(new Rectangle(i * frameWidth, 0, frameWidth, frameHeight),
+                PixelFormat.Format32bppArgb);
+        return frames;
+    }
+
+    private static Bitmap?[] ScaleFrames(Bitmap?[] sourceFrames, int width, int height)
+    {
+        var frames = new Bitmap?[sourceFrames.Length];
+        for (var index = 0; index < sourceFrames.Length; index++)
+        {
+            var source = sourceFrames[index];
+            if (source is null) continue;
+            var scaled = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
+            using var graphics = Graphics.FromImage(scaled);
+            graphics.CompositingMode = CompositingMode.SourceCopy;
+            graphics.CompositingQuality = CompositingQuality.HighSpeed;
+            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            graphics.SmoothingMode = SmoothingMode.None;
+            graphics.DrawImage(source,
+                new Rectangle(0, 0, width, height),
+                new Rectangle(0, 0, source.Width, source.Height),
+                GraphicsUnit.Pixel);
+            frames[index] = scaled;
+        }
+        return frames;
     }
 
     private void DrawLighting(Graphics g, Size viewport, BlobWorld world)
@@ -271,7 +663,13 @@ public sealed class GameRenderer
                 _dynamicLightingCache = new Bitmap(
                     viewport.Width, viewport.Height, PixelFormat.Format32bppPArgb);
             }
+            var dynamicStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
             RenderDynamicLightingOverlay(_dynamicLightingCache, world);
+            if (ProfileStages)
+            {
+                LastDynamicLightingBuildMs = Stopwatch.GetElapsedTime(dynamicStart).TotalMilliseconds;
+                DynamicLightingBuildMsTotal += LastDynamicLightingBuildMs;
+            }
             _dynamicLightingRevision = rig.DynamicRevision;
             _dynamicLightingAmbientRevision = rig.Revision;
             _dynamicLightingGridRevision = world.Grid.SurfaceRevision;
@@ -381,8 +779,28 @@ public sealed class GameRenderer
         lightGraphics.InterpolationMode = InterpolationMode.NearestNeighbor;
         lightGraphics.PixelOffsetMode = PixelOffsetMode.Half;
         if (!world.Lighting.FactoryPowered) return;
+        PrepareLightBodyOccluders(world.Bodies);
         foreach (var light in world.Lighting.Lights)
             DrawOccludedPixelLight(lightGraphics, world, light);
+    }
+
+    private void PrepareLightBodyOccluders(IReadOnlyList<SoftBody> bodies)
+    {
+        if (_lightBodyCenters.Length < bodies.Count)
+        {
+            var capacity = Math.Max(bodies.Count, _lightBodyCenters.Length * 2);
+            Array.Resize(ref _lightBodyCenters, capacity);
+            Array.Resize(ref _lightBodyRadii, capacity);
+        }
+        _lightBodyCount = 0;
+        for (var bodyIndex = 0; bodyIndex < bodies.Count; bodyIndex++)
+        {
+            var body = bodies[bodyIndex];
+            if (body.PhysicalParticleCount < 3) continue;
+            _lightBodyCenters[_lightBodyCount] = body.Center;
+            _lightBodyRadii[_lightBodyCount] = MathF.Max(6f, body.Radius * 0.88f);
+            _lightBodyCount++;
+        }
     }
 
     private void DrawOccludedPixelLight(Graphics g, BlobWorld world, IndustrialLight light)
@@ -391,19 +809,25 @@ public sealed class GameRenderer
         const int radialBands = 11;
         const float halfAngle = 1.18f;
         var origin = light.Position + light.Direction * 12f;
+        var raycastStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
         for (var ray = 0; ray <= rayCount; ray++)
         {
             var angle = -halfAngle + ray / (float)rayCount * halfAngle * 2f;
             var direction = Rotate(light.Direction, angle);
             _lightHitDistances[ray] = FindLightHitDistance(world, origin, direction, light.Range);
         }
+        if (ProfileStages)
+            DynamicLightingRaycastMsTotal += Stopwatch.GetElapsedTime(raycastStart).TotalMilliseconds;
 
         using var bandBrush = new SolidBrush(Color.Transparent);
+        var rasterStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
         DrawSector(0, 10, 0.16f);
         DrawSector(10, 20, 0.44f);
         DrawSector(20, 52, 1f);
         DrawSector(52, 62, 0.44f);
         DrawSector(62, 72, 0.16f);
+        if (ProfileStages)
+            DynamicLightingRasterMsTotal += Stopwatch.GetElapsedTime(rasterStart).TotalMilliseconds;
 
         void DrawSector(int firstRay, int lastRay, float angularStrength)
         {
@@ -436,10 +860,33 @@ public sealed class GameRenderer
         }
     }
 
-    private static float FindLightHitDistance(
+    private float FindLightHitDistance(
         BlobWorld world, Vector2 origin, Vector2 direction, float maximumDistance)
     {
         var closest = RaycastTerrain(world.Grid, origin, direction, maximumDistance);
+        foreach (var conveyor in world.Conveyors)
+            closest = MathF.Min(closest, RayRectangle(origin, direction,
+                new RectangleF(conveyor.Position.X, conveyor.Position.Y, conveyor.Width, conveyor.Height), closest));
+        if (world.HoldingChamber is { } chamber)
+        {
+            closest = MathF.Min(closest,
+                RayCircle(origin, direction, chamber.Center, chamber.InnerRadius + 10f, closest));
+            closest = MathF.Min(closest, RayRectangle(origin, direction, chamber.FeedTubeBounds, closest));
+        }
+        for (var bodyIndex = 0; bodyIndex < _lightBodyCount; bodyIndex++)
+        {
+            closest = MathF.Min(closest,
+                RayCircle(origin, direction, _lightBodyCenters[bodyIndex], _lightBodyRadii[bodyIndex], closest));
+        }
+        return MathF.Min(maximumDistance, closest + 7f);
+    }
+
+    internal static float TraceLightForDiagnostics(
+        BlobWorld world, IndustrialLight light, Vector2 direction)
+    {
+        var origin = light.Position + light.Direction * 12f;
+        direction = Vector2.Normalize(direction);
+        var closest = RaycastTerrain(world.Grid, origin, direction, light.Range);
         foreach (var conveyor in world.Conveyors)
             closest = MathF.Min(closest, RayRectangle(origin, direction,
                 new RectangleF(conveyor.Position.X, conveyor.Position.Y, conveyor.Width, conveyor.Height), closest));
@@ -455,16 +902,8 @@ public sealed class GameRenderer
             closest = MathF.Min(closest,
                 RayCircle(origin, direction, body.Center, MathF.Max(6f, body.Radius * 0.88f), closest));
         }
-        return MathF.Min(maximumDistance, closest + 7f);
+        return MathF.Min(light.Range, closest + 7f);
     }
-
-    internal static float TraceLightForDiagnostics(
-        BlobWorld world, IndustrialLight light, Vector2 direction) =>
-        FindLightHitDistance(
-            world,
-            light.Position + light.Direction * 12f,
-            Vector2.Normalize(direction),
-            light.Range);
 
     private static float RaycastTerrain(
         DestructibleGrid grid, Vector2 origin, Vector2 direction, float maximumDistance)
@@ -613,11 +1052,26 @@ public sealed class GameRenderer
     {
         var previousSmoothing = g.SmoothingMode;
         g.SmoothingMode = SmoothingMode.None;
-        var ordinaryPath = kind == GranularKind.Blood ? _bloodGranularPath : _tissueGranularPath;
-        var highlightPath = kind == GranularKind.Blood ? _bloodGranularHighlightPath : _tissueGranularDarkPath;
+        var ordinaryPath = kind switch
+        {
+            GranularKind.Blood => _bloodGranularPath,
+            GranularKind.Acid => _acidGranularPath,
+            _ => _tissueGranularPath
+        };
+        var highlightPath = kind switch
+        {
+            GranularKind.Blood => _bloodGranularHighlightPath,
+            GranularKind.Acid => _acidGranularHighlightPath,
+            _ => _tissueGranularDarkPath
+        };
         ordinaryPath.Reset();
         highlightPath.Reset();
-        if (kind == GranularKind.Tissue) _tissueGranularCorePath.Reset();
+        if (kind == GranularKind.Tissue)
+        {
+            _tissueGranularCorePath.Reset();
+            _tissueGranularMintPath.Reset();
+            _tissueGranularTealPath.Reset();
+        }
         for (var i = 0; i < granular.Particles.Count; i++)
         {
             var particle = granular.Particles[i];
@@ -630,6 +1084,22 @@ public sealed class GameRenderer
             if (kind == GranularKind.Blood)
             {
                 ((i & 3) == 0 ? highlightPath : ordinaryPath).AddRectangle(rectangle);
+                continue;
+            }
+            if (kind == GranularKind.Acid)
+            {
+                ((i & 3) == 0 ? highlightPath : ordinaryPath).AddRectangle(rectangle);
+                continue;
+            }
+
+            if (particle.Appearance == GranularAppearance.BlobMint)
+            {
+                _tissueGranularMintPath.AddRectangle(rectangle);
+                continue;
+            }
+            if (particle.Appearance == GranularAppearance.BlobTeal)
+            {
+                _tissueGranularTealPath.AddRectangle(rectangle);
                 continue;
             }
 
@@ -646,12 +1116,86 @@ public sealed class GameRenderer
             if (ordinaryPath.PointCount > 0) g.FillPath(_bloodPixelBrush, ordinaryPath);
             if (highlightPath.PointCount > 0) g.FillPath(_bloodPixelHighlightBrush, highlightPath);
         }
+        else if (kind == GranularKind.Acid)
+        {
+            if (ordinaryPath.PointCount > 0) g.FillPath(_acidPixelBrush, ordinaryPath);
+            if (highlightPath.PointCount > 0) g.FillPath(_acidPixelHighlightBrush, highlightPath);
+        }
         else
         {
             if (ordinaryPath.PointCount > 0) g.FillPath(_tissuePixelRimBrush, ordinaryPath);
             if (highlightPath.PointCount > 0) g.FillPath(_tissuePixelRimDarkBrush, highlightPath);
             if (_tissueGranularCorePath.PointCount > 0) g.FillPath(_tissuePixelCoreBrush, _tissueGranularCorePath);
+            if (_tissueGranularMintPath.PointCount > 0) g.FillPath(_tissuePixelMintBrush, _tissueGranularMintPath);
+            if (_tissueGranularTealPath.PointCount > 0) g.FillPath(_tissuePixelTealBrush, _tissueGranularTealPath);
         }
+        g.SmoothingMode = previousSmoothing;
+    }
+
+    private void DrawForegroundGranularSpills(
+        Graphics g,
+        GranularMaterialSystem granular)
+    {
+        if (granular.ForegroundSpills.Count == 0) return;
+        var previousSmoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.None;
+        _foregroundBloodSpillPath.Reset();
+        _foregroundBloodSpillHighlightPath.Reset();
+        _foregroundTissueSpillPath.Reset();
+        _foregroundTissueSpillDarkPath.Reset();
+        _foregroundTissueSpillMintPath.Reset();
+        _foregroundTissueSpillTealPath.Reset();
+
+        for (var spillIndex = 0; spillIndex < granular.ForegroundSpills.Count; spillIndex++)
+        {
+            var spill = granular.ForegroundSpills[spillIndex];
+            var size = MathF.Max(2f, spill.Radius * 1.7f);
+            var x = MathF.Round(spill.Position.X - size * 0.5f);
+            var y = MathF.Round(spill.Position.Y - size * 0.5f);
+            var rectangle = new RectangleF(
+                x,
+                y,
+                MathF.Ceiling(size),
+                MathF.Ceiling(size));
+
+            if (spill.Kind == GranularKind.Blood)
+            {
+                ((spill.Variation & 3) == 0
+                        ? _foregroundBloodSpillHighlightPath
+                        : _foregroundBloodSpillPath)
+                    .AddRectangle(rectangle);
+                continue;
+            }
+
+            switch (spill.Appearance)
+            {
+                case GranularAppearance.BlobMint:
+                    _foregroundTissueSpillMintPath.AddRectangle(rectangle);
+                    break;
+                case GranularAppearance.BlobTeal:
+                    _foregroundTissueSpillTealPath.AddRectangle(rectangle);
+                    break;
+                default:
+                    ((spill.Variation & 3) == 0
+                            ? _foregroundTissueSpillPath
+                            : _foregroundTissueSpillDarkPath)
+                        .AddRectangle(rectangle);
+                    break;
+            }
+        }
+
+        if (_foregroundBloodSpillPath.PointCount > 0)
+            g.FillPath(_bloodPixelBrush, _foregroundBloodSpillPath);
+        if (_foregroundBloodSpillHighlightPath.PointCount > 0)
+            g.FillPath(_bloodPixelHighlightBrush, _foregroundBloodSpillHighlightPath);
+        if (_foregroundTissueSpillPath.PointCount > 0)
+            g.FillPath(_tissuePixelRimBrush, _foregroundTissueSpillPath);
+        if (_foregroundTissueSpillDarkPath.PointCount > 0)
+            g.FillPath(_tissuePixelRimDarkBrush, _foregroundTissueSpillDarkPath);
+        if (_foregroundTissueSpillMintPath.PointCount > 0)
+            g.FillPath(_tissuePixelMintBrush, _foregroundTissueSpillMintPath);
+        if (_foregroundTissueSpillTealPath.PointCount > 0)
+            g.FillPath(_tissuePixelTealBrush, _foregroundTissueSpillTealPath);
         g.SmoothingMode = previousSmoothing;
     }
 
@@ -785,8 +1329,18 @@ public sealed class GameRenderer
             _environmentCacheLine = processingLine;
             _environmentCacheRevision = grid.SurfaceRevision;
             _environmentCacheSize = viewport;
+            EnvironmentCacheBuildCount++;
         }
+        // The cached environment is fully opaque. Copying it replaces every
+        // destination pixel, so SourceCopy avoids an unnecessary 1280x720
+        // source-over blend at the start of every presented frame.
+        var compositing = g.CompositingMode;
+        var compositingQuality = g.CompositingQuality;
+        g.CompositingMode = CompositingMode.SourceCopy;
+        g.CompositingQuality = CompositingQuality.HighSpeed;
         g.DrawImageUnscaled(_environmentCache, 0, 0);
+        g.CompositingMode = compositing;
+        g.CompositingQuality = compositingQuality;
     }
 
     private void DrawGridCells(Graphics g, DestructibleGrid grid)
@@ -979,6 +1533,25 @@ public sealed class GameRenderer
         return scaled;
     }
 
+    private static Bitmap? BuildOverheadTubeStrip(int frame)
+    {
+        var sprite = OverheadTubeSprite.Value;
+        if (sprite is null || sprite.Width < (frame + 1) * 80 || sprite.Height < 80) return null;
+        var strip = new Bitmap(1280, 80, PixelFormat.Format32bppPArgb);
+        using var graphics = Graphics.FromImage(strip);
+        graphics.Clear(Color.Transparent);
+        graphics.CompositingMode = CompositingMode.SourceCopy;
+        graphics.CompositingQuality = CompositingQuality.HighSpeed;
+        graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+        graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        for (var x = 0; x < strip.Width; x += 80)
+            graphics.DrawImage(sprite,
+                new Rectangle(x, 0, 80, 80),
+                new Rectangle(frame * 80, 0, 80, 80),
+                GraphicsUnit.Pixel);
+        return strip;
+    }
+
     private void DrawProcessingLineBack(Graphics g, ProcessingLine? line)
     {
         if (line is null) return;
@@ -989,10 +1562,10 @@ public sealed class GameRenderer
         g.SmoothingMode = SmoothingMode.None;
         g.PixelOffsetMode = PixelOffsetMode.Half;
 
-        DrawCartDock(g, line);
+        if (!line.ContinuousFlowMode) DrawCartDock(g, line);
         DrawBasinBack(g, line);
 
-        for (var i = 0; i < line.Bays.Count; i++)
+        if (!line.ContinuousFlowMode) for (var i = 0; i < line.Bays.Count; i++)
         {
             var bay = line.Bays[i];
             DrawMachineStatusGlow(g, line, bay, i);
@@ -1014,40 +1587,601 @@ public sealed class GameRenderer
         g.PixelOffsetMode = PixelOffsetMode.Half;
 
         DrawBasinStaticBack(g, line);
-        for (var i = 0; i < line.Bays.Count; i++)
+        if (line.ContinuousFlowMode)
         {
-            var bay = line.Bays[i];
-            var sprite = i switch
+            DrawContinuousWallPortals(g, line, foreground: false);
+            DrawOverheadTube(g, line, foreground: false);
+            DrawContinuousEndDrain(g, line, foreground: false);
+            DrawKnifeHolster(g, line);
+        }
+        else
+        {
+            DrawWorkerInfrastructure(g, line);
+            for (var i = 0; i < line.Bays.Count; i++)
             {
-                0 => CrusherFrameDisplay.Value,
-                1 => DrillFrameDisplay.Value,
-                2 => DrumHousingDisplay.Value,
-                3 => VacuumFrameDisplay.Value,
-                4 => FilterFrameDisplay.Value,
-                _ => MachineBaySprite.Value
-            };
-            var bounds = i switch
-            {
-                0 => new RectangleF(bay.CenterX - 60f, line.DeckY - 176f, 120f, 168f),
-                2 => new RectangleF(bay.CenterX - 66f, line.DeckY - 164f, 132f, 164f),
-                _ => new RectangleF(bay.CenterX - 54f, line.DeckY - 151f, 108f, 151f)
-            };
-            if (sprite is not null)
-            {
-                if (i == 2)
-                    g.DrawImage(sprite, bounds,
-                        new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
+                var bay = line.Bays[i];
+                var sprite = i switch
+                {
+                    0 => CrusherFrameDisplay.Value,
+                    1 => DrillFrameDisplay.Value,
+                    2 => DrumHousingDisplay.Value,
+                    3 => VacuumFrameDisplay.Value,
+                    4 => FilterFrameDisplay.Value,
+                    _ => MachineBaySprite.Value
+                };
+                var bounds = i switch
+                {
+                    0 => new RectangleF(bay.CenterX - 60f, line.DeckY - 176f, 120f, 168f),
+                    2 => new RectangleF(bay.CenterX - 66f, line.DeckY - 164f, 132f, 164f),
+                    _ => new RectangleF(bay.CenterX - 54f, line.DeckY - 151f, 108f, 151f)
+                };
+                if (sprite is not null)
+                {
+                    if (i == 2)
+                        g.DrawImage(sprite, bounds,
+                            new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
+                    else
+                        g.DrawImageUnscaled(sprite, (int)MathF.Round(bounds.X), (int)MathF.Round(bounds.Y));
+                }
                 else
-                    g.DrawImageUnscaled(sprite, (int)MathF.Round(bounds.X), (int)MathF.Round(bounds.Y));
+                {
+                    using var fallback = new Pen(Color.FromArgb(115, 135, 148), 5f);
+                    g.DrawRectangle(fallback, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+                }
+                DrawMachinePlatform(g, bay, line.DeckY);
+            }
+        }
+
+        g.InterpolationMode = interpolation;
+        g.SmoothingMode = smoothing;
+        g.PixelOffsetMode = pixelOffset;
+    }
+
+    private static void DrawOverheadTube(Graphics g, ProcessingLine line, bool foreground)
+    {
+        if (foreground)
+        {
+            var strip = OverheadTubeForegroundStrip.Value;
+            if (strip is not null)
+            {
+                g.DrawImageUnscaled(strip, 0, 52);
+                return;
+            }
+        }
+        var sprite = OverheadTubeSprite.Value;
+        if (sprite is null || sprite.Width < 320 || sprite.Height < 80) return;
+        var horizontalFrame = foreground ? 2 : 0;
+        const float top = 52f;
+        for (var x = -80f; x < 1280f; x += 80f)
+            g.DrawImage(sprite, new RectangleF(x, top, 80f, 80f),
+                new RectangleF(horizontalFrame * 80f, 0f, 80f, 80f), GraphicsUnit.Pixel);
+    }
+
+    private static void DrawContinuousEndDrain(Graphics g, ProcessingLine line, bool foreground)
+    {
+        var sprite = ContinuousEndDrainSprite.Value;
+        if (sprite is null || sprite.Width < 288 || sprite.Height < 112) return;
+        // A full basin still accepts physical inflow and displaces overflow, so the
+        // authored open drain frames remain visible at 100% storage.
+        var frame = foreground ? 1 : 0;
+        g.DrawImage(sprite, line.ContinuousEndDrainBounds,
+            new RectangleF(frame * 144f, 0f, 144f, 112f), GraphicsUnit.Pixel);
+    }
+
+    private static void DrawContinuousWallPortals(Graphics g, ProcessingLine line, bool foreground)
+    {
+        var sprite = ConveyorWallPortalSprite.Value;
+        if (sprite is null || sprite.Width < 256 || sprite.Height < 160) return;
+        var leftFrame = foreground ? 2 : 0;
+        var rightFrame = foreground ? 3 : 1;
+        const float top = 384f;
+        g.DrawImage(sprite, new RectangleF(0f, top, 64f, 160f),
+            new RectangleF(leftFrame * 64f, 0f, 64f, 160f), GraphicsUnit.Pixel);
+        g.DrawImage(sprite, new RectangleF(1216f, top, 64f, 160f),
+            new RectangleF(rightFrame * 64f, 0f, 64f, 160f), GraphicsUnit.Pixel);
+    }
+
+    private static void DrawKnifeHolster(Graphics g, ProcessingLine line)
+    {
+        var sprite = KnifeHolsterSprite.Value;
+        if (sprite is null) return;
+        var center = line.ContinuousToolRackCenter;
+        g.DrawImage(sprite, new RectangleF(center.X - 36f, center.Y - 28f, 72f, 56f),
+            new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
+    }
+
+    private void DrawKnife(Graphics g, PhysicalKnife? knife)
+    {
+        if (knife is null) return;
+        DrawArsenalActionEffects(g, knife);
+        DrawArsenalPersistentEffects(g, knife);
+        DrawGrenadeTrajectory(g, knife);
+        DrawArsenalProjectiles(g, knife);
+        DrawToolPlacementGhost(g, knife);
+        if (!knife.Visible) return;
+        DrawHeavyBloodBridges(g, knife);
+        if (knife is { IsDeployed: true, ArsenalVisualVariant: 8, SlingshotBody: { } loaded })
+        {
+            var center = loaded.Center;
+            g.DrawLine(_slingshotRubberBackPen, knife.SlingshotForkLeft.X,
+                knife.SlingshotForkLeft.Y, center.X, center.Y);
+            g.DrawLine(_slingshotRubberBackPen, knife.SlingshotForkRight.X,
+                knife.SlingshotForkRight.Y, center.X, center.Y);
+            g.DrawLine(_slingshotRubberPen, knife.SlingshotForkLeft.X,
+                knife.SlingshotForkLeft.Y, center.X, center.Y);
+            g.DrawLine(_slingshotRubberPen, knife.SlingshotForkRight.X,
+                knife.SlingshotForkRight.Y, center.X, center.Y);
+        }
+        var arsenalVariant = knife.ArsenalVisualVariant;
+        var deployedSlingshot = knife.IsDeployed && arsenalVariant == 8;
+        var sprite = deployedSlingshot
+            ? DeployedSlingshotFrames.Value[Math.Clamp(knife.SlingshotHeightIndex, 0, 2)]
+            : (uint)arsenalVariant < PhysicalKnife.ArsenalVariantCount
+                ? ArsenalToolFrames.Value[arsenalVariant]
+                : KnifeSprite.Value;
+        if (sprite is null) return;
+        var state = g.Save();
+        var renderPosition = knife.RenderPosition;
+        g.TranslateTransform(renderPosition.X, renderPosition.Y);
+        g.RotateTransform(knife.Angle * 180f / MathF.PI);
+        if ((uint)arsenalVariant < PhysicalKnife.ArsenalVariantCount)
+        {
+            if (deployedSlingshot)
+            {
+                g.DrawImage(sprite, new RectangleF(-48f, -184f, 96f, 192f),
+                    new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
             }
             else
             {
-                using var fallback = new Pen(Color.FromArgb(115, 135, 148), 5f);
-                g.DrawRectangle(fallback, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+                var anchor = ArsenalToolAnchors[arsenalVariant];
+                if (arsenalVariant == 0 && !knife.SaberIgnited)
+                {
+                    g.DrawImage(sprite, new RectangleF(54f - anchor.X, -anchor.Y, 42f, 64f),
+                        new RectangleF(54f, 0f, 42f, 64f), GraphicsUnit.Pixel);
+                }
+                else if (arsenalVariant == 21 && knife.BaseballInPlay)
+                {
+                    g.DrawImage(sprite, new RectangleF(-anchor.X, -anchor.Y, 78f, 64f),
+                        new RectangleF(0f, 0f, 78f, 64f), GraphicsUnit.Pixel);
+                }
+                else
+                {
+                    g.DrawImage(sprite, new RectangleF(-anchor.X, -anchor.Y, 96f, 64f),
+                        new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
+                }
             }
-            DrawMachinePlatform(g, bay, line.DeckY);
         }
+        else
+        {
+            g.DrawImage(sprite, new RectangleF(-56f, -11f, 72f, 40f),
+                new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
+        }
+        foreach (var stain in knife.BloodStains)
+        {
+            var paletteIndex = Math.Min(_wetStainBrushes.Length - 1, stain.Variation % _wetStainBrushes.Length);
+            var brush = stain.Wetness > 0.12f
+                ? _wetStainBrushes[paletteIndex]
+                : _dryStainBrushes[paletteIndex];
+            var size = Math.Clamp(2f + MathF.Round(stain.Amount * 4f), 2f, 6f);
+            if ((uint)arsenalVariant < PhysicalKnife.ArsenalVariantCount && !deployedSlingshot)
+            {
+                DrawMaskedToolStain(g, arsenalVariant, ArsenalToolAnchors[arsenalVariant],
+                    stain, brush, size);
+                continue;
+            }
+            var bladeMark = stain.LocalPosition.X <= -9f;
+            var minX = bladeMark ? -52f : -8f;
+            var maxX = bladeMark ? -8f : 14f;
+            var minY = -6f;
+            var maxY = bladeMark ? 21f : 8f;
+            var x = Math.Clamp(MathF.Round(stain.LocalPosition.X - size * 0.5f), minX, maxX - size);
+            var y = Math.Clamp(MathF.Round(stain.LocalPosition.Y - size * 0.5f), minY, maxY - size);
+            g.FillRectangle(brush, x, y, size, size);
 
+            if (stain.Amount > 0.34f)
+            {
+                var fleckX = Math.Clamp(x + (((stain.Variation >> 1) & 1) == 0 ? -2f : size + 1f), minX, maxX - 2f);
+                var fleckY = Math.Clamp(y + ((stain.Variation & 3) - 1f) * 2f, minY, maxY - 2f);
+                g.FillRectangle(brush, fleckX, fleckY, 2f, 2f);
+            }
+            if (stain.Wetness > 0.48f && stain.Amount > 0.45f)
+                g.FillRectangle(_wetStainShine, Math.Clamp(x + 1f, minX, maxX - 2f),
+                    Math.Clamp(y, minY, maxY - 2f), 2f, 2f);
+        }
+        g.Restore(state);
+        DrawToolRotationGuide(g, knife);
+    }
+
+    private void DrawHeavyBloodBridges(Graphics g, PhysicalKnife knife)
+    {
+        foreach (var bridge in knife.HeavyBloodBridges)
+        {
+            var life = Math.Clamp(
+                bridge.RemainingSeconds / MathF.Max(0.001f, bridge.LifetimeSeconds),
+                0f,
+                1f);
+            var fadeIndex = Math.Clamp(
+                (int)MathF.Floor((1f - life) * _heavyBloodBridgePens.Length),
+                0,
+                _heavyBloodBridgePens.Length - 1);
+            var toolPoint = knife.HeavyBloodBridgeToolPosition(bridge);
+            var groundPoint = bridge.GroundAnchor;
+            var midpoint = (toolPoint + groundPoint) * 0.5f +
+                           new Vector2(
+                               ((bridge.Variation & 1) == 0 ? -1f : 1f) *
+                               (3f + (bridge.Variation % 3) * 2f),
+                               MathF.Min(13f, Vector2.Distance(toolPoint, groundPoint) * 0.12f));
+            var bodyPen = _heavyBloodBridgePens[fadeIndex];
+            var highlightPen = _heavyBloodBridgeHighlightPens[fadeIndex];
+            g.DrawLine(bodyPen, toolPoint.X, toolPoint.Y, midpoint.X, midpoint.Y);
+            g.DrawLine(bodyPen, midpoint.X, midpoint.Y, groundPoint.X, groundPoint.Y);
+            if ((bridge.Variation & 2) == 0)
+            {
+                g.DrawLine(highlightPen, toolPoint.X + 1f, toolPoint.Y,
+                    midpoint.X + 1f, midpoint.Y);
+                g.DrawLine(highlightPen, midpoint.X + 1f, midpoint.Y,
+                    groundPoint.X + 1f, groundPoint.Y);
+            }
+        }
+    }
+
+    private static void DrawToolPlacementGhost(Graphics g, PhysicalKnife knife)
+    {
+        if (!knife.PlacementPreviewVisible) return;
+        var variant = knife.ArsenalVisualVariant;
+        if ((uint)variant >= PhysicalKnife.ArsenalVariantCount) return;
+        var slingshot = variant == 8;
+        var sprite = slingshot
+            ? DeployedSlingshotFrames.Value[Math.Clamp(knife.SlingshotHeightIndex, 0, 2)]
+            : ArsenalToolFrames.Value[variant];
+        if (sprite is null) return;
+        var state = g.Save();
+        g.TranslateTransform(knife.PlacementPreviewPosition.X, knife.PlacementPreviewPosition.Y);
+        g.RotateTransform(knife.PlacementPreviewAngle * 180f / MathF.PI);
+        using var attributes = new ImageAttributes();
+        var matrix = new ColorMatrix { Matrix33 = knife.PlacementPreviewValid ? 0.48f : 0.18f };
+        attributes.SetColorMatrix(matrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+        if (slingshot)
+            g.DrawImage(sprite, new Rectangle(-48, -184, 96, 192),
+                0, 0, 96, 192, GraphicsUnit.Pixel, attributes);
+        else
+        {
+            var anchor = ArsenalToolAnchors[variant];
+            g.DrawImage(sprite, new Rectangle(-anchor.X, -anchor.Y, 96, 64),
+                0, 0, 96, 64, GraphicsUnit.Pixel, attributes);
+        }
+        g.Restore(state);
+    }
+
+    private static bool[][] BuildAlphaMasks(Bitmap?[] frames)
+    {
+        var masks = new bool[frames.Length][];
+        for (var frame = 0; frame < frames.Length; frame++)
+        {
+            var sprite = frames[frame];
+            var mask = new bool[96 * 64];
+            if (sprite is not null)
+                for (var y = 0; y < Math.Min(64, sprite.Height); y++)
+                    for (var x = 0; x < Math.Min(96, sprite.Width); x++)
+                        mask[y * 96 + x] = sprite.GetPixel(x, y).A > 0;
+            masks[frame] = mask;
+        }
+        return masks;
+    }
+
+    private static void DrawMaskedToolStain(Graphics g, int variant, Point anchor,
+        CleaverBloodStain stain, Brush brush, float size)
+    {
+        var mask = ArsenalToolAlphaMasks.Value[variant];
+        var half = (int)MathF.Ceiling(size * 0.5f);
+        var centerX = (int)MathF.Round(stain.LocalPosition.X);
+        var centerY = (int)MathF.Round(stain.LocalPosition.Y);
+        for (var localY = centerY - half; localY <= centerY + half; localY++)
+        for (var localX = centerX - half; localX <= centerX + half; localX++)
+        {
+            var spriteX = localX + anchor.X;
+            var spriteY = localY + anchor.Y;
+            if ((uint)spriteX >= 96u || (uint)spriteY >= 64u ||
+                !mask[spriteY * 96 + spriteX])
+                continue;
+            var dx = localX - centerX;
+            var dy = localY - centerY;
+            var irregularRadius = size * 0.5f +
+                                  (((localX * 17 + localY * 31 + stain.Variation) & 3) - 1) * 0.35f;
+            if (dx * dx + dy * dy > irregularRadius * irregularRadius) continue;
+            g.FillRectangle(brush, localX, localY, 1f, 1f);
+        }
+    }
+
+    private void DrawToolRotationGuide(Graphics g, PhysicalKnife knife)
+    {
+        if (!knife.RotationAdjusting || knife.ArsenalVisualVariant == 7) return;
+        const float radius = 44f;
+        var center = knife.Position;
+        var direction = knife.BaseAimDirection;
+        g.DrawEllipse(_toolRotationCirclePen, center.X - radius, center.Y - radius,
+            radius * 2f, radius * 2f);
+        g.DrawLine(_toolRotationLinePen, center.X, center.Y,
+            center.X + direction.X * radius, center.Y + direction.Y * radius);
+        var tip = center + direction * radius;
+        g.FillRectangle(_toolPromptKeyBrush, MathF.Round(tip.X) - 3f,
+            MathF.Round(tip.Y) - 3f, 6f, 6f);
+    }
+
+    private void DrawGrenadeTrajectory(Graphics g, PhysicalKnife knife)
+    {
+        var points = knife.GrenadeTrajectory;
+        if (points.Count < 2) return;
+        for (var i = 1; i < points.Count; i++)
+        {
+            var previous = points[i - 1];
+            var point = points[i];
+            g.DrawLine(_grenadeArcPen, previous.Position.X, previous.Position.Y,
+                point.Position.X, point.Position.Y);
+            if (point.Bounced)
+                g.DrawEllipse(_grenadeBouncePen, point.Position.X - 5f, point.Position.Y - 5f, 10f, 10f);
+        }
+        var landing = points[^1].Position;
+        g.DrawLine(_grenadeBouncePen, landing.X - 6f, landing.Y - 6f, landing.X + 6f, landing.Y + 6f);
+        g.DrawLine(_grenadeBouncePen, landing.X + 6f, landing.Y - 6f, landing.X - 6f, landing.Y + 6f);
+    }
+
+    private void DrawArsenalActionEffects(Graphics g, PhysicalKnife knife)
+    {
+        foreach (var effect in knife.ArsenalActionEffects)
+        {
+            if (effect.Variant == 11 && effect.Size > 0f)
+            {
+                var radius = effect.Size;
+                g.DrawEllipse(_arsenalExplosionPen, effect.Start.X - radius, effect.Start.Y - radius,
+                    radius * 2f, radius * 2f);
+                continue;
+            }
+            if (effect.Variant == 13)
+            {
+                g.DrawLine(_saberSizzlePen, effect.Start.X, effect.Start.Y,
+                    effect.End.X, effect.End.Y);
+                g.DrawRectangle(_saberSizzlePen, effect.Start.X - 1f, effect.Start.Y - 1f, 2f, 2f);
+                continue;
+            }
+            if (effect.Variant == 15)
+            {
+                var radius = 10f + Math.Clamp(effect.Size, 1f, 3f) * 7f;
+                g.DrawEllipse(_blackHoleRingPen, effect.End.X - radius, effect.End.Y - radius,
+                    radius * 2f, radius * 2f);
+                continue;
+            }
+            if (effect.Variant == 18)
+            {
+                var delta = effect.End - effect.Start;
+                var perpendicular = delta.LengthSquared() < 0.01f
+                    ? Vector2.UnitY
+                    : Vector2.Normalize(new Vector2(-delta.Y, delta.X));
+                var first = effect.Start + delta * 0.33f + perpendicular * 7f;
+                var second = effect.Start + delta * 0.66f - perpendicular * 6f;
+                g.DrawLine(_lightningPen, effect.Start.X, effect.Start.Y, first.X, first.Y);
+                g.DrawLine(_lightningPen, first.X, first.Y, second.X, second.Y);
+                g.DrawLine(_lightningPen, second.X, second.Y, effect.End.X, effect.End.Y);
+                continue;
+            }
+
+            var pen = effect.Variant switch
+            {
+                1 => _arsenalNailTracePen,
+                2 => _arsenalShotgunTracePen,
+                3 => _arsenalMagnumTracePen,
+                4 => _arsenalSmgTracePen,
+                _ => _arsenalSmgTracePen
+            };
+            g.DrawLine(pen, effect.Start.X, effect.Start.Y, effect.End.X, effect.End.Y);
+        }
+    }
+
+    private void DrawArsenalPersistentEffects(Graphics g, PhysicalKnife knife)
+    {
+        var elementalFrames = ElementalEffectFrames.Value;
+        foreach (var flame in knife.FlamePatches)
+        {
+            var frame = (int)(flame.RemainingSeconds * 13f + flame.Variation) & 3;
+            var angle = flame.SurfaceFire &&
+                        flame.SurfaceNormal.LengthSquared() > 0.001f
+                ? MathF.Atan2(flame.SurfaceNormal.Y, flame.SurfaceNormal.X) +
+                  MathF.PI * 0.5f
+                : flame.Velocity.LengthSquared() > 36f
+                ? MathF.Atan2(flame.Velocity.Y, flame.Velocity.X) + MathF.PI * 0.5f
+                : 0f;
+            DrawElementalEffect(g, elementalFrames[frame], flame.Position, angle);
+        }
+        var acidSurfaceFrames = AcidSurfaceDisplayFrames.Value;
+        var acidCoatFrames = AcidCoatDisplayFrames.Value;
+        foreach (var pool in knife.AcidPools)
+        {
+            var frame = 5 + ((int)(pool.RemainingSeconds * 8f + pool.Variation) % 3);
+            var normal = pool.SurfaceNormal.LengthSquared() > 0.01f
+                ? Vector2.Normalize(pool.SurfaceNormal)
+                : -Vector2.UnitY;
+            var angle = MathF.Atan2(normal.Y, normal.X) + MathF.PI * 0.5f;
+            DrawElementalEffect(g, acidSurfaceFrames[frame], pool.Position, angle);
+
+            // A second short run below the impact gives body-attached acid a coated,
+            // gravity-fed silhouette instead of a floating horizontal decal.
+            if (pool.AttachedBody is not null)
+            {
+                var runPosition = pool.Position - normal * MathF.Min(9f, pool.Radius * 0.75f);
+                DrawElementalEffect(g, acidCoatFrames[5 + ((frame - 4) % 3)],
+                    runPosition, angle);
+            }
+        }
+        foreach (var frozen in knife.FrozenBlobs)
+        {
+            var body = frozen.Body;
+            var center = body.Center;
+            var half = body.Radius + 9f;
+            g.FillRectangle(_iceBlockBrush,
+                center.X - half, center.Y - half, half * 2f, half * 2f);
+            g.DrawRectangle(_iceBlockPen,
+                center.X - half, center.Y - half, half * 2f, half * 2f);
+            g.DrawLine(_iceBlockPen, center.X - half + 5f, center.Y - half + 7f,
+                center.X - 3f, center.Y - 2f);
+            g.DrawLine(_iceBlockPen, center.X + half - 5f, center.Y + half - 8f,
+                center.X + 4f, center.Y + 3f);
+        }
+        var ratFrames = RatDisplayFrames.Value;
+        foreach (var rat in knife.Rats)
+        {
+            var sprite = ratFrames[rat.Frame & 1];
+            if (sprite is null) continue;
+            var state = g.Save();
+            g.TranslateTransform(rat.Position.X, rat.Position.Y);
+            if (rat.Velocity.X < 0f)
+            {
+                g.ScaleTransform(-1f, 1f);
+            }
+            g.DrawImageUnscaled(sprite, -12, -7);
+            g.Restore(state);
+        }
+    }
+
+    private void DrawArsenalProjectiles(Graphics g, PhysicalKnife knife)
+    {
+        if (knife.ArsenalProjectiles.Count == 0) return;
+        var frames = ArsenalToolFrames.Value;
+        foreach (var projectile in knife.ArsenalProjectiles)
+        {
+            var state = g.Save();
+            g.TranslateTransform(projectile.Position.X, projectile.Position.Y);
+            if (projectile.Kind == ArsenalProjectileKind.SawBlade)
+            {
+                // The projectile is viewed edge-on in its horizontal cutting plane.
+                // Its orientation follows travel and freezes once embedded.
+                g.RotateTransform(projectile.Angle * 180f / MathF.PI);
+                var sprite = SawProjectileSprite.Value;
+                if (sprite is not null)
+                    g.DrawImage(sprite, new RectangleF(-20f, -8f, 40f, 16f),
+                        new RectangleF(0f, 0f, 40f, 16f), GraphicsUnit.Pixel);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.Grenade)
+            {
+                g.RotateTransform(projectile.Angle * 180f / MathF.PI);
+                var sprite = frames[11];
+                if (sprite is not null)
+                    g.DrawImage(sprite, new RectangleF(-48f, -31f, 96f, 64f),
+                        new RectangleF(0f, 0f, 96f, 64f), GraphicsUnit.Pixel);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.BlackHole)
+            {
+                var pulse = 10f + MathF.Sin(projectile.RemainingSeconds * 13f) * 2f;
+                g.FillEllipse(_blackHoleBrush, -pulse, -pulse, pulse * 2f, pulse * 2f);
+                g.DrawEllipse(_blackHoleRingPen, -pulse - 3f, -pulse - 3f,
+                    (pulse + 3f) * 2f, (pulse + 3f) * 2f);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.Rat)
+            {
+                var ratFrames = RatDisplayFrames.Value;
+                var sprite = ratFrames[(int)(projectile.RemainingSeconds * 10f) & 1];
+                if (sprite is not null)
+                    g.DrawImageUnscaled(sprite, -12, -7);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.GrowthPulse)
+            {
+                g.FillEllipse(_waterBrush, -5f, -5f, 10f, 10f);
+                g.DrawEllipse(_blackHoleRingPen, -8f, -8f, 16f, 16f);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.Flame)
+            {
+                var direction = projectile.Velocity.LengthSquared() > 0.001f
+                    ? projectile.Velocity
+                    : -Vector2.UnitY;
+                var angle = MathF.Atan2(direction.Y, direction.X) + MathF.PI * 0.5f;
+                g.RotateTransform(angle * 180f / MathF.PI);
+                var frame = (int)(projectile.RemainingSeconds * 14f) & 3;
+                var sprite = ElementalEffectFrames.Value[frame];
+                if (sprite is not null)
+                    g.DrawImageUnscaled(sprite, -16, -8);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.IceBolt)
+            {
+                g.FillRectangle(_iceProjectileBrush, -9f, -5f, 18f, 10f);
+                g.DrawLine(_iceBlockPen, -12f, 0f, 12f, 0f);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.LightningSeed)
+            {
+                g.FillEllipse(_iceProjectileBrush, -5f, -5f, 10f, 10f);
+                g.DrawLine(_lightningPen, -10f, -4f, 0f, 5f);
+                g.DrawLine(_lightningPen, 0f, 5f, 10f, -4f);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.AcidGlob)
+            {
+                var sprite = ElementalEffectFrames.Value[4];
+                if (sprite is not null)
+                    g.DrawImageUnscaled(sprite, -16, -8);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.WaterTear)
+            {
+                g.FillEllipse(_waterBrush, -10f, -8f, 20f, 16f);
+                g.FillRectangle(_iceProjectileBrush, 1f, -4f, 4f, 4f);
+            }
+            else if (projectile.Kind == ArsenalProjectileKind.Baseball)
+            {
+                g.FillEllipse(_baseballBrush, -6f, -6f, 12f, 12f);
+                g.DrawLine(Pens.Firebrick, -3f, -4f, 3f, 4f);
+            }
+            else
+            {
+                var direction = projectile.Velocity.LengthSquared() > 0.001f
+                    ? Vector2.Normalize(projectile.Velocity)
+                    : Vector2.UnitX;
+                g.RotateTransform(MathF.Atan2(direction.Y, direction.X) * 180f / MathF.PI);
+                var (brush, width, height) = projectile.Kind switch
+                {
+                    ArsenalProjectileKind.Nail => (_nailProjectileBrush, 16f, 4f),
+                    ArsenalProjectileKind.ShotgunPellet => (_shotgunProjectileBrush, 4f, 3f),
+                    ArsenalProjectileKind.MagnumBullet => (_magnumProjectileBrush, 8f, 4f),
+                    _ => (_smgProjectileBrush, 5f, 2f)
+                };
+                g.FillRectangle(brush, -width * 0.5f, -height * 0.5f, width, height);
+            }
+            g.Restore(state);
+        }
+    }
+
+    private static void DrawElementalEffect(
+        Graphics g,
+        Bitmap? sprite,
+        Vector2 position,
+        float angle)
+    {
+        if (sprite is null) return;
+        var state = g.Save();
+        g.TranslateTransform(position.X, position.Y);
+        if (MathF.Abs(angle) > 0.001f)
+            g.RotateTransform(angle * 180f / MathF.PI);
+        g.DrawImageUnscaled(sprite, -sprite.Width / 2, -sprite.Height / 2);
+        g.Restore(state);
+    }
+
+    private static void DrawKnifeHeavyImpact(Graphics g, PhysicalKnife? knife)
+    {
+        if (knife is not { HeavyImpactActive: true }) return;
+        var sprite = CleaverHeavyImpactSprite.Value;
+        if (sprite is null || sprite.Width < 48 * 4 || sprite.Height < 48) return;
+        var age = knife.HeavyImpactAge;
+        var frame = age < 0.035f ? 0 : age < 0.080f ? 1 : age < 0.145f ? 2 : 3;
+        var scale = 1f + Math.Clamp(knife.HeavyImpactStrength, 0.72f, 1f) * 0.22f;
+        var size = 48f * scale;
+        var state = g.Save();
+        var interpolation = g.InterpolationMode;
+        var smoothing = g.SmoothingMode;
+        var pixelOffset = g.PixelOffsetMode;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.SmoothingMode = SmoothingMode.None;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.TranslateTransform(MathF.Round(knife.HeavyImpactPosition.X),
+            MathF.Round(knife.HeavyImpactPosition.Y));
+        g.RotateTransform(knife.HeavyImpactAngle * 180f / MathF.PI);
+        g.DrawImage(sprite, new RectangleF(-size * 0.5f, -size * 0.5f, size, size),
+            new RectangleF(frame * 48f, 0f, 48f, 48f), GraphicsUnit.Pixel);
+        g.Restore(state);
         g.InterpolationMode = interpolation;
         g.SmoothingMode = smoothing;
         g.PixelOffsetMode = pixelOffset;
@@ -1165,6 +2299,7 @@ public sealed class GameRenderer
         // re-enabling the basin entity later restores the established layering.
         DrawBasinFluid(g, basin);
         DrawBasinSuspendedDrops(g, basin);
+        DrawBasinSurfaceImpacts(g, basin);
         if (BloodBasin.DiegoEnabled) DrawDiego(g, basin);
 
         var bubbleCount = BasinBubbleCountForLevel(basin.FluidLevel01);
@@ -1205,6 +2340,42 @@ public sealed class GameRenderer
                 radius * 2f + 2f, radius * 2f + 2f, 2f);
             FillPixelOctagon(g, body, new Vector2(drop.X, drop.Y), radius * 2f, radius * 2f, 1f);
             if (radius >= 2f) g.FillRectangle(glint, MathF.Round(drop.X - 1f), MathF.Round(drop.Y - 1f), 1f, 1f);
+        }
+        g.Restore(state);
+    }
+
+    private static void DrawBasinSurfaceImpacts(Graphics g, BloodBasin basin)
+    {
+        if (basin.SurfaceSplashes.Count == 0 && basin.SurfaceRipples.Count == 0) return;
+        var state = g.Save();
+        g.SetClip(new RectangleF(basin.Left + 5f, basin.FluidTop, basin.Width - 10f,
+            basin.FluidBottom - basin.FluidTop), CombineMode.Intersect);
+        using var shadow = new SolidBrush(Color.FromArgb(225, 105, 3, 17));
+        using var body = new SolidBrush(Color.FromArgb(244, 211, 9, 24));
+        using var glint = new SolidBrush(Color.FromArgb(235, 255, 48, 45));
+
+        foreach (var ripple in basin.SurfaceRipples)
+        {
+            var progress = Math.Clamp(ripple.Age / ripple.Lifetime, 0f, 1f);
+            var halfWidth = MathF.Round((3f + ripple.Strength * 6f + progress * 15f) * 0.5f) * 2f;
+            var gap = 2f + MathF.Round(progress * 3f);
+            var y = MathF.Round(basin.SurfaceYAt(ripple.X) - 1f);
+            var segmentWidth = MathF.Max(2f, halfWidth - gap);
+            g.FillRectangle(shadow, MathF.Round(ripple.X - halfWidth - 1f), y + 1f, segmentWidth + 1f, 2f);
+            g.FillRectangle(shadow, MathF.Round(ripple.X + gap), y + 1f, segmentWidth + 1f, 2f);
+            g.FillRectangle(body, MathF.Round(ripple.X - halfWidth), y, segmentWidth, 1f);
+            g.FillRectangle(body, MathF.Round(ripple.X + gap), y, segmentWidth, 1f);
+        }
+
+        foreach (var splash in basin.SurfaceSplashes)
+        {
+            var size = splash.Radius >= 1.7f ? 3f : 2f;
+            var x = MathF.Round(splash.X - size * 0.5f);
+            var y = MathF.Round(splash.Y - size * 0.5f);
+            g.FillRectangle(shadow, x + 1f, y + 1f, size, size);
+            g.FillRectangle(body, x, y, size, size);
+            if ((splash.Variation & 3) == 0)
+                g.FillRectangle(glint, x, y, 1f, 1f);
         }
         g.Restore(state);
     }
@@ -1378,19 +2549,15 @@ public sealed class GameRenderer
 
     internal static bool DiegoMirrorsForDirection(float direction) => direction > 0f;
 
-    private static void DrawBasinForeground(Graphics g, ProcessingLine line)
+    private void DrawBasinForeground(Graphics g, ProcessingLine line)
     {
         var basin = line.Basin;
-        using var rimDark = new SolidBrush(Color.FromArgb(255, 20, 29, 35));
-        using var rim = new SolidBrush(Color.FromArgb(255, 95, 119, 128));
-        using var highlight = new SolidBrush(Color.FromArgb(255, 156, 182, 188));
-        using var hazard = new SolidBrush(Color.FromArgb(255, 230, 181, 58));
-        g.FillRectangle(rimDark, basin.Left - 4f, basin.Top - 5f, basin.Width + 8f, 12f);
-        g.FillRectangle(rim, basin.Left, basin.Top - 5f, basin.Width, 8f);
-        g.FillRectangle(highlight, basin.Left, basin.Top - 5f, basin.Width, 2f);
-        g.FillRectangle(rimDark, basin.Left - 4f, basin.Bottom - 8f, basin.Width + 8f, 12f);
+        g.FillRectangle(_basinRimDarkBrush, basin.Left - 4f, basin.Top - 5f, basin.Width + 8f, 12f);
+        g.FillRectangle(_basinRimBrush, basin.Left, basin.Top - 5f, basin.Width, 8f);
+        g.FillRectangle(_basinHighlightBrush, basin.Left, basin.Top - 5f, basin.Width, 2f);
+        g.FillRectangle(_basinRimDarkBrush, basin.Left - 4f, basin.Bottom - 8f, basin.Width + 8f, 12f);
         for (var x = basin.Left + 12f; x < basin.Right - 8f; x += 48f)
-            g.FillRectangle(hazard, x, basin.Bottom - 6f, 18f, 3f);
+            g.FillRectangle(_basinHazardBrush, x, basin.Bottom - 6f, 18f, 3f);
 
         var monitor = BasinMonitorSprite.Value;
         var monitorBounds = new RectangleF(basin.Left + 9f, basin.Top + 15f, 32f, 64f);
@@ -1398,18 +2565,45 @@ public sealed class GameRenderer
             g.DrawImage(monitor, monitorBounds,
                 new RectangleF(0f, 0f, monitor.Width, monitor.Height), GraphicsUnit.Pixel);
         var fillHeight = 35f * basin.FluidLevel01;
-        using var levelDark = new SolidBrush(Color.FromArgb(220, 103, 6, 20));
-        using var levelBright = new SolidBrush(Color.FromArgb(225, 235, 18, 24));
-        g.FillRectangle(levelDark, monitorBounds.Left + 9f, monitorBounds.Top + 45f - fillHeight, 14f, fillHeight);
+        g.FillRectangle(_basinLevelDarkBrush, monitorBounds.Left + 9f,
+            monitorBounds.Top + 45f - fillHeight, 14f, fillHeight);
         if (fillHeight > 1f)
-            g.FillRectangle(levelBright, monitorBounds.Left + 9f, monitorBounds.Top + 45f - fillHeight, 14f, 1f);
-        using var meterFont = new Font("Consolas", 7f, FontStyle.Bold, GraphicsUnit.Point);
-        using var meterText = new SolidBrush(Color.FromArgb(245, 197, 231, 229));
-        using var meterBack = new SolidBrush(Color.FromArgb(220, 12, 18, 22));
+            g.FillRectangle(_basinLevelBrightBrush, monitorBounds.Left + 9f,
+                monitorBounds.Top + 45f - fillHeight, 14f, 1f);
         var percent = Math.Clamp((int)MathF.Round(basin.FluidLevel01 * 100f), 0, 100);
-        g.FillRectangle(meterBack, monitorBounds.Right + 2f, monitorBounds.Top + 21f, 39f, 25f);
-        g.DrawString($"{percent:00}%\n{basin.CurrentFluidVolume:0000}", meterFont, meterText,
+        g.FillRectangle(_basinMeterBackBrush, monitorBounds.Right + 2f, monitorBounds.Top + 21f, 39f, 25f);
+        g.DrawString($"{percent:00}%\n{basin.CurrentFluidVolume:0000}",
+            _basinMeterFont, _basinMeterTextBrush,
             monitorBounds.Right + 4f, monitorBounds.Top + 21f);
+        DrawBasinFrontOverflow(g, basin);
+    }
+
+    private void DrawBasinFrontOverflow(Graphics g, BloodBasin basin)
+    {
+        for (var stainIndex = 0;
+             stainIndex < basin.FrontOverflowStains.Count;
+             stainIndex++)
+        {
+            var stain = basin.FrontOverflowStains[stainIndex];
+            var brush = stain.Wetness > 0.45f
+                ? _wetStainBrushes[stain.Variation % _wetStainBrushes.Length]
+                : _dryStainBrushes[stain.Variation % _dryStainBrushes.Length];
+            var width = MathF.Max(2f, MathF.Round(stain.Width * 0.5f) * 2f);
+            DrawSegmentedBloodDrip(
+                g,
+                brush,
+                stain.X - width * 0.5f,
+                basin.Top - 4f,
+                width,
+                stain.Length,
+                stain.Variation);
+            if (stain.Wetness > 0.55f)
+                g.FillRectangle(_wetStainShine,
+                    MathF.Round(stain.X - 1f),
+                    MathF.Round(basin.Top - 4f),
+                    2f,
+                    3f);
+        }
     }
 
     private static void DrawMachinePlatform(Graphics g, ProcessingBay bay, float deckY)
@@ -1497,26 +2691,31 @@ public sealed class GameRenderer
 
         g.DrawString("BLOOD EXCHANGE", _shopFont, text, bounds.Left + 14f, contentTop + 4f);
         g.DrawString($"RESERVE {line.Basin.SpendableBlood:00000}", _shopSmallFont,
-            line.MachineryLockedByStorage ? red : cyan, bounds.Left + 14f, contentTop + 20f);
-        if (line.MachineryLockedByStorage)
+            line.BasinAtCapacity ? amber : cyan, bounds.Left + 14f, contentTop + 20f);
+        if (line.BasinAtCapacity)
         {
-            g.FillRectangle(red, bounds.Right - 64f, contentTop + 7f, 48f, 10f);
-            g.DrawString("LINE LOCK", _shopSmallFont, inset, bounds.Right - 61f, contentTop + 6f);
+            g.FillRectangle(amber, bounds.Right - 79f, contentTop + 7f, 63f, 10f);
+            g.DrawString("OVERFLOW", _shopSmallFont, inset, bounds.Right - 75f, contentTop + 6f);
         }
 
         for (var i = 0; i < line.BloodShopItems.Count; i++)
         {
             var item = line.BloodShopItems[i];
             var itemBounds = line.BloodShopItemBounds(i);
-            var affordable = line.Basin.SpendableBlood + 0.001f >= item.Cost;
-            var accent = item.Purchased ? amber : affordable ? cyan : red;
+            var affordable = item.CanPurchase && line.Basin.SpendableBlood + 0.001f >= item.Cost;
+            var accent = item.Repeatable ? affordable ? cyan : item.CanPurchase ? red : amber
+                : item.Purchased ? amber : affordable ? cyan : red;
             g.FillRectangle(inset, itemBounds);
             g.FillRectangle(dim, itemBounds.Left, itemBounds.Top, 3f, itemBounds.Height);
             g.FillRectangle(accent, itemBounds.Left + 3f, itemBounds.Top + 3f, 4f, itemBounds.Height - 6f);
-            g.DrawString(item.Label, _shopSmallFont, item.Purchased ? offText : text,
+            g.DrawString(item.Label, _shopSmallFont,
+                !item.CanPurchase && !item.Repeatable ? offText : text,
                 itemBounds.Left + 11f, itemBounds.Top + 2f);
-            g.DrawString(item.Purchased ? "INSTALLED" : $"{item.Cost:0}", _shopSmallFont,
-                item.Purchased ? amber : affordable ? cyan : offText,
+            var itemValue = item.Repeatable
+                ? $"{item.PurchaseCount}/{item.MaximumPurchases}  {item.Cost:0}"
+                : item.Purchased ? "INSTALLED" : $"{item.Cost:0}";
+            g.DrawString(itemValue, _shopSmallFont,
+                !item.CanPurchase ? amber : affordable ? cyan : offText,
                 itemBounds.Right - 53f, itemBounds.Top + 11f);
         }
 
@@ -1541,10 +2740,24 @@ public sealed class GameRenderer
         g.SmoothingMode = SmoothingMode.None;
         g.PixelOffsetMode = PixelOffsetMode.Half;
 
-        DrawBloodShop(g, line);
-        DrawReceivingTub(g, line);
-        DrawCartForeground(g, line);
-        DrawCartStatus(g, line);
+        if (line.ContinuousFlowMode)
+        {
+            DrawOverheadTube(g, line, foreground: true);
+            DrawContinuousEndDrain(g, line, foreground: true);
+            DrawBasinForeground(g, line);
+            DrawContinuousWallPortals(g, line, foreground: true);
+            g.InterpolationMode = interpolation;
+            g.SmoothingMode = smoothing;
+            g.PixelOffsetMode = pixelOffset;
+            return;
+        }
+        else
+        {
+            DrawBloodShop(g, line);
+            DrawReceivingTub(g, line);
+            DrawCartForeground(g, line);
+            DrawCartStatus(g, line);
+        }
         for (var i = 0; i < line.Bays.Count; i++)
         {
             DrawDrainPipeExterior(g, line.Bays[i], line, i);
@@ -1570,15 +2783,21 @@ public sealed class GameRenderer
         var drill = line.Bays[1];
         DrawActuatorColumn(g, drill.CenterX, line.DeckY - 151f, line.DrillHeadTop + 18f, 15f);
         var drillHead = DrillHeadSprite.Value;
-        var spinOffset = MathF.Sin(line.DrillSpin) * 1.5f;
+        const int drillFrameWidth = 48;
+        const int drillFrameHeight = 80;
+        const int drillFrameCount = 6;
+        var drillFrame = line.DrillSpinSpeed <= 0.01f
+            ? 0
+            : (int)(line.DrillSpin / (MathF.PI * 2f) * drillFrameCount) % drillFrameCount;
         var drillHeadBounds = new RectangleF(
-            drill.CenterX - 24f + spinOffset,
+            drill.CenterX - 24f + line.DrillVibrationX,
             line.DrillHeadTop,
             48f,
             80f);
         if (drillHead is not null)
             g.DrawImage(drillHead, drillHeadBounds,
-                new RectangleF(0f, 0f, drillHead.Width, drillHead.Height), GraphicsUnit.Pixel);
+                new RectangleF(drillFrame * drillFrameWidth, 0f, drillFrameWidth, drillFrameHeight),
+                GraphicsUnit.Pixel);
 
         var drillLever = line.DrillLeverHeld ? DrillLeverHeldSprite.Value : DrillLeverIdleSprite.Value;
         var drillLeverBounds = new RectangleF(
@@ -1624,6 +2843,7 @@ public sealed class GameRenderer
         for (var i = 0; i < line.Bays.Count; i++)
             DrawDrainPipeInterior(g, line.Bays[i], line, i);
         DrawBasinForeground(g, line);
+        if (!line.ContinuousFlowMode) DrawFactoryWorkers(g, line);
 
         g.InterpolationMode = interpolation;
         g.SmoothingMode = smoothing;
@@ -1733,11 +2953,126 @@ public sealed class GameRenderer
         g.FillRectangle(track, center.X - 43f, line.DeckY - 153f, 86f, 6f);
         g.FillRectangle(fill, center.X - 41f, line.DeckY - 151f, 82f * line.DrumProgress, 2f);
 
-        // Intake is the final Bay 3 foreground pass. No housing, rim, hatch,
-        // wheel, or lift component may occlude the blob until the complete
-        // loading animation has ended and it is actually behind the drum glass.
-        if (line.DrumLoading && line.DrumLockedBody is { } loadingBody)
-            DrawBlob(g, loadingBody, false, loadingBody.VisualRotation, machineLit: true);
+    }
+
+    private void DrawDrumLoadingForeground(Graphics g, ProcessingLine? line)
+    {
+        // Loading matter is a dedicated scene-level foreground pass. Keeping it
+        // outside DrawDrum prevents any later machine, drain, glass, scaffold, or
+        // cached housing pass from accidentally covering it before drum entry.
+        if (line is null || !line.DrumLoading || line.DrumLockedBody is not { } loadingBody) return;
+        DrawBlob(g, loadingBody, false, loadingBody.VisualRotation, machineLit: true);
+    }
+
+    private static void DrawWorkerInfrastructure(Graphics g, ProcessingLine line)
+    {
+        var sprite = WorkerInfrastructureSprite.Value;
+        if (sprite is null || sprite.Width < 128 || sprite.Height < 64) return;
+
+        var interpolation = g.InterpolationMode;
+        var smoothing = g.SmoothingMode;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.SmoothingMode = SmoothingMode.None;
+
+        var outlet = line.WorkerOutletBounds;
+        g.DrawImage(sprite, outlet, new RectangleF(80f, 0f, 48f, 64f), GraphicsUnit.Pixel);
+
+        var catwalkLeft = line.Bays[0].CenterX - 22f;
+        var catwalkRight = line.WorkerTrunkX + 8f;
+        for (var x = catwalkLeft; x < catwalkRight; x += 64f)
+        {
+            var width = MathF.Min(64f, catwalkRight - x);
+            g.DrawImage(sprite,
+                new RectangleF(x, line.WorkerCatwalkY - 3f, width, 16f),
+                new RectangleF(0f, 0f, width, 16f), GraphicsUnit.Pixel);
+        }
+
+        DrawWorkerLadder(g, sprite, line.WorkerTrunkX,
+            line.WorkerCatwalkY, line.WorkerOutletMouth.Y + 2f);
+        for (var bay = 0; bay < line.Bays.Count; bay++)
+        {
+            var anchor = line.WorkerOperationAnchor(bay);
+            DrawWorkerLadder(g, sprite, anchor.X, line.WorkerCatwalkY, anchor.Y);
+        }
+
+        g.InterpolationMode = interpolation;
+        g.SmoothingMode = smoothing;
+    }
+
+    private static void DrawWorkerLadder(Graphics g, Bitmap sprite, float centerX, float top, float bottom)
+    {
+        if (bottom <= top) return;
+        for (var y = top; y < bottom; y += 64f)
+        {
+            var height = MathF.Min(64f, bottom - y);
+            g.DrawImage(sprite, new RectangleF(centerX - 8f, y, 16f, height),
+                new RectangleF(64f, 0f, 16f, height), GraphicsUnit.Pixel);
+        }
+    }
+
+    private static void DrawFactoryWorkers(Graphics g, ProcessingLine line)
+    {
+        var sprite = FactoryWorkerSprite.Value;
+        if (sprite is null || sprite.Width < 24 * 22 || sprite.Height < 32) return;
+        var interpolation = g.InterpolationMode;
+        var smoothing = g.SmoothingMode;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.SmoothingMode = SmoothingMode.None;
+
+        foreach (var worker in line.FactoryWorkers)
+        {
+            var frame = WorkerFrame(worker);
+            var scale = worker.Activity == FactoryWorkerActivity.Forming
+                ? Math.Clamp(0.08f + worker.Formation * 0.92f, 0.08f, 1f)
+                : 1f;
+            var width = 24f * scale;
+            var height = 32f * scale;
+            var destination = new RectangleF(
+                worker.Position.X - 12f * scale,
+                worker.Position.Y - 30f * scale,
+                width,
+                height);
+            if (worker.FacingRight)
+            {
+                g.DrawImage(sprite, destination,
+                    new RectangleF(frame * 24f, 0f, 24f, 32f), GraphicsUnit.Pixel);
+            }
+            else
+            {
+                var state = g.Save();
+                g.TranslateTransform(worker.Position.X * 2f, 0f);
+                g.ScaleTransform(-1f, 1f);
+                destination.X = worker.Position.X - 12f * scale;
+                g.DrawImage(sprite, destination,
+                    new RectangleF(frame * 24f, 0f, 24f, 32f), GraphicsUnit.Pixel);
+                g.Restore(state);
+            }
+        }
+
+        g.InterpolationMode = interpolation;
+        g.SmoothingMode = smoothing;
+    }
+
+    private static int WorkerFrame(FactoryWorker worker)
+    {
+        static int Cycle(float phase, float seconds, int count) =>
+            (int)MathF.Floor(phase / seconds) % count;
+        return worker.Activity switch
+        {
+            FactoryWorkerActivity.Climbing or FactoryWorkerActivity.Descending or FactoryWorkerActivity.Ascending
+                => 6 + Cycle(worker.Phase, 0.11f, 4),
+            FactoryWorkerActivity.Walking => 2 + Cycle(worker.Phase, 0.09f, 4),
+            FactoryWorkerActivity.Operating => worker.AssignedBay switch
+            {
+                0 => 10 + Cycle(worker.Phase, 0.15f, 2),
+                1 => 12 + Cycle(worker.Phase, 0.13f, 2),
+                2 => 14 + Cycle(worker.Phase, 0.09f, 4),
+                3 => 18 + Cycle(worker.Phase, 0.14f, 2),
+                4 => 20 + Cycle(worker.Phase, 0.12f, 2),
+                _ => 0
+            },
+            _ => Cycle(worker.Phase, 0.24f, 2)
+        };
     }
 
     private static void DrawDrumLoadingLift(Graphics g, ProcessingLine line)
@@ -1864,17 +3199,12 @@ public sealed class GameRenderer
         FillPixelOctagon(g, far, center, line.Powered ? 34f : 70f, line.Powered ? 28f : 58f, 10f);
         FillPixelOctagon(g, near, center, line.Powered ? 22f : 44f, line.Powered ? 18f : 36f, 7f);
         g.FillRectangle(lamp, center.X - 8f, center.Y - 5f, 16f, 10f);
-        if (!line.Powered)
-        {
-            using var font = new Font("Consolas", 8f, FontStyle.Bold, GraphicsUnit.Point);
-            using var text = new SolidBrush(Color.FromArgb(238, 240, 195, 75));
-            g.DrawString("GRAB HANDLE • PULL DOWN", font, text, bounds.Left - 10f, bounds.Bottom + 4f);
-        }
         DrawDoorwayBloodStains(g, line);
     }
 
     private static void DrawDoorwayBloodStains(Graphics g, ProcessingLine line)
     {
+        if (line.ContinuousFlowMode) return;
         if (line.DoorwayStains.Count == 0) return;
         using var dark = new SolidBrush(Color.FromArgb(205, 102, 3, 17));
         using var wet = new SolidBrush(Color.FromArgb(225, 211, 8, 22));
@@ -2176,11 +3506,11 @@ public sealed class GameRenderer
         var counterBounds = chamber.CounterBounds;
         g.FillRectangle(_chamberDoorBrush, counterBounds);
         g.DrawRectangle(_chamberLeverPen, counterBounds.X, counterBounds.Y, counterBounds.Width, counterBounds.Height);
-        using var counterLabelFont = new Font("Consolas", 6.5f, FontStyle.Bold, GraphicsUnit.Point);
+        using var counterLabelFont = new Font("Consolas", 5.2f, FontStyle.Bold, GraphicsUnit.Point);
         using var counterValueFont = new Font("Consolas", 11f, FontStyle.Bold, GraphicsUnit.Point);
         using var counterLabel = new SolidBrush(Color.FromArgb(235, 135, 158, 166));
         using var counterValue = new SolidBrush(Color.FromArgb(255, 124, 233, 223));
-        g.DrawString("UNITS", counterLabelFont, counterLabel, counterBounds.Left + 6f, counterBounds.Top + 3f);
+        g.DrawString("PROCESSED", counterLabelFont, counterLabel, counterBounds.Left + 2f, counterBounds.Top + 3f);
         g.DrawString($"{chamber.UnitsProduced % 10000:0000}", counterValueFont, counterValue,
             counterBounds.Left + 5f, counterBounds.Top + 14f);
 
@@ -2300,7 +3630,7 @@ public sealed class GameRenderer
                 height = MathF.Max(2f, MathF.Round(height * 0.5f) * 2f);
                 if (mark.IsDrip)
                 {
-                    DrawSegmentedDrip(brush, x, y, width, height, mark.Variation);
+                    DrawSegmentedBloodDrip(g, brush, x, y, width, height, mark.Variation);
                     continue;
                 }
                 g.FillRectangle(brush, x, y, width, height);
@@ -2313,87 +3643,91 @@ public sealed class GameRenderer
             }
         }
 
-        void DrawSegmentedDrip(
-            Brush brush,
-            float x,
-            float y,
-            float width,
-            float height,
-            byte variation)
-        {
-            var state = (uint)(variation + 1) * 0x9E3779B9u;
-            var centerX = x + width * 0.5f;
-            var anchorCenterX = centerX;
-            var maximumWander = MathF.Max(2f, width * 0.85f + 2f);
-            var previousCenterX = centerX;
-            var previousWidth = width;
-            var cursorY = y;
-            var remaining = height;
-            var segmentIndex = 0;
-            while (remaining > 1f && segmentIndex < 24)
-            {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                var segmentHeight = MathF.Min(remaining, 2f + ((state >> 4) & 3u) * 2f);
-                var taper = 1f - segmentIndex * 0.075f;
-                var widthNoise = 0.72f + (state & 7u) / 7f * 0.48f;
-                var segmentWidth = Math.Clamp(MathF.Round(width * taper * widthNoise * 0.5f) * 2f, 2f, width + 2f);
-                var wander = ((int)((state >> 8) & 3u) - 1) * 1.2f;
-                centerX = Math.Clamp(centerX + wander,
-                    anchorCenterX - maximumWander,
-                    anchorCenterX + maximumWander);
-                if (segmentIndex > 0)
-                {
-                    // Join consecutive wandering sections across the tile's
-                    // front face. Without this bridge a narrow two-pixel lane
-                    // could step sideways and make the panel art appear to
-                    // occlude the blood even though stains render afterward.
-                    var bridgeLeft = MathF.Min(
-                        previousCenterX - previousWidth * 0.28f,
-                        centerX - segmentWidth * 0.28f);
-                    var bridgeRight = MathF.Max(
-                        previousCenterX + previousWidth * 0.28f,
-                        centerX + segmentWidth * 0.28f);
-                    g.FillRectangle(brush,
-                        MathF.Round(bridgeLeft * 0.5f) * 2f,
-                        cursorY - 1f,
-                        MathF.Max(2f, MathF.Round((bridgeRight - bridgeLeft) * 0.5f) * 2f),
-                        2f);
-                }
-                g.FillRectangle(brush,
-                    MathF.Round((centerX - segmentWidth * 0.5f) * 0.5f) * 2f,
-                    cursorY,
-                    segmentWidth,
-                    segmentHeight);
-                previousCenterX = centerX;
-                previousWidth = segmentWidth;
-                cursorY += segmentHeight;
-                remaining -= segmentHeight;
-                segmentIndex++;
-                if (remaining > 5f && ((state >> 12) & 7u) == 0u)
-                {
-                    // Keep the former depth beat, but render it as a narrow
-                    // front-face neck rather than a transparent hole through
-                    // which the tile center shows completely.
-                    var neckWidth = MathF.Max(2f, MathF.Round(segmentWidth * 0.55f * 0.5f) * 2f);
-                    g.FillRectangle(brush,
-                        MathF.Round((centerX - neckWidth * 0.5f) * 0.5f) * 2f,
-                        cursorY,
-                        neckWidth,
-                        2f);
-                    cursorY += 2f;
-                    remaining -= 2f;
-                }
-            }
+    }
 
-            var beadSize = Math.Clamp(width * (0.65f + (variation & 3) * 0.12f), 2f, 8f);
+    private static void DrawSegmentedBloodDrip(
+        Graphics g,
+        Brush brush,
+        float x,
+        float y,
+        float width,
+        float height,
+        byte variation)
+    {
+        var state = (uint)(variation + 1) * 0x9E3779B9u;
+        var centerX = x + width * 0.5f;
+        var anchorCenterX = centerX;
+        var maximumWander = MathF.Max(2f, width * 0.85f + 2f);
+        var previousCenterX = centerX;
+        var previousWidth = width;
+        var cursorY = y;
+        var remaining = height;
+        var segmentIndex = 0;
+        while (remaining > 1f && segmentIndex < 96)
+        {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            var segmentHeight = MathF.Min(remaining, 2f + ((state >> 4) & 3u) * 2f);
+            var taper = 1f - segmentIndex * 0.075f;
+            var widthNoise = 0.72f + (state & 7u) / 7f * 0.48f;
+            var segmentWidth = Math.Clamp(
+                MathF.Round(width * taper * widthNoise * 0.5f) * 2f,
+                2f,
+                width + 2f);
+            var wander = ((int)((state >> 8) & 3u) - 1) * 1.2f;
+            centerX = Math.Clamp(centerX + wander,
+                anchorCenterX - maximumWander,
+                anchorCenterX + maximumWander);
+            if (segmentIndex > 0)
+            {
+                var bridgeLeft = MathF.Min(
+                    previousCenterX - previousWidth * 0.28f,
+                    centerX - segmentWidth * 0.28f);
+                var bridgeRight = MathF.Max(
+                    previousCenterX + previousWidth * 0.28f,
+                    centerX + segmentWidth * 0.28f);
+                g.FillRectangle(brush,
+                    MathF.Round(bridgeLeft * 0.5f) * 2f,
+                    cursorY - 1f,
+                    MathF.Max(2f,
+                        MathF.Round((bridgeRight - bridgeLeft) * 0.5f) * 2f),
+                    2f);
+            }
             g.FillRectangle(brush,
-                MathF.Round((centerX - beadSize * 0.5f) * 0.5f) * 2f,
-                MathF.Max(y, cursorY - beadSize * 0.35f),
-                MathF.Round(beadSize * 0.5f) * 2f,
-                MathF.Round(beadSize * 0.5f) * 2f);
+                MathF.Round((centerX - segmentWidth * 0.5f) * 0.5f) * 2f,
+                cursorY,
+                segmentWidth,
+                segmentHeight);
+            previousCenterX = centerX;
+            previousWidth = segmentWidth;
+            cursorY += segmentHeight;
+            remaining -= segmentHeight;
+            segmentIndex++;
+            if (remaining > 5f && ((state >> 12) & 7u) == 0u)
+            {
+                var neckWidth = MathF.Max(
+                    2f,
+                    MathF.Round(segmentWidth * 0.55f * 0.5f) * 2f);
+                g.FillRectangle(brush,
+                    MathF.Round((centerX - neckWidth * 0.5f) * 0.5f) * 2f,
+                    cursorY,
+                    neckWidth,
+                    2f);
+                cursorY += 2f;
+                remaining -= 2f;
+            }
         }
+
+        var beadSize = Math.Clamp(
+            width * (0.65f + (variation & 3) * 0.12f),
+            2f,
+            8f);
+        g.FillRectangle(brush,
+            MathF.Round((centerX - beadSize * 0.5f) * 0.5f) * 2f,
+            MathF.Max(y, cursorY - beadSize * 0.35f),
+            MathF.Round(beadSize * 0.5f) * 2f,
+            MathF.Round(beadSize * 0.5f) * 2f);
     }
 
     private Region GetBloodSurfaceClip(DestructibleGrid grid)
@@ -2420,6 +3754,93 @@ public sealed class GameRenderer
         return _bloodSurfaceClip;
     }
 
+    private void DrawSystemConveyorStaticBase(Graphics destination, ConveyorBelt conveyor, RectangleF rect)
+    {
+        if (_systemConveyorStaticCache is null ||
+            !ReferenceEquals(_systemConveyorStaticSource, conveyor) ||
+            _systemConveyorStaticPosition != conveyor.Position ||
+            _systemConveyorStaticWidth != conveyor.Width ||
+            _systemConveyorStaticHeight != conveyor.Height)
+        {
+            _systemConveyorStaticCache?.Dispose();
+            _systemConveyorStaticTop = (int)MathF.Floor(rect.Top) - 2;
+            var cacheHeight = Math.Max(1, (int)MathF.Ceiling(rect.Height) + 4);
+            _systemConveyorStaticCache = new Bitmap(1280, cacheHeight, PixelFormat.Format32bppPArgb);
+            using var cacheGraphics = Graphics.FromImage(_systemConveyorStaticCache);
+            cacheGraphics.Clear(Color.Transparent);
+            cacheGraphics.SmoothingMode = SmoothingMode.None;
+            cacheGraphics.TranslateTransform(0f, -_systemConveyorStaticTop);
+
+            var loopRadius = rect.Height * 0.5f;
+            var leftLoopCenter = rect.Left + loopRadius;
+            var rightLoopCenter = rect.Right - loopRadius;
+            _conveyorBodyPath.Reset();
+            _conveyorBodyPath.FillMode = FillMode.Winding;
+            _conveyorBodyPath.AddRectangle(new RectangleF(
+                leftLoopCenter, rect.Top, MathF.Max(1f, rightLoopCenter - leftLoopCenter), rect.Height));
+            _conveyorBodyPath.AddEllipse(rect.Left, rect.Top, rect.Height, rect.Height);
+            _conveyorBodyPath.AddEllipse(rect.Right - rect.Height, rect.Top, rect.Height, rect.Height);
+            cacheGraphics.FillPath(_conveyorBeltBrush, _conveyorBodyPath);
+
+            _conveyorEdgePath.Reset();
+            _conveyorEdgePath.StartFigure();
+            _conveyorEdgePath.AddLine(leftLoopCenter, rect.Top, rightLoopCenter, rect.Top);
+            _conveyorEdgePath.StartFigure();
+            _conveyorEdgePath.AddLine(leftLoopCenter, rect.Bottom, rightLoopCenter, rect.Bottom);
+            _conveyorEdgePath.StartFigure();
+            _conveyorEdgePath.AddArc(rect.Left, rect.Top, rect.Height, rect.Height, 90f, 180f);
+            _conveyorEdgePath.StartFigure();
+            _conveyorEdgePath.AddArc(rect.Right - rect.Height, rect.Top, rect.Height, rect.Height, -90f, 180f);
+            cacheGraphics.DrawPath(_conveyorEdgePen, _conveyorEdgePath);
+
+            var rollerSize = Math.Clamp(rect.Height - 8f, 12f, 64f);
+            var rollerRadius = rollerSize * 0.5f;
+            var rollerY = rect.Top + rect.Height * 0.5f;
+            var rollerSpacing = MathF.Max(rollerSize * 1.45f, 48f);
+            _conveyorRollerPath.Reset();
+            _conveyorHubPath.Reset();
+            var rollerX = leftLoopCenter;
+            while (true)
+            {
+                _conveyorRollerPath.AddEllipse(
+                    rollerX - rollerRadius, rollerY - rollerRadius, rollerSize, rollerSize);
+                _conveyorHubPath.AddEllipse(rollerX - 2.5f, rollerY - 2.5f, 5f, 5f);
+                var next = rollerX == leftLoopCenter
+                    ? leftLoopCenter + rollerSpacing
+                    : rollerX + rollerSpacing;
+                if (next < rightLoopCenter - rollerSpacing * 0.45f)
+                {
+                    rollerX = next;
+                    continue;
+                }
+                if (rollerX != rightLoopCenter && rightLoopCenter - leftLoopCenter > rollerSize * 1.2f)
+                {
+                    rollerX = rightLoopCenter;
+                    continue;
+                }
+                break;
+            }
+            cacheGraphics.FillPath(_conveyorRollerBrush, _conveyorRollerPath);
+            cacheGraphics.DrawPath(_conveyorSpokePen, _conveyorRollerPath);
+            cacheGraphics.FillPath(_conveyorHubBrush, _conveyorHubPath);
+
+            _conveyorTrackPath.Reset();
+            _conveyorTrackPath.StartFigure();
+            _conveyorTrackPath.AddLine(
+                leftLoopCenter, rect.Top + 1.5f, rightLoopCenter, rect.Top + 1.5f);
+            _conveyorTrackPath.StartFigure();
+            _conveyorTrackPath.AddLine(
+                leftLoopCenter, rect.Bottom - 1.5f, rightLoopCenter, rect.Bottom - 1.5f);
+            cacheGraphics.DrawPath(_conveyorTrackPen, _conveyorTrackPath);
+
+            _systemConveyorStaticSource = conveyor;
+            _systemConveyorStaticPosition = conveyor.Position;
+            _systemConveyorStaticWidth = conveyor.Width;
+            _systemConveyorStaticHeight = conveyor.Height;
+        }
+        destination.DrawImageUnscaled(_systemConveyorStaticCache, 0, _systemConveyorStaticTop);
+    }
+
     private void DrawConveyors(Graphics g, IReadOnlyList<ConveyorBelt> conveyors)
     {
         foreach (var conveyor in conveyors)
@@ -2428,14 +3849,32 @@ public sealed class GameRenderer
             var loopRadius = rect.Height * 0.5f;
             var leftLoopCenter = rect.Left + loopRadius;
             var rightLoopCenter = rect.Right - loopRadius;
-            g.FillRectangle(_conveyorBeltBrush, leftLoopCenter, rect.Top, MathF.Max(1f, rightLoopCenter - leftLoopCenter), rect.Height);
-            g.FillEllipse(_conveyorBeltBrush, rect.Left, rect.Top, rect.Height, rect.Height);
-            g.FillEllipse(_conveyorBeltBrush, rect.Right - rect.Height, rect.Top, rect.Height, rect.Height);
-            var loopPen = conveyor.IsSelected ? _selectedConveyorEdgePen : _conveyorEdgePen;
-            g.DrawLine(loopPen, leftLoopCenter, rect.Top, rightLoopCenter, rect.Top);
-            g.DrawLine(loopPen, leftLoopCenter, rect.Bottom, rightLoopCenter, rect.Bottom);
-            g.DrawArc(loopPen, rect.Left, rect.Top, rect.Height, rect.Height, 90f, 180f);
-            g.DrawArc(loopPen, rect.Right - rect.Height, rect.Top, rect.Height, rect.Height, -90f, 180f);
+            var cachedSystemBase = conveyor.IsSystemControlled;
+
+            if (cachedSystemBase)
+                DrawSystemConveyorStaticBase(g, conveyor, rect);
+            else
+            {
+                _conveyorBodyPath.Reset();
+                _conveyorBodyPath.FillMode = FillMode.Winding;
+                _conveyorBodyPath.AddRectangle(new RectangleF(
+                    leftLoopCenter, rect.Top, MathF.Max(1f, rightLoopCenter - leftLoopCenter), rect.Height));
+                _conveyorBodyPath.AddEllipse(rect.Left, rect.Top, rect.Height, rect.Height);
+                _conveyorBodyPath.AddEllipse(rect.Right - rect.Height, rect.Top, rect.Height, rect.Height);
+                g.FillPath(_conveyorBeltBrush, _conveyorBodyPath);
+
+                _conveyorEdgePath.Reset();
+                _conveyorEdgePath.StartFigure();
+                _conveyorEdgePath.AddLine(leftLoopCenter, rect.Top, rightLoopCenter, rect.Top);
+                _conveyorEdgePath.StartFigure();
+                _conveyorEdgePath.AddLine(leftLoopCenter, rect.Bottom, rightLoopCenter, rect.Bottom);
+                _conveyorEdgePath.StartFigure();
+                _conveyorEdgePath.AddArc(rect.Left, rect.Top, rect.Height, rect.Height, 90f, 180f);
+                _conveyorEdgePath.StartFigure();
+                _conveyorEdgePath.AddArc(rect.Right - rect.Height, rect.Top, rect.Height, rect.Height, -90f, 180f);
+                var loopPen = conveyor.IsSelected ? _selectedConveyorEdgePen : _conveyorEdgePen;
+                g.DrawPath(loopPen, _conveyorEdgePath);
+            }
 
             var rollerSize = Math.Clamp(rect.Height - 8f, 12f, 64f);
             var rollerRadius = rollerSize * 0.5f;
@@ -2444,63 +3883,109 @@ public sealed class GameRenderer
             var rollerAngle = conveyor.AnimationOffset / MathF.Max(1f, rollerRadius);
             var leftRollerX = leftLoopCenter;
             var rightRollerX = rightLoopCenter;
-            DrawRoller(leftRollerX);
-            for (var x = leftRollerX + rollerSpacing; x < rightRollerX - rollerSpacing * 0.45f; x += rollerSpacing)
-                DrawRoller(x);
-            if (rightRollerX - leftRollerX > rollerSize * 1.2f) DrawRoller(rightRollerX);
 
-            void DrawRoller(float x)
+            _conveyorRollerPath.Reset();
+            _conveyorRollerPath.FillMode = FillMode.Winding;
+            _conveyorSpokePath.Reset();
+            _conveyorHubPath.Reset();
+            _conveyorHubPath.FillMode = FillMode.Winding;
+            var rollerX = leftRollerX;
+            while (true)
             {
-                g.FillEllipse(_conveyorRollerBrush, x - rollerRadius, rollerY - rollerRadius, rollerSize, rollerSize);
-                g.DrawEllipse(_conveyorSpokePen, x - rollerRadius, rollerY - rollerRadius, rollerSize, rollerSize);
+                if (!cachedSystemBase)
+                    _conveyorRollerPath.AddEllipse(
+                        rollerX - rollerRadius, rollerY - rollerRadius, rollerSize, rollerSize);
                 for (var spoke = 0; spoke < 3; spoke++)
                 {
                     var angle = rollerAngle + spoke * MathF.Tau / 3f;
-                    g.DrawLine(_conveyorSpokePen, x, rollerY,
-                        x + MathF.Cos(angle) * rollerRadius * 0.72f,
+                    _conveyorSpokePath.StartFigure();
+                    _conveyorSpokePath.AddLine(rollerX, rollerY,
+                        rollerX + MathF.Cos(angle) * rollerRadius * 0.72f,
                         rollerY + MathF.Sin(angle) * rollerRadius * 0.72f);
                 }
-                g.FillEllipse(_conveyorHubBrush, x - 2.5f, rollerY - 2.5f, 5f, 5f);
+                if (!cachedSystemBase)
+                    _conveyorHubPath.AddEllipse(rollerX - 2.5f, rollerY - 2.5f, 5f, 5f);
+
+                var next = rollerX == leftRollerX
+                    ? leftRollerX + rollerSpacing
+                    : rollerX + rollerSpacing;
+                if (next < rightRollerX - rollerSpacing * 0.45f)
+                {
+                    rollerX = next;
+                    continue;
+                }
+                if (rollerX != rightRollerX && rightRollerX - leftRollerX > rollerSize * 1.2f)
+                {
+                    rollerX = rightRollerX;
+                    continue;
+                }
+                break;
             }
+            if (!cachedSystemBase)
+            {
+                g.FillPath(_conveyorRollerBrush, _conveyorRollerPath);
+                g.DrawPath(_conveyorSpokePen, _conveyorRollerPath);
+            }
+            g.DrawPath(_conveyorSpokePen, _conveyorSpokePath);
+            if (!cachedSystemBase) g.FillPath(_conveyorHubBrush, _conveyorHubPath);
 
             var direction = conveyor.Speed >= 0f ? 1f : -1f;
             var phase = ((conveyor.AnimationOffset % 18f) + 18f) % 18f;
+            _conveyorTreadPath.Reset();
             for (var x = rect.Left + phase; x < rect.Right; x += 18f)
             {
-                g.DrawLine(_conveyorTreadPen, x, rect.Top + 2f, x + 5f, rect.Top + 7f);
+                _conveyorTreadPath.StartFigure();
+                _conveyorTreadPath.AddLine(x, rect.Top + 2f, x + 5f, rect.Top + 7f);
             }
             var returnPhase = (18f - phase) % 18f;
             for (var x = rect.Left + returnPhase; x < rect.Right; x += 18f)
             {
-                g.DrawLine(_conveyorTreadPen, x, rect.Bottom - 2f, x + 5f, rect.Bottom - 7f);
+                _conveyorTreadPath.StartFigure();
+                _conveyorTreadPath.AddLine(x, rect.Bottom - 2f, x + 5f, rect.Bottom - 7f);
             }
-            g.DrawLine(_conveyorTrackPen, leftLoopCenter, rect.Top + 1.5f, rightLoopCenter, rect.Top + 1.5f);
-            g.DrawLine(_conveyorTrackPen, leftLoopCenter, rect.Bottom - 1.5f, rightLoopCenter, rect.Bottom - 1.5f);
             var arcPhase = phase / MathF.Max(1f, loopRadius);
             for (var tick = 0; tick < 5; tick++)
             {
                 var rightAngle = -MathF.PI * 0.5f + tick * MathF.PI / 4f + arcPhase;
                 var leftAngle = MathF.PI * 0.5f + tick * MathF.PI / 4f + arcPhase;
-                DrawArcTread(rightLoopCenter, rollerY, rightAngle);
-                DrawArcTread(leftLoopCenter, rollerY, leftAngle);
-            }
-
-            void DrawArcTread(float centerX, float centerY, float angle)
-            {
                 var inner = loopRadius - 4f;
-                g.DrawLine(_conveyorTreadPen,
-                    centerX + MathF.Cos(angle) * inner,
-                    centerY + MathF.Sin(angle) * inner,
-                    centerX + MathF.Cos(angle) * loopRadius,
-                    centerY + MathF.Sin(angle) * loopRadius);
+                _conveyorTreadPath.StartFigure();
+                _conveyorTreadPath.AddLine(
+                    rightLoopCenter + MathF.Cos(rightAngle) * inner,
+                    rollerY + MathF.Sin(rightAngle) * inner,
+                    rightLoopCenter + MathF.Cos(rightAngle) * loopRadius,
+                    rollerY + MathF.Sin(rightAngle) * loopRadius);
+                _conveyorTreadPath.StartFigure();
+                _conveyorTreadPath.AddLine(
+                    leftLoopCenter + MathF.Cos(leftAngle) * inner,
+                    rollerY + MathF.Sin(leftAngle) * inner,
+                    leftLoopCenter + MathF.Cos(leftAngle) * loopRadius,
+                    rollerY + MathF.Sin(leftAngle) * loopRadius);
+            }
+            g.DrawPath(_conveyorTreadPen, _conveyorTreadPath);
+
+            if (!cachedSystemBase)
+            {
+                _conveyorTrackPath.Reset();
+                _conveyorTrackPath.StartFigure();
+                _conveyorTrackPath.AddLine(
+                    leftLoopCenter, rect.Top + 1.5f, rightLoopCenter, rect.Top + 1.5f);
+                _conveyorTrackPath.StartFigure();
+                _conveyorTrackPath.AddLine(
+                    leftLoopCenter, rect.Bottom - 1.5f, rightLoopCenter, rect.Bottom - 1.5f);
+                g.DrawPath(_conveyorTrackPen, _conveyorTrackPath);
             }
 
+            _conveyorMotionPath.Reset();
             for (var x = rect.Left + 16f; x < rect.Right - 8f; x += 34f)
             {
                 var armX = x - direction * 7f;
-                g.DrawLine(_conveyorMotionPen, armX, rect.Top + 7f, x, rect.Top + 11f);
-                g.DrawLine(_conveyorMotionPen, armX, rect.Top + 15f, x, rect.Top + 11f);
+                _conveyorMotionPath.StartFigure();
+                _conveyorMotionPath.AddLine(armX, rect.Top + 7f, x, rect.Top + 11f);
+                _conveyorMotionPath.StartFigure();
+                _conveyorMotionPath.AddLine(armX, rect.Top + 15f, x, rect.Top + 11f);
             }
+            g.DrawPath(_conveyorMotionPen, _conveyorMotionPath);
 
             if (!conveyor.IsSelected) continue;
             g.DrawString($"BELT {conveyor.Speed:+0;-0;0} px/s", SystemFonts.CaptionFont!, _conveyorLabelBrush,
@@ -2520,10 +4005,13 @@ public sealed class GameRenderer
         var debris = body.IsDetachedDebris;
         var materialContour = BlobContourBuilder.BuildShell(body);
         var hull = materialContour.Points;
-        if (hull.Length >= 3 &&
-            (hull.Any(point => !float.IsFinite(point.X) || !float.IsFinite(point.Y)) ||
-             MathF.Abs(PolygonArea(hull)) < 1f))
-            hull = Array.Empty<Vector2>();
+        if (hull.Length >= 3)
+        {
+            var invalid = MathF.Abs(PolygonArea(hull)) < 1f;
+            for (var pointIndex = 0; !invalid && pointIndex < hull.Length; pointIndex++)
+                invalid = !float.IsFinite(hull[pointIndex].X) || !float.IsFinite(hull[pointIndex].Y);
+            if (invalid) hull = Array.Empty<Vector2>();
+        }
         if (hull.Length < 3)
         {
             var fragmentBrush = machineLit
@@ -2538,23 +4026,37 @@ public sealed class GameRenderer
                 if (body.IsDetachedDebris)
                 {
                     var diameter = MathF.Max(4f, MathF.Round(particle.Radius * 1.4f));
-                    var x = MathF.Round(particle.Position.X - diameter * 0.5f);
-                    var y = MathF.Round(particle.Position.Y - diameter * 0.5f);
-                    g.FillRectangle(_tissuePixelRimBrush, x, y, diameter, diameter);
+                    var fragmentAngle = body.FragmentVisualRotation +
+                                        (body.ParentId + particleIndex * 5) * 0.13f;
+                    SetDetachedFragmentPolygon(
+                        _detachedFragmentPoints,
+                        particle.Position,
+                        diameter * 0.52f,
+                        diameter * (0.36f + ((body.ParentId + particleIndex) & 3) * 0.035f),
+                        fragmentAngle);
+                    g.FillPolygon(_tissuePixelRimBrush, _detachedFragmentPoints);
                     if (diameter >= 6f)
-                        g.FillRectangle(fragmentBrush, x + 1f, y + 1f, diameter - 2f, diameter - 2f);
+                    {
+                        SetDetachedFragmentPolygon(
+                            _detachedFragmentPoints,
+                            particle.Position,
+                            diameter * 0.40f,
+                            diameter * (0.26f + ((body.ParentId + particleIndex) & 3) * 0.028f),
+                            fragmentAngle);
+                        g.FillPolygon(fragmentBrush, _detachedFragmentPoints);
+                    }
                     continue;
                 }
-                var points = new PointF[7];
-                for (var point = 0; point < points.Length; point++)
+                for (var point = 0; point < _fragmentPolygonPoints.Length; point++)
                 {
-                    var angle = MathF.Tau * point / points.Length + (body.ParentId + particleIndex * 3) * 0.17f;
+                    var angle = MathF.Tau * point / _fragmentPolygonPoints.Length +
+                                (body.ParentId + particleIndex * 3) * 0.17f;
                     var radius = particle.Radius * (0.76f + ((point + body.ParentId) % 3) * 0.11f);
-                    points[point] = new PointF(
+                    _fragmentPolygonPoints[point] = new PointF(
                         particle.Position.X + MathF.Cos(angle) * radius,
                         particle.Position.Y + MathF.Sin(angle) * radius);
                 }
-                g.FillPolygon(fragmentBrush, points);
+                g.FillPolygon(fragmentBrush, _fragmentPolygonPoints);
                 if (machineLit && particleIndex % 4 == 0)
                     g.FillRectangle(_blobMachineLitPixelBrush,
                         MathF.Round(particle.Position.X - 1f), MathF.Round(particle.Position.Y - 1f), 2f, 2f);
@@ -2566,51 +4068,107 @@ public sealed class GameRenderer
             return;
         }
 
-        var center = body.Center;
-        var shell = hull.Select(point => new PointF(point.X, point.Y)).ToArray();
+        var shellPoints = _blobRenderScratch.GetOrCreateValue(body).GetShellPoints(hull.Length);
+        for (var pointIndex = 0; pointIndex < hull.Length; pointIndex++)
+            shellPoints[pointIndex] = new PointF(hull[pointIndex].X, hull[pointIndex].Y);
         // The validated material contour is already an authoritative perimeter. Runtime
         // rendering must not hit-test every physical particle against a fresh GDI path on
         // every frame: machinery creates local damage continuously, turning that visual
         // safety check into the dominant frame cost. The expensive validation remains in
         // BuildMaterialPath for diagnostics; live damaged shapes use the pixel-friendly
         // polygon fallback, which cannot curve inward across supported tissue.
-        using var path = body.HasLocalDamage || debris
-            ? BuildRuntimeDamagedPath(shell)
-            : BuildHealthyPath(shell);
+        _blobRuntimePath.Reset();
+        _blobRuntimePath.FillMode = FillMode.Winding;
+        if (body.HasLocalDamage || debris) _blobRuntimePath.AddPolygon(shellPoints);
+        // A high cardinal-curve tension exaggerates the sparse hex-lattice crown into
+        // two symmetrical lobes when an intact body is lightly compressed. Keep the
+        // authoritative contour, but round between its samples without the ear-like
+        // overshoot. Damage still uses the exact polygon so wound geometry is unchanged.
+        else _blobRuntimePath.AddClosedCurve(shellPoints, 0.38f);
 
         var previousSmoothing = g.SmoothingMode;
         g.SmoothingMode = SmoothingMode.None;
         g.FillPath(machineLit
             ? _blobMachineLitDarkBrush
-            : grabbed ? _blobGrabbedDarkBrush : debris ? _blobDebrisDarkBrush : _blobDarkBrush, path);
+            : grabbed ? _blobGrabbedDarkBrush : debris ? _blobDebrisDarkBrush : _blobDarkBrush,
+            _blobRuntimePath);
+        if (!debris && body.HitFlash01 > 0f)
+        {
+            var flashIndex = Math.Clamp(
+                (int)MathF.Ceiling(body.HitFlash01 * _blobHitFlashBrushes.Length) - 1,
+                0,
+                _blobHitFlashBrushes.Length - 1);
+            g.FillPath(_blobHitFlashBrushes[flashIndex], _blobRuntimePath);
+        }
         DrawPixelBlobOutline(g, hull, grabbed, machineLit);
+        DrawBlobBloodStains(g, body, _blobRuntimePath);
         g.SmoothingMode = previousSmoothing;
 
         if (!debris && body.Particles.Length >= 7) DrawFace(g, body, faceRotation);
         if (DebugDraw) DrawBodyDebug(g, body);
     }
 
+    private static void SetDetachedFragmentPolygon(
+        PointF[] points,
+        Vector2 center,
+        float halfWidth,
+        float halfHeight,
+        float angle)
+    {
+        var cosine = MathF.Cos(angle);
+        var sine = MathF.Sin(angle);
+        for (var corner = 0; corner < 4; corner++)
+        {
+            var localX = (corner is 0 or 3 ? -1f : 1f) * halfWidth;
+            var localY = (corner < 2 ? -1f : 1f) * halfHeight;
+            points[corner] = new PointF(
+                MathF.Round(center.X + localX * cosine - localY * sine),
+                MathF.Round(center.Y + localX * sine + localY * cosine));
+        }
+    }
+
+    private void DrawBlobBloodStains(Graphics g, SoftBody body, GraphicsPath materialPath)
+    {
+        if (body.BloodStains.Count == 0) return;
+        var state = g.Save();
+        g.SetClip(materialPath, CombineMode.Intersect);
+        foreach (var stain in body.BloodStains)
+        {
+            if (!body.IsPhysicalParticle(stain.ParticleIndex)) continue;
+            var point = body.BloodStainWorldPosition(stain);
+            var paletteIndex = Math.Min(_wetStainBrushes.Length - 1,
+                stain.Variation % _wetStainBrushes.Length);
+            var brush = stain.Wetness > 0.12f
+                ? _wetStainBrushes[paletteIndex]
+                : _dryStainBrushes[paletteIndex];
+            var size = Math.Clamp(3f + MathF.Round(stain.Amount * 6f), 3f, 8f);
+            var x = MathF.Round(point.X - size * 0.5f);
+            var y = MathF.Round(point.Y - size * 0.5f);
+            g.FillRectangle(brush, x, y, size, size);
+            if (stain.Amount > 0.28f)
+            {
+                var direction = (stain.Variation & 1) == 0 ? -1f : 1f;
+                g.FillRectangle(brush, x + direction * 3f, y + size - 1f, 3f, 4f);
+            }
+            if (stain.Wetness > 0.5f && stain.Amount > 0.36f)
+                g.FillRectangle(_wetStainShine, x + 1f, y, 2f, 2f);
+        }
+        g.Restore(state);
+    }
+
     private void DrawPixelBlobOutline(
         Graphics g,
-        IReadOnlyList<Vector2> hull,
+        ReadOnlySpan<Vector2> hull,
         bool grabbed,
         bool machineLit = false)
     {
         const int pixelSize = 4;
-        var required = 0;
-        for (var edgeIndex = 0; edgeIndex < hull.Count; edgeIndex++)
-            required += Math.Max(1, (int)MathF.Ceiling(
-                Vector2.Distance(hull[edgeIndex], hull[(edgeIndex + 1) % hull.Count]) / 3.2f)) + 1;
-        if (required > _blobPixelOutlineRectangles.Length)
-            Array.Resize(ref _blobPixelOutlineRectangles,
-                Math.Max(required, _blobPixelOutlineRectangles.Length * 2));
-
-        var previousCount = _blobPixelOutlineRectangleCount;
-        _blobPixelOutlineRectangleCount = 0;
-        for (var edgeIndex = 0; edgeIndex < hull.Count; edgeIndex++)
+        _blobPixelOutlinePath.Reset();
+        _blobPixelOutlinePath.FillMode = FillMode.Winding;
+        for (var edgeIndex = 0; edgeIndex < hull.Length; edgeIndex++)
         {
             var from = hull[edgeIndex];
-            var to = hull[(edgeIndex + 1) % hull.Count];
+            var to = hull[(edgeIndex + 1) % hull.Length];
             var length = Vector2.Distance(from, to);
             var samples = Math.Max(1, (int)MathF.Ceiling(length / 3.2f));
             for (var sample = 0; sample <= samples; sample++)
@@ -2618,31 +4176,13 @@ public sealed class GameRenderer
                 var point = Vector2.Lerp(from, to, sample / (float)samples);
                 var x = (int)MathF.Round((point.X - pixelSize * 0.5f) * 0.5f) * 2;
                 var y = (int)MathF.Round((point.Y - pixelSize * 0.5f) * 0.5f) * 2;
-                _blobPixelOutlineRectangles[_blobPixelOutlineRectangleCount++] =
-                    new Rectangle(x, y, pixelSize, pixelSize);
+                _blobPixelOutlinePath.AddRectangle(new Rectangle(x, y, pixelSize, pixelSize));
             }
         }
-        if (_blobPixelOutlineRectangleCount < previousCount)
-            Array.Clear(_blobPixelOutlineRectangles, _blobPixelOutlineRectangleCount,
-                previousCount - _blobPixelOutlineRectangleCount);
-        g.FillRectangles(machineLit
+        g.FillPath(machineLit
                 ? _blobMachineLitPixelBrush
                 : grabbed ? _blobGrabbedPixelBrush : _blobPixelRedBrush,
-            _blobPixelOutlineRectangles);
-    }
-
-    private static GraphicsPath BuildHealthyPath(PointF[] shell)
-    {
-        var path = new GraphicsPath();
-        path.AddClosedCurve(shell, 0.58f);
-        return path;
-    }
-
-    private static GraphicsPath BuildRuntimeDamagedPath(PointF[] shell)
-    {
-        var path = new GraphicsPath(FillMode.Winding);
-        path.AddPolygon(shell);
-        return path;
+            _blobPixelOutlinePath);
     }
 
     internal static GraphicsPath BuildMaterialPath(
@@ -2758,24 +4298,29 @@ public sealed class GameRenderer
 
     private void DrawFace(Graphics g, SoftBody body, float rotation)
     {
+        var sprite = CuteBlobFaceSprite.Value;
+        if (sprite is null) return;
+        const int frameWidth = 40;
+        const int frameHeight = 24;
+        var frameCount = sprite.Width / frameWidth;
+        if (frameCount <= 0 || sprite.Height < frameHeight) return;
+        var frame = Math.Min(frameCount - 1, (int)body.FaceExpression);
         var c = body.Center;
-        var eyeOffset = body.Radius * 0.22f;
-        var eyeLift = -body.Radius * 0.08f;
-        var eyeSize = Math.Clamp(MathF.Round(body.Radius * 0.18f * 0.5f) * 2f, 8f, 16f);
-        var cos = MathF.Cos(rotation);
-        var sin = MathF.Sin(rotation);
-        void DrawEye(float localX)
-        {
-            var eyeX = c.X + localX * cos - eyeLift * sin;
-            var eyeY = c.Y + localX * sin + eyeLift * cos;
-            g.FillRectangle(_blobPixelRedBrush,
-                MathF.Round((eyeX - eyeSize * 0.5f) * 0.5f) * 2f,
-                MathF.Round((eyeY - eyeSize * 0.5f) * 0.5f) * 2f,
-                eyeSize,
-                eyeSize);
-        }
-        DrawEye(-eyeOffset);
-        DrawEye(eyeOffset);
+        // Processing blobs previously shrank the authored 40x24 face to about 37x22,
+        // then fullscreen enlarged that uneven sample. Draw the common face 1:1 in the
+        // logical surface; the final native StretchBlt remains the only scale operation.
+        var compactFace = body.Radius <= 48f;
+        var width = compactFace ? frameWidth : 44f;
+        var height = compactFace ? frameHeight : width * 0.60f;
+        var state = g.Save();
+        g.TranslateTransform(MathF.Round(c.X), MathF.Round(c.Y));
+        g.RotateTransform(rotation * 180f / MathF.PI);
+        var interpolation = g.InterpolationMode;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.DrawImage(sprite, new RectangleF(-width * 0.5f, -height * 0.5f, width, height),
+            new RectangleF(frame * frameWidth, 0f, frameWidth, frameHeight), GraphicsUnit.Pixel);
+        g.InterpolationMode = interpolation;
+        g.Restore(state);
     }
 
     private void DrawBodyDebug(Graphics g, SoftBody body)
@@ -2815,11 +4360,65 @@ public sealed class GameRenderer
         using var titleBrush = new SolidBrush(Color.FromArgb(235, 228, 244, 255));
         using var textBrush = new SolidBrush(Color.FromArgb(205, 177, 199, 217));
         g.DrawString("BLOBFORGE // SOFT-BODY LAB", _titleFont, titleBrush, 22, 18);
-        g.DrawString("B request next   C conveyor   L lantern   drag counter/breaker   click/drag edit   wheel cable   Del remove", _hudFont, textBrush, 24, 49);
+        g.DrawString("I arsenal   E equip/drop tool   hold LMB charge / release swing   LMB drag loose tool   C conveyor   L lantern", _hudFont, textBrush, 24, 49);
 
         using var tagBrush = new SolidBrush(Color.FromArgb(185, 12, 16, 24));
         g.FillRectangle(tagBrush, viewport.Width - 225, 18, 198, 30);
         g.DrawString("120Hz BODY  •  60Hz MATTER", _hudFont, textBrush, viewport.Width - 216, 25);
+    }
+
+    private void DrawProcessedCounter(Graphics g, ProcessingLine? line, Size viewport)
+    {
+        if (line?.ContinuousFlowMode != true) return;
+        const float width = 104f;
+        const float height = 35f;
+        var left = MathF.Round((viewport.Width - width) * 0.5f);
+        const float top = 14f;
+        using var background = new SolidBrush(Color.FromArgb(205, 8, 13, 17));
+        using var border = new Pen(Color.FromArgb(225, 85, 113, 123), 1f);
+        using var label = new SolidBrush(Color.FromArgb(235, 135, 158, 166));
+        using var value = new SolidBrush(Color.FromArgb(255, 124, 233, 223));
+        g.FillRectangle(background, left, top, width, height);
+        g.DrawRectangle(border, left + 0.5f, top + 0.5f, width - 1f, height - 1f);
+        g.DrawString("PROCESSED", _shopFont, label, left + 7f, top + 2f);
+        g.DrawString($"{line.ProcessedCount % 10000:0000}", _hudFont, value, left + 54f, top + 15f);
+    }
+
+    private void DrawToolPrompt(Graphics g, Vector2? position)
+    {
+        if (position is not { } anchor) return;
+        const float width = 28f;
+        var left = Math.Clamp(MathF.Round(anchor.X - width * 0.5f), 8f, 1280f - width - 8f);
+        var top = Math.Clamp(MathF.Round(anchor.Y - 58f), 70f, 680f);
+        g.FillRectangle(_toolPromptBackBrush, left, top, width, 25f);
+        g.DrawRectangle(_toolPromptBorderPen, left + 0.5f, top + 0.5f, width - 1f, 24f);
+        g.FillRectangle(_toolPromptKeyBrush, left + 6f, top + 5f, 16f, 15f);
+        g.DrawString("E", _toolPromptKeyFont, Brushes.Black, left + 9f, top + 4f);
+    }
+
+    private void DrawToolChargeBar(Graphics g, PhysicalKnife? knife)
+    {
+        if (knife is not { PrimaryChargeVisible: true }) return;
+        const float width = 52f;
+        const float height = 7f;
+        var left = Math.Clamp(MathF.Round(knife.Position.X - width * 0.5f), 8f, 1280f - width - 8f);
+        var top = Math.Clamp(MathF.Round(knife.Position.Y - 58f), 70f, 680f);
+        var charge = Math.Clamp(knife.PrimaryCharge, 0f, 1f);
+        var opacityStage = Math.Clamp((int)MathF.Floor(charge * 4f), 0, 3);
+        g.FillRectangle(_toolChargeBackBrushes[opacityStage], left, top, width, height);
+        g.DrawRectangle(_toolChargeBorderPens[opacityStage],
+            left + 0.5f, top + 0.5f, width - 1f, height - 1f);
+        g.FillRectangle(_toolChargeGhostBrushes[opacityStage],
+            left + 2f, top + 2f, width - 4f, height - 4f);
+        var fill = MathF.Round((width - 4f) * charge);
+        if (fill > 0f)
+            g.FillRectangle(charge >= 0.999f ? _toolChargeFullBrush : _toolChargeFillBrushes[opacityStage],
+                left + 2f, top + 2f, fill, height - 4f);
+        if (charge >= 0.999f)
+        {
+            g.FillRectangle(_toolChargeFullBrush, left - 2f, top + 2f, 2f, 3f);
+            g.FillRectangle(_toolChargeFullBrush, left + width, top + 2f, 2f, 3f);
+        }
     }
 
     private void DrawDebug(Graphics g, BlobWorld world)
@@ -2839,10 +4438,23 @@ public sealed class GameRenderer
                 $"frame               {FrameMs,7:0.00} ms",
                 $"world render        {RenderMs,7:0.00} ms",
                 $"frame present       {PresentMs,7:0.00} ms",
+                $"paint jitter        {PaintJitterMs,7:0.00} ms",
+                $"paint avg / dev     {PaintMeanMs,5:0.0} / {PaintDeviationMs:0.0}",
+                $"paint max (1 sec)   {PaintMaximumMs,7:0.00} ms",
+                $"paints / requests   {PaintCount,4} / {RenderRequestCount}",
+                $"host pump max       {HostPumpGapMs,7:0.00} ms",
+                $"simulation gap max  {SimulationGapMs,7:0.00} ms",
+                $"render late max     {RenderDeadlineLateMs,7:0.00} ms",
+                $"step batch max      {MaxStepBatch,7}",
+                $"spikes / misses     {PaintSpikeCount,3} / {RenderDeadlineMisses}",
+                $"UI alloc / paint    {UiAllocatedBytesPerPaint / 1024d,7:0.0} KiB",
+                $"sim alloc / frame   {SimulationAllocatedBytesPerFrame / 1024d,7:0.0} KiB",
                 $"fixed updates       {FixedUpdateMs,7:0.00} ms",
                 $"audio state         {AudioUpdateMs,7:0.00} ms",
                 $"simulation total    {world.LastSimulationMs,7:0.00} ms",
                 $"body physics        {world.LastBodyPhysicsMs,7:0.00} ms",
+                $"blob particle/hash  {world.LastBlobParticleCollisionMs,7:0.00} ms",
+                $"hull safety guard   {world.LastHullCollisionMs,7:0.00} ms",
                 $"granular sim        {world.LastGranularSimulationMs,7:0.00} ms",
                 $"steps / skipped     {world.StepsThisFrame,3} / {world.SkippedSteps}",
                 $"blobs / sleeping    {world.Bodies.Count,3} / {world.SleepingCount}",
@@ -2865,7 +4477,50 @@ public sealed class GameRenderer
             };
             for (var i = 0; i < lines.Length; i++)
                 panelGraphics.DrawString(lines[i], _hudFont, _debugPanelTextBrush, 10, 9 + i * 16);
+
+            using var displayGraphics = Graphics.FromImage(_displayDebugPanel);
+            displayGraphics.Clear(Color.Transparent);
+            displayGraphics.FillRectangle(
+                _debugPanelBackgroundBrush, 0, 0, _displayDebugPanel.Width, _displayDebugPanel.Height);
+            var displayLines = new[]
+            {
+                "DISPLAY / PRESENTATION",
+                $"display             {DisplayWidth}x{DisplayHeight} @ {DisplayRefreshHz} Hz",
+                $"client              {ClientWidth}x{ClientHeight}  {DisplayDpi} DPI",
+                $"surface             {SurfaceWidth}x{SurfaceHeight}",
+                $"internal render     {InternalRenderWidth}x{InternalRenderHeight}",
+                $"visible viewport    {ViewportWidth}x{ViewportHeight}",
+                $"paint clip          {PaintClipWidth}x{PaintClipHeight}",
+                $"fullscreen mode     {FullscreenMode}",
+                $"presentation        {PresentationMode}",
+                $"CPU frame / work    {FrameMs:0.00} / {RenderMs + PresentMs + FixedUpdateMs:0.00} ms",
+                "GPU / render thread  N/A (software GDI+)",
+                "draw/batch/triangles N/A (GDI+ commands)",
+                "SetPass / shaders    N/A",
+                $"resize / mode       {ResizeEventCount} / {FullscreenToggleCount}",
+                $"render-target builds {RenderTargetBuildCount}",
+                $"env/light/dynamic   {EnvironmentCacheBuildCount} / {LightingCacheBuildCount} / {DynamicLightingBuildCount}",
+                "camera/canvas rebuild N/A",
+            };
+            for (var i = 0; i < displayLines.Length; i++)
+                displayGraphics.DrawString(
+                    displayLines[i], _hudFont, _debugPanelTextBrush, 10, 9 + i * 16);
         }
         g.DrawImageUnscaled(_debugPanel, x, y);
+        // Keep the display panel below the windowed authoring buttons. In
+        // fullscreen those buttons live in the outer letterbox, while this panel
+        // remains attached to the logical game viewport.
+        g.DrawImageUnscaled(_displayDebugPanel, 900, 250);
+    }
+
+    private sealed class BlobRenderScratch
+    {
+        private PointF[] _shellPoints = Array.Empty<PointF>();
+
+        public PointF[] GetShellPoints(int count)
+        {
+            if (_shellPoints.Length != count) _shellPoints = new PointF[count];
+            return _shellPoints;
+        }
     }
 }

@@ -22,6 +22,7 @@ public static class ProjectOps
         var hex = ColorUtil.NormalizeHex(color ?? throw new InvalidDataException("Provide color or paletteIndex."));
         var found = project.Palette.FindIndex(c => c.Equals(hex, StringComparison.OrdinalIgnoreCase));
         if (found >= 0) return found;
+        if (project.PaletteLocked) throw new InvalidDataException($"Palette is locked; '{hex}' is not approved for this project.");
         if (project.Palette.Count >= 256) throw new InvalidDataException("Palette already contains 256 colors.");
         project.Palette.Add(hex);
         return project.Palette.Count - 1;
@@ -116,6 +117,52 @@ public static class ProjectOps
         l.Frames[frame] = dest;
     }
 
+    public static int[] CopyRegion(PixelProject p, PixelLayer l, int frame, int x, int y, int width, int height)
+    {
+        CheckRegion(p, frame, x, y, width, height);
+        var result = new int[width * height];
+        for (var py = 0; py < height; py++)
+            Array.Copy(l.Frames[frame], (y + py) * p.Width + x, result, py * width, width);
+        return result;
+    }
+
+    public static void PasteRegion(PixelProject p, PixelLayer l, int frame, int x, int y, int width, int height,
+        IReadOnlyList<int> pixels, bool includeTransparent = true)
+    {
+        CheckFrame(p, frame);
+        if (width < 1 || height < 1 || pixels.Count != width * height) throw new InvalidDataException("Region dimensions do not match pixel data.");
+        for (var py = 0; py < height; py++) for (var px = 0; px < width; px++)
+        {
+            var value = pixels[py * width + px];
+            if (value < -1 || value >= p.Palette.Count) throw new InvalidDataException($"Region contains invalid palette index {value}.");
+            if (value < 0 && !includeTransparent) continue;
+            SetPixel(p, l, frame, x + px, y + py, value);
+        }
+    }
+
+    public static void TransformRegion(PixelProject p, PixelLayer l, int frame, int x, int y, int width, int height,
+        string operation, int amount = 1)
+    {
+        CheckRegion(p, frame, x, y, width, height);
+        var source = CopyRegion(p, l, frame, x, y, width, height);
+        var dest = Enumerable.Repeat(-1, source.Length).ToArray();
+        for (var py = 0; py < height; py++) for (var px = 0; px < width; px++)
+        {
+            var nx = px; var ny = py;
+            switch (operation.ToLowerInvariant())
+            {
+                case "flip-horizontal": nx = width - 1 - px; break;
+                case "flip-vertical": ny = height - 1 - py; break;
+                case "rotate-180": nx = width - 1 - px; ny = height - 1 - py; break;
+                case "shift-x": nx = ((px + amount) % width + width) % width; break;
+                case "shift-y": ny = ((py + amount) % height + height) % height; break;
+                default: throw new InvalidDataException("Region operation must be flip-horizontal, flip-vertical, rotate-180, shift-x, or shift-y.");
+            }
+            dest[ny * width + nx] = source[py * width + px];
+        }
+        PasteRegion(p, l, frame, x, y, width, height, dest);
+    }
+
     public static string Ascii(PixelProject p, int frame)
     {
         CheckFrame(p, frame); const string symbols = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -137,4 +184,11 @@ public static class ProjectOps
 
     private static void CheckFrame(PixelProject p, int frame)
     { if (frame < 0 || frame >= p.FrameCount) throw new ArgumentOutOfRangeException(nameof(frame)); }
+
+    private static void CheckRegion(PixelProject p, int frame, int x, int y, int width, int height)
+    {
+        CheckFrame(p, frame);
+        if (width < 1 || height < 1 || x < 0 || y < 0 || x + width > p.Width || y + height > p.Height)
+            throw new InvalidDataException("Region must be a positive rectangle inside the canvas.");
+    }
 }

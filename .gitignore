@@ -2,6 +2,7 @@
 **/bin/
 **/obj/
 **/.publish/
+**/.publish-*/
 **/artifacts/
 
 # Pixel Forge generated exports (editable .pixelforge.json sources remain tracked)
@@ -24,4 +25,3 @@ PixelForgeStudio/PixelForgeData/exports/
 .DS_Store
 Thumbs.db
 Desktop.ini
-

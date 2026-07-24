@@ -3,10 +3,12 @@ namespace BlobForge.Physics;
 public sealed class RepresentationScheduler
 {
     public int FullTissueBudget { get; set; } = 8;
+    public int ReducedTissueBudget { get; set; } = 12;
 
     public void Apply(IReadOnlyList<SoftBody> bodies)
     {
         var fullBodies = 0;
+        var reducedBodies = 0;
         for (var i = 0; i < bodies.Count; i++)
         {
             var body = bodies[i];
@@ -34,9 +36,14 @@ public sealed class RepresentationScheduler
             {
                 body.SetMode(SimulationMode.LooseFragment);
             }
-            else
+            else if (reducedBodies < Math.Max(0, ReducedTissueBudget))
             {
                 body.SetMode(SimulationMode.ReducedTissue);
+                reducedBodies++;
+            }
+            else
+            {
+                body.SetMode(SimulationMode.ShapeProxy);
             }
         }
     }

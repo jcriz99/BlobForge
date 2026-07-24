@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using BlobForge.Audio;
 using BlobForge.Physics;
 using BlobForge.Rendering;
@@ -12,7 +13,14 @@ namespace BlobForge;
 public sealed class GameWindow : Form
 {
     private const float FixedDt = 1f / 120f;
-    private const int MaxStepsPerFrame = 4;
+    private const int MaxCatchUpStepsPerPump = 4;
+    private const double TargetRenderSeconds = 1d / 60d;
+    private const uint TimerResolutionMs = 1;
+    private const int VerticalRefreshDeviceCapability = 116;
+    private const int ColorOnColorStretchMode = 3;
+    private const uint UncompressedRgbBitmap = 0;
+    private const uint RgbColorTable = 0;
+    private const uint SourceCopyRasterOperation = 0x00CC0020;
     private const int WorldWidth = 1280;
     private const int WorldHeight = 720;
     private static readonly Size LogicalViewport = new(WorldWidth, WorldHeight);
@@ -44,6 +52,26 @@ public sealed class GameWindow : Form
     private float _sliceInsideDistance;
     private double _accumulator;
     private double _lastTime;
+    private double _nextRenderTime;
+    private double _lastPumpTime;
+    private double _lastPaintTime;
+    private double _lastSimulationStepTime;
+    private double _maximumPumpGapSincePaint;
+    private double _maximumSimulationGapSincePaint;
+    private double _maximumRenderLatenessSincePaint;
+    private double _fixedUpdateMsSinceRender;
+    private int _stepsSinceRender;
+    private int _maximumStepBatchSinceRender;
+    private int _missedRenderDeadlines;
+    private int _paintSpikeCount;
+    private int _renderRequestCount;
+    private int _paintCount;
+    private int _paintWindowSamples;
+    private double _paintWindowStart;
+    private double _paintWindowSumMs;
+    private double _paintWindowSumSquaredMs;
+    private double _paintWindowMaximumMs;
+    private long _simulationAllocatedBytesSinceRender;
     private double _fpsSmoothing = 60;
     private double _audioUpdateMsThisFrame;
     private bool _gravityEnabled = true;
@@ -70,6 +98,63 @@ public sealed class GameWindow : Form
     private Vector2 _fixtureDragOffset;
     private Vector2 _fixtureDragStart;
     private bool _fixtureDragMoved;
+    private bool _toolPrimaryHeld;
+    private bool _toolRotationHeld;
+    private bool _toolEquipKeyHeld;
+    private bool _arsenalMenuConsumedClick;
+    private bool _highResolutionTimerActive;
+    private int _resizeEventCount;
+    private int _fullscreenToggleCount;
+
+    [DllImport("winmm.dll", ExactSpelling = true)]
+    private static extern uint timeBeginPeriod(uint periodMilliseconds);
+
+    [DllImport("winmm.dll", ExactSpelling = true)]
+    private static extern uint timeEndPeriod(uint periodMilliseconds);
+
+    [DllImport("gdi32.dll", ExactSpelling = true)]
+    private static extern int GetDeviceCaps(nint deviceContext, int index);
+
+    [DllImport("gdi32.dll", ExactSpelling = true)]
+    private static extern int StretchDIBits(
+        nint destinationDeviceContext,
+        int destinationX,
+        int destinationY,
+        int destinationWidth,
+        int destinationHeight,
+        int sourceX,
+        int sourceY,
+        int sourceWidth,
+        int sourceHeight,
+        nint sourceBits,
+        ref BitmapInfo bitmapInfo,
+        uint colorUsage,
+        uint rasterOperation);
+
+    [DllImport("gdi32.dll", ExactSpelling = true)]
+    private static extern int SetStretchBltMode(nint deviceContext, int stretchMode);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
+    {
+        public uint Size;
+        public int Width;
+        public int Height;
+        public ushort Planes;
+        public ushort BitCount;
+        public uint Compression;
+        public uint SizeImage;
+        public int XPixelsPerMeter;
+        public int YPixelsPerMeter;
+        public uint ColorsUsed;
+        public uint ColorsImportant;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfo
+    {
+        public BitmapInfoHeader Header;
+    }
 
     public GameWindow()
     {
@@ -80,6 +165,9 @@ public sealed class GameWindow : Form
         KeyPreview = true;
         BackColor = Color.FromArgb(12, 16, 24);
 
+        // Render raster art into a normal GDI+ bitmap. A Bitmap constructed over a
+        // raw DIB pointer silently drops some DrawImage calls on the fullscreen path,
+        // which made Pixel Forge sprites disappear while vector primitives survived.
         _frameBuffer = new Bitmap(WorldWidth, WorldHeight, PixelFormat.Format32bppPArgb);
         _frameGraphics = Graphics.FromImage(_frameBuffer);
 
@@ -209,9 +297,12 @@ public sealed class GameWindow : Form
         Controls.Add(_settingsPanel);
 
         KeyDown += OnKeyDown;
+        KeyUp += OnKeyUp;
         Resize += (_, _) =>
         {
+            _resizeEventCount++;
             LayoutOverlays();
+            UpdateDisplayDiagnostics();
             _surface.Invalidate();
         };
         FormClosed += (_, _) =>
@@ -220,33 +311,114 @@ public sealed class GameWindow : Form
             _audio.Dispose();
             _frameGraphics.Dispose();
             _frameBuffer.Dispose();
+            if (_highResolutionTimerActive)
+            {
+                timeEndPeriod(TimerResolutionMs);
+                _highResolutionTimerActive = false;
+            }
         };
         ResetScene();
         _settingsGravity.Checked = true;
         LayoutOverlays();
-        Shown += (_, _) => BeginLoop();
+        Shown += (_, _) =>
+        {
+            _highResolutionTimerActive = timeBeginPeriod(TimerResolutionMs) == 0;
+            UpdateDisplayDiagnostics();
+            BeginLoop();
+        };
     }
 
     private void RenderSurface(object? sender, PaintEventArgs e)
     {
         if (_world is null) return;
-        var renderStart = Stopwatch.GetTimestamp();
-        _frameGraphics.ResetTransform();
-        _renderer.Draw(_frameGraphics, LogicalViewport, _world, _grabbed, _pendingSlice);
-        var presentStart = Stopwatch.GetTimestamp();
-
+        var paintAllocationStart = GC.GetAllocatedBytesForCurrentThread();
         var viewport = WorldViewport;
         if (viewport.IsEmpty) return;
-        e.Graphics.CompositingMode = CompositingMode.SourceCopy;
-        e.Graphics.CompositingQuality = CompositingQuality.HighSpeed;
-        e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-        e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        _renderer.PaintClipWidth = e.ClipRectangle.Width;
+        _renderer.PaintClipHeight = e.ClipRectangle.Height;
+        var paintNow = _clock.Elapsed.TotalSeconds;
+        _paintCount++;
+        if (_lastPaintTime > 0d)
+        {
+            var paintInterval = paintNow - _lastPaintTime;
+            var frameMs = Math.Max(0.001d, paintInterval * 1000d);
+            _fpsSmoothing = _fpsSmoothing * 0.92d + (1000d / frameMs) * 0.08d;
+            _renderer.FrameMs = frameMs;
+            _renderer.Fps = _fpsSmoothing;
+            _renderer.PaintJitterMs = Math.Abs(paintInterval - TargetRenderSeconds) * 1000d;
+            if (paintInterval > TargetRenderSeconds * 1.5d) _paintSpikeCount++;
+            _paintWindowSamples++;
+            _paintWindowSumMs += frameMs;
+            _paintWindowSumSquaredMs += frameMs * frameMs;
+            _paintWindowMaximumMs = Math.Max(_paintWindowMaximumMs, frameMs);
+            if (_paintWindowStart <= 0d) _paintWindowStart = paintNow;
+            if (paintNow - _paintWindowStart >= 1d)
+            {
+                var mean = _paintWindowSumMs / Math.Max(1, _paintWindowSamples);
+                var variance = _paintWindowSumSquaredMs / Math.Max(1, _paintWindowSamples) - mean * mean;
+                _renderer.PaintMeanMs = mean;
+                _renderer.PaintDeviationMs = Math.Sqrt(Math.Max(0d, variance));
+                _renderer.PaintMaximumMs = _paintWindowMaximumMs;
+                _paintWindowStart = paintNow;
+                _paintWindowSamples = 0;
+                _paintWindowSumMs = 0d;
+                _paintWindowSumSquaredMs = 0d;
+                _paintWindowMaximumMs = 0d;
+            }
+        }
+        _lastPaintTime = paintNow;
+        _renderer.PaintSpikeCount = _paintSpikeCount;
+        _renderer.PaintCount = _paintCount;
+        _renderer.RenderRequestCount = _renderRequestCount;
+        var renderStart = Stopwatch.GetTimestamp();
+        var tool = _world.Knife;
+        var showPickupPrompt = _world.ProcessingLine?.Powered == true &&
+                               tool is { Visible: true, IsGrabbed: false } &&
+                               tool.HitTest(_input.MousePosition);
+
+        // GameSurface already owns a double buffer. At the normal fixed logical
+        // size, render straight into it and avoid drawing the whole world into a
+        // second bitmap only to copy those same 921,600 pixels again.
+        if (viewport.Size == LogicalViewport)
+        {
+            var state = e.Graphics.Save();
+            e.Graphics.SetClip(viewport, CombineMode.Intersect);
+            e.Graphics.TranslateTransform(viewport.Left, viewport.Top);
+            var shake = tool?.ScreenShakeOffset ?? Vector2.Zero;
+            e.Graphics.TranslateTransform(MathF.Round(shake.X), MathF.Round(shake.Y));
+            e.Graphics.CompositingQuality = CompositingQuality.HighSpeed;
+            e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            _renderer.Draw(e.Graphics, LogicalViewport, _world, _grabbed, _pendingSlice,
+                showPickupPrompt ? tool!.Position : null);
+            e.Graphics.Restore(state);
+            _renderer.RenderMs = Stopwatch.GetElapsedTime(renderStart).TotalMilliseconds;
+            _renderer.PresentMs = 0d;
+            _renderer.UiAllocatedBytesPerPaint = Math.Max(0L,
+                GC.GetAllocatedBytesForCurrentThread() - paintAllocationStart);
+            return;
+        }
+
+        _frameGraphics.ResetTransform();
+        _frameGraphics.Clear(Color.FromArgb(255, 9, 16, 21));
+        var frameShake = tool?.ScreenShakeOffset ?? Vector2.Zero;
+        _frameGraphics.TranslateTransform(MathF.Round(frameShake.X), MathF.Round(frameShake.Y));
+        _renderer.Draw(_frameGraphics, LogicalViewport, _world, _grabbed, _pendingSlice,
+            showPickupPrompt ? tool!.Position : null);
+        var presentStart = Stopwatch.GetTimestamp();
         if (viewport.Size == _frameBuffer.Size)
         {
             e.Graphics.DrawImageUnscaled(_frameBuffer, viewport.Location);
         }
-        else
+        else if (!TryPresentScaledFrame(e.Graphics, viewport))
         {
+            // Keep a safe GDI+ fallback for unusual printer/remote device contexts.
+            // Normal display presentation uses StretchBlt and never reaches here.
+            _renderer.PresentationMode = "scaled GDI+ fallback";
+            e.Graphics.CompositingMode = CompositingMode.SourceCopy;
+            e.Graphics.CompositingQuality = CompositingQuality.HighSpeed;
+            e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
             e.Graphics.DrawImage(
                 _frameBuffer,
                 viewport,
@@ -259,6 +431,62 @@ public sealed class GameWindow : Form
         var presentEnd = Stopwatch.GetTimestamp();
         _renderer.RenderMs = Stopwatch.GetElapsedTime(renderStart, presentStart).TotalMilliseconds;
         _renderer.PresentMs = Stopwatch.GetElapsedTime(presentStart, presentEnd).TotalMilliseconds;
+        _renderer.UiAllocatedBytesPerPaint = Math.Max(0L,
+            GC.GetAllocatedBytesForCurrentThread() - paintAllocationStart);
+    }
+
+    private bool TryPresentScaledFrame(Graphics destination, Rectangle viewport)
+    {
+        nint destinationDeviceContext = 0;
+        BitmapData? frameData = null;
+        try
+        {
+            // GDI+ DrawImage performs a costly per-pixel software resample here.
+            // StretchDIBits reads the already-rendered managed bitmap directly,
+            // retaining every raster layer while keeping fullscreen nearest-neighbor
+            // presentation in native GDI.
+            _frameGraphics.Flush(FlushIntention.Sync);
+            frameData = _frameBuffer.LockBits(
+                new Rectangle(0, 0, _frameBuffer.Width, _frameBuffer.Height),
+                ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppPArgb);
+            var bitmapInfo = new BitmapInfo
+            {
+                Header = new BitmapInfoHeader
+                {
+                    Size = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
+                    Width = _frameBuffer.Width,
+                    Height = -_frameBuffer.Height,
+                    Planes = 1,
+                    BitCount = 32,
+                    Compression = UncompressedRgbBitmap,
+                    SizeImage = (uint)(Math.Abs(frameData.Stride) * _frameBuffer.Height)
+                }
+            };
+            destinationDeviceContext = destination.GetHdc();
+            SetStretchBltMode(destinationDeviceContext, ColorOnColorStretchMode);
+            var copiedScanlines = StretchDIBits(
+                destinationDeviceContext,
+                viewport.Left,
+                viewport.Top,
+                viewport.Width,
+                viewport.Height,
+                0,
+                0,
+                _frameBuffer.Width,
+                _frameBuffer.Height,
+                frameData.Scan0,
+                ref bitmapInfo,
+                RgbColorTable,
+                SourceCopyRasterOperation);
+            if (copiedScanlines > 0) _renderer.PresentationMode = "scaled fast DIB";
+            return copiedScanlines > 0;
+        }
+        finally
+        {
+            if (destinationDeviceContext != 0) destination.ReleaseHdc(destinationDeviceContext);
+            if (frameData is not null) _frameBuffer.UnlockBits(frameData);
+        }
     }
 
     private static Panel CreateMenuPanel(string title)
@@ -407,6 +635,7 @@ public sealed class GameWindow : Form
     {
         _paused = paused;
         _accumulator = 0;
+        _lastSimulationStepTime = 0d;
         if (paused)
         {
             if (_fixtureDragTarget != FixtureDragTarget.None) SaveFixtureLayout();
@@ -416,6 +645,11 @@ public sealed class GameWindow : Form
             _input.SetRight(false);
             _grabbed?.EndGrab(Vector2.Zero, FixedDt);
             _grabbed = null;
+            if (_world.Knife?.IsGrabbed == true)
+                _world.Knife.EndGrab(Vector2.Zero, FixedDt);
+            _toolPrimaryHeld = false;
+            if (_toolRotationHeld) _world.Knife?.EndRotationAdjust();
+            _toolRotationHeld = false;
             _rightDragging = false;
             _pendingSlice.Clear();
             _sliceTarget = null;
@@ -447,6 +681,7 @@ public sealed class GameWindow : Form
 
     private void ToggleFullscreen()
     {
+        _fullscreenToggleCount++;
         SuspendLayout();
         if (!_isFullscreen)
         {
@@ -467,7 +702,46 @@ public sealed class GameWindow : Form
         _settingsFullscreen.Checked = _isFullscreen;
         ResumeLayout(true);
         LayoutOverlays();
+        UpdateDisplayDiagnostics();
         _surface.Invalidate();
+    }
+
+    private void UpdateDisplayDiagnostics()
+    {
+        if (_surface is null) return;
+        var screen = Screen.FromControl(this);
+        var viewport = WorldViewport;
+        var refreshRate = 0;
+        if (IsHandleCreated)
+        {
+            using var graphics = CreateGraphics();
+            var deviceContext = graphics.GetHdc();
+            try
+            {
+                refreshRate = GetDeviceCaps(deviceContext, VerticalRefreshDeviceCapability);
+            }
+            finally
+            {
+                graphics.ReleaseHdc(deviceContext);
+            }
+        }
+
+        _renderer.DisplayWidth = screen.Bounds.Width;
+        _renderer.DisplayHeight = screen.Bounds.Height;
+        _renderer.DisplayRefreshHz = refreshRate;
+        _renderer.DisplayDpi = DeviceDpi;
+        _renderer.ClientWidth = ClientSize.Width;
+        _renderer.ClientHeight = ClientSize.Height;
+        _renderer.SurfaceWidth = _surface.ClientSize.Width;
+        _renderer.SurfaceHeight = _surface.ClientSize.Height;
+        _renderer.InternalRenderWidth = WorldWidth;
+        _renderer.InternalRenderHeight = WorldHeight;
+        _renderer.ViewportWidth = viewport.Width;
+        _renderer.ViewportHeight = viewport.Height;
+        _renderer.FullscreenMode = _isFullscreen ? "borderless" : "windowed";
+        _renderer.PresentationMode = viewport.Size == LogicalViewport ? "native direct" : "scaled fast blit";
+        _renderer.ResizeEventCount = _resizeEventCount;
+        _renderer.FullscreenToggleCount = _fullscreenToggleCount;
     }
 
     private void ResetScene()
@@ -479,16 +753,16 @@ public sealed class GameWindow : Form
         _world = new BlobWorld(grid);
         _world.Lighting.ConfigureProcessingStation();
         _world.Lighting.SetFactoryPower(false);
-        _world.HoldingChamber = HoldingChamber.CreateProcessingStation(
-            _fixtureLayout.BlobCounterPosition);
-        _world.HoldingChamber.SetCounterPosition(
-            new Vector2(_world.HoldingChamber.CounterBounds.X, _world.HoldingChamber.CounterBounds.Y),
-            WorldWidth, WorldHeight);
-        _chamberFeed = new ChamberFeedController(_world.HoldingChamber);
+        _world.HoldingChamber = null;
+        _chamberFeed = null;
         _world.ProcessingLine = new ProcessingLine(
             DestructibleGrid.ProcessingDeckRow * cellSize,
             powered: false,
-            breakerPosition: _fixtureLayout.BreakerBoxPosition);
+            breakerPosition: _fixtureLayout.BreakerBoxPosition,
+            continuousFlow: true);
+        _world.TubeFeed = new OverheadTubeFeed(_world.ProcessingLine.DeckY);
+        grid.OpenContinuousConveyorPortals();
+        _world.Knife = new PhysicalKnife(_world.ProcessingLine.ContinuousToolRackCenter);
         _world.ProcessingLine.SetBreakerPosition(
             new Vector2(_world.ProcessingLine.BreakerBounds.X, _world.ProcessingLine.BreakerBounds.Y),
             WorldWidth, WorldHeight);
@@ -512,29 +786,45 @@ public sealed class GameWindow : Form
         _factoryStartupDelay = -1f;
         _fixtureDragTarget = FixtureDragTarget.None;
         _fixtureDragMoved = false;
+        _toolPrimaryHeld = false;
+        _toolRotationHeld = false;
+        _toolEquipKeyHeld = false;
+        _arsenalMenuConsumedClick = false;
+        _renderer.ArsenalMenuOpen = false;
         _spawnButton.Enabled = false;
+        _spawnButton.Visible = false;
     }
 
     private async void BeginLoop()
     {
         _lastTime = _clock.Elapsed.TotalSeconds;
+        _lastPumpTime = _lastTime;
+        _nextRenderTime = _lastTime;
         while (!IsDisposed && Visible)
         {
             var now = _clock.Elapsed.TotalSeconds;
+            _maximumPumpGapSincePaint = Math.Max(_maximumPumpGapSincePaint, now - _lastPumpTime);
+            _lastPumpTime = now;
             var frame = Math.Min(now - _lastTime, 0.1);
             _lastTime = now;
-            _world.StepsThisFrame = 0;
-            _audioUpdateMsThisFrame = 0d;
             var fixedUpdateStart = Stopwatch.GetTimestamp();
+            var fixedUpdateAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+            var stepsThisPump = 0;
 
             if (!_paused) _accumulator += frame;
             else _accumulator = 0;
 
-            while (!_paused && _accumulator >= FixedDt && _world.StepsThisFrame < MaxStepsPerFrame)
+            while (!_paused && _accumulator >= FixedDt && stepsThisPump < MaxCatchUpStepsPerPump)
             {
+                var simulationStepTime = _clock.Elapsed.TotalSeconds;
+                if (_lastSimulationStepTime > 0d)
+                    _maximumSimulationGapSincePaint = Math.Max(
+                        _maximumSimulationGapSincePaint,
+                        simulationStepTime - _lastSimulationStepTime);
+                _lastSimulationStepTime = simulationStepTime;
                 FixedUpdate(FixedDt);
                 _accumulator -= FixedDt;
-                _world.StepsThisFrame++;
+                stepsThisPump++;
             }
 
             if (_accumulator >= FixedDt)
@@ -544,14 +834,50 @@ public sealed class GameWindow : Form
                 _accumulator %= FixedDt;
             }
 
-            _renderer.FixedUpdateMs = Stopwatch.GetElapsedTime(fixedUpdateStart).TotalMilliseconds;
-            _renderer.AudioUpdateMs = _audioUpdateMsThisFrame;
+            _fixedUpdateMsSinceRender += Stopwatch.GetElapsedTime(fixedUpdateStart).TotalMilliseconds;
+            _simulationAllocatedBytesSinceRender += Math.Max(0L,
+                GC.GetAllocatedBytesForCurrentThread() - fixedUpdateAllocationStart);
+            _stepsSinceRender += stepsThisPump;
+            _maximumStepBatchSinceRender = Math.Max(_maximumStepBatchSinceRender, stepsThisPump);
 
-            var frameMs = Math.Max(0.001, frame * 1000);
-            _fpsSmoothing = _fpsSmoothing * 0.92 + (1000.0 / frameMs) * 0.08;
-            _renderer.FrameMs = frameMs;
-            _renderer.Fps = _fpsSmoothing;
-            _surface.Invalidate(WorldViewport);
+            var renderNow = _clock.Elapsed.TotalSeconds;
+            if (renderNow >= _nextRenderTime)
+            {
+                var lateness = renderNow - _nextRenderTime;
+                _maximumRenderLatenessSincePaint = Math.Max(_maximumRenderLatenessSincePaint, lateness);
+                var deadlinesAdvanced = 0;
+                do
+                {
+                    _nextRenderTime += TargetRenderSeconds;
+                    deadlinesAdvanced++;
+                } while (_nextRenderTime <= renderNow);
+                _missedRenderDeadlines += Math.Max(0, deadlinesAdvanced - 1);
+
+                _world.StepsThisFrame = _stepsSinceRender;
+                _renderer.FixedUpdateMs = _fixedUpdateMsSinceRender;
+                _renderer.SimulationAllocatedBytesPerFrame = _simulationAllocatedBytesSinceRender;
+                _renderer.AudioUpdateMs = _audioUpdateMsThisFrame;
+                _renderer.HostPumpGapMs = _maximumPumpGapSincePaint * 1000d;
+                _renderer.SimulationGapMs = _maximumSimulationGapSincePaint * 1000d;
+                _renderer.RenderDeadlineLateMs = _maximumRenderLatenessSincePaint * 1000d;
+                _renderer.MaxStepBatch = _maximumStepBatchSinceRender;
+                _renderer.RenderDeadlineMisses = _missedRenderDeadlines;
+
+                _stepsSinceRender = 0;
+                _maximumStepBatchSinceRender = 0;
+                _fixedUpdateMsSinceRender = 0d;
+                _simulationAllocatedBytesSinceRender = 0L;
+                _audioUpdateMsThisFrame = 0d;
+                _maximumPumpGapSincePaint = 0d;
+                _maximumSimulationGapSincePaint = 0d;
+                _maximumRenderLatenessSincePaint = 0d;
+                _renderRequestCount++;
+                _surface.Invalidate(WorldViewport);
+            }
+
+            // Keep simulation/input sampling independent from the 60 Hz paint cap.
+            // A short UI-thread yield lets 120 Hz fixed ticks land near 8.33 ms
+            // instead of batching two of them after one coarse 16.67 ms delay.
             await Task.Delay(1);
         }
     }
@@ -565,11 +891,11 @@ public sealed class GameWindow : Form
             if (_factoryStartupDelay > 0f)
             {
                 _factoryStartupDelay -= dt;
-                if (_factoryStartupDelay <= 0f) _chamberFeed?.RequestNext();
+                if (_factoryStartupDelay <= 0f) _factoryStartupDelay = 0f;
             }
             else
             {
-                var spawned = _chamberFeed?.Update(_world.Bodies, dt, StationUnit.Create);
+                var spawned = _world.TubeFeed?.Update(_world.Bodies, dt, StationUnit.Create);
                 if (spawned is not null) _audio.Play(SoundCue.BlobDrop);
             }
         }
@@ -579,6 +905,7 @@ public sealed class GameWindow : Form
             _grabbed.UpdateGrabTarget(target, dt);
         }
         _world.Step(dt);
+        if (_grabbed is { IsGrabbed: false }) _grabbed = null;
         if (line?.Powered == true && !_observedFactoryPower)
         {
             _observedFactoryPower = true;
@@ -586,7 +913,7 @@ public sealed class GameWindow : Form
             _world.Lighting.SetFactoryPower(true);
             _audio.SetLooping(SoundCue.FactoryHum, true);
             _audio.SetLooping(SoundCue.Conveyor, true);
-            _spawnButton.Enabled = true;
+            _spawnButton.Enabled = false;
         }
         var audioStart = Stopwatch.GetTimestamp();
         UpdateMachineAudio();
@@ -602,8 +929,10 @@ public sealed class GameWindow : Form
             machineryAvailable && line!.CrusherButtonHeld && line.LockedBody is not null);
         _audio.SetLooping(SoundCue.Drill,
             machineryAvailable && line!.DrillLeverHeld && line.DrillLockedBody is not null);
-        _audio.SetLooping(SoundCue.Vacuum, machineryAvailable && _draggingVacuumNozzle);
-        _audio.SetLooping(SoundCue.Filter, machineryAvailable && _draggingFilterKnob);
+        _audio.SetLooping(SoundCue.Vacuum,
+            machineryAvailable && line!.VacuumHose.IsDragging && line.VacuumLockedBody is not null);
+        _audio.SetLooping(SoundCue.Filter,
+            machineryAvailable && line!.FilterDragging && line.FilterLockedBody is not null);
         _audio.SetLooping(SoundCue.Press,
             machineryAvailable && line!.DrumLockedBody is not null && MathF.Abs(line.DrumAngularSpeed) > 0.4f);
     }
@@ -613,6 +942,31 @@ public sealed class GameWindow : Form
         if (_paused) return;
         var point = ToWorld(e.Location);
         _input.SetMouse(point);
+        if (_renderer.ArsenalMenuOpen)
+        {
+            var hovered = _renderer.HitTestArsenalMenu(point);
+            if (hovered >= 0) _renderer.ArsenalMenuSelection = hovered;
+            _surface.Cursor = hovered >= 0 ? Cursors.Hand : Cursors.Default;
+            return;
+        }
+        if (_toolRotationHeld && _world.Knife is { } rotatingTool)
+        {
+            rotatingTool.UpdateRotationAdjust(point);
+            _surface.Cursor = Cursors.Cross;
+            return;
+        }
+        if (_toolPrimaryHeld && _world.Knife?.IsDeployed == true)
+        {
+            _world.Knife.SetGrabTarget(point);
+            _surface.Cursor = Cursors.Hand;
+            return;
+        }
+        if (_world.Knife?.IsGrabbed == true)
+        {
+            _world.Knife.SetGrabTarget(point);
+            _surface.Cursor = Cursors.Hand;
+            return;
+        }
         if (_draggingBreakerLever && _world.ProcessingLine is { } breakerLine)
         {
             if (breakerLine.DragBreakerLever(point)) _audio.Play(SoundCue.Breaker);
@@ -632,7 +986,8 @@ public sealed class GameWindow : Form
         }
         _surface.Cursor = _world.ProcessingLine?.HitBreakerLever(point) == true ||
                           _world.ProcessingLine?.HitDrumWheel(point) == true ||
-                          _world.ProcessingLine?.HitBloodShop(point) == true
+                          _world.ProcessingLine?.HitBloodShop(point) == true ||
+                          _world.Knife?.HitTest(point) == true
             ? Cursors.Hand
             : _world.ProcessingLine?.HitBreaker(point) == true ||
               _world.HoldingChamber?.HitCounter(point) == true
@@ -694,9 +1049,53 @@ public sealed class GameWindow : Form
     {
         if (_paused || !WorldViewport.Contains(e.Location)) return;
         _input.SetMouse(ToWorld(e.Location));
+        if (_renderer.ArsenalMenuOpen)
+        {
+            _arsenalMenuConsumedClick = true;
+            if (e.Button == MouseButtons.Left)
+            {
+                var selected = _renderer.HitTestArsenalMenu(_input.MousePosition);
+                if (selected >= 0)
+                {
+                    _renderer.ArsenalMenuSelection = selected;
+                    ConfirmArsenalSelection();
+                }
+            }
+            _surface.Focus();
+            return;
+        }
         if (e.Button == MouseButtons.Left)
         {
             _input.SetLeft(true);
+            if (_toolRotationHeld)
+            {
+                _surface.Focus();
+                return;
+            }
+            if (_world.ProcessingLine?.Powered == true &&
+                _world.Knife is { IsDeployed: true, ArsenalVisualVariant: 8 } deployedSling &&
+                deployedSling.CanBeginSlingshotPull(_input.MousePosition))
+            {
+                deployedSling.SetGrabTarget(_input.MousePosition);
+                _toolPrimaryHeld = deployedSling.BeginPrimaryAction();
+                _surface.Cursor = Cursors.Hand;
+                _surface.Focus();
+                return;
+            }
+            if (_world.ProcessingLine?.Powered == true && _world.Knife?.IsEquipped == true)
+            {
+                if (_world.Knife.PlaceAtPreview())
+                {
+                    _toolPrimaryHeld = false;
+                    _surface.Cursor = Cursors.Default;
+                    _surface.Focus();
+                    return;
+                }
+                _toolPrimaryHeld = _world.Knife.BeginPrimaryAction();
+                _surface.Cursor = Cursors.Hand;
+                _surface.Focus();
+                return;
+            }
             if (_world.ProcessingLine is { } breakerLine &&
                 breakerLine.BeginBreakerLeverDrag(_input.MousePosition))
             {
@@ -720,6 +1119,14 @@ public sealed class GameWindow : Form
             ClearFixtureSelection();
             if (_world.ProcessingLine?.Powered != true)
             {
+                _surface.Focus();
+                return;
+            }
+            if (_world.Knife?.BeginGrab(_input.MousePosition) == true)
+            {
+                _grabbed = null;
+                _conveyorEditHandle = ConveyorEditHandle.None;
+                _surface.Cursor = Cursors.Hand;
                 _surface.Focus();
                 return;
             }
@@ -834,6 +1241,17 @@ public sealed class GameWindow : Form
         }
         else if (e.Button == MouseButtons.Right)
         {
+            if (_world.ProcessingLine?.Powered == true && _world.Knife is { IsEquipped: true } tool &&
+                tool.BeginRotationAdjust(_input.MousePosition))
+            {
+                _toolPrimaryHeld = false;
+                _input.SetRight(true);
+                _toolRotationHeld = true;
+                _surface.Cursor = Cursors.Cross;
+                _surface.Focus();
+                return;
+            }
+            if (_world.ProcessingLine?.ContinuousFlowMode == true) return;
             _input.SetRight(true);
             _rightGestureStart = _input.MousePosition;
             _rightDragging = false;
@@ -849,9 +1267,35 @@ public sealed class GameWindow : Form
     {
         if (_paused) return;
         _input.SetMouse(ToWorld(e.Location));
+        if (_arsenalMenuConsumedClick)
+        {
+            if (e.Button == MouseButtons.Left) _input.SetLeft(false);
+            _arsenalMenuConsumedClick = false;
+            return;
+        }
+        if (_renderer.ArsenalMenuOpen) return;
         if (e.Button == MouseButtons.Left)
         {
             _input.SetLeft(false);
+            if (_toolPrimaryHeld && _world.Knife is { } activeTool)
+            {
+                activeTool.EndPrimaryAction();
+                _toolPrimaryHeld = false;
+                _surface.Cursor = Cursors.Hand;
+                return;
+            }
+            if (_world.Knife?.IsEquipped == true)
+            {
+                _toolPrimaryHeld = false;
+                _surface.Cursor = Cursors.Hand;
+                return;
+            }
+            if (_world.Knife?.IsGrabbed == true)
+            {
+                _world.Knife.EndGrab(_input.GetMouseVelocity(), FixedDt);
+                _surface.Cursor = Cursors.Default;
+                return;
+            }
             if (_draggingBreakerLever)
             {
                 if (_world.ProcessingLine?.DragBreakerLever(_input.MousePosition) == true)
@@ -916,6 +1360,16 @@ public sealed class GameWindow : Form
         }
         else if (e.Button == MouseButtons.Right)
         {
+            if (_toolRotationHeld && _world.Knife is { } tool)
+            {
+                tool.UpdateRotationAdjust(_input.MousePosition);
+                tool.EndRotationAdjust();
+                _toolRotationHeld = false;
+                _input.SetRight(false);
+                _surface.Cursor = Cursors.Hand;
+                return;
+            }
+            if (_world.ProcessingLine?.ContinuousFlowMode == true) return;
             var thresholdSq = DamageGestureProfile.DragThreshold * DamageGestureProfile.DragThreshold;
             var dragged = _rightDragging ||
                           Vector2.DistanceSquared(_rightGestureStart, _input.MousePosition) >= thresholdSq;
@@ -1035,6 +1489,12 @@ public sealed class GameWindow : Form
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (_renderer.ArsenalMenuOpen && e.KeyCode == Keys.Escape)
+        {
+            CloseArsenalMenu();
+            e.SuppressKeyPress = true;
+            return;
+        }
         if (e.KeyCode == Keys.Escape)
         {
             if (_settingsPanel.Visible)
@@ -1055,6 +1515,57 @@ public sealed class GameWindow : Form
             return;
         }
         if (_paused) return;
+
+        if (e.KeyCode == Keys.I)
+        {
+            if (_renderer.ArsenalMenuOpen) CloseArsenalMenu();
+            else OpenArsenalMenu();
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (_renderer.ArsenalMenuOpen)
+        {
+            switch (e.KeyCode)
+            {
+                case Keys.Left:
+                    MoveArsenalSelection(-1);
+                    break;
+                case Keys.Right:
+                    MoveArsenalSelection(1);
+                    break;
+                case Keys.Up:
+                    MoveArsenalSelection(-5);
+                    break;
+                case Keys.Down:
+                    MoveArsenalSelection(5);
+                    break;
+                case Keys.Enter:
+                    ConfirmArsenalSelection();
+                    break;
+            }
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.KeyCode == Keys.E)
+        {
+            if (!_toolEquipKeyHeld)
+            {
+                _toolEquipKeyHeld = true;
+                if (_world.Knife?.TryPickupBaseball(_input.MousePosition) != true)
+                    ToggleEquippedTool();
+            }
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.KeyCode == Keys.Z && _world.Knife?.DeigniteSaber() == true)
+        {
+            _toolPrimaryHeld = false;
+            e.SuppressKeyPress = true;
+            return;
+        }
 
         switch (e.KeyCode)
         {
@@ -1132,6 +1643,71 @@ public sealed class GameWindow : Form
                 ApplyDiagnosticSlice(Vector2.Normalize(new Vector2(1f, 0.55f)));
                 break;
         }
+    }
+
+    private void OnKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.E) _toolEquipKeyHeld = false;
+    }
+
+    private void ToggleEquippedTool()
+    {
+        if (_world.ProcessingLine?.Powered != true || _world.Knife is not { } tool) return;
+        if (tool.IsEquipped)
+        {
+            if (_toolRotationHeld)
+            {
+                tool.EndRotationAdjust();
+                _toolRotationHeld = false;
+                _input.SetRight(false);
+            }
+            if (_toolPrimaryHeld) tool.EndPrimaryAction();
+            _toolPrimaryHeld = false;
+            tool.EndGrab(_input.GetMouseVelocity(), FixedDt);
+            _surface.Cursor = Cursors.Default;
+            return;
+        }
+        if (tool.IsGrabbed || !tool.HitTest(_input.MousePosition)) return;
+        if (!tool.Equip(_input.MousePosition, _input.MousePosition)) return;
+        _grabbed = null;
+        _conveyorEditHandle = ConveyorEditHandle.None;
+        _surface.Cursor = Cursors.Hand;
+        _surface.Focus();
+    }
+
+    private void OpenArsenalMenu()
+    {
+        _renderer.ArsenalMenuSelection = Math.Clamp(
+            (_world.Knife?.ArsenalVisualVariant ?? -1) + 1,
+            0,
+            GameRenderer.ArsenalItemCount - 1);
+        _renderer.ArsenalMenuOpen = true;
+        _arsenalMenuConsumedClick = false;
+        _surface.Cursor = Cursors.Default;
+        _surface.Invalidate();
+    }
+
+    private void CloseArsenalMenu()
+    {
+        _renderer.ArsenalMenuOpen = false;
+        _arsenalMenuConsumedClick = false;
+        _surface.Cursor = Cursors.Default;
+        _surface.Invalidate();
+    }
+
+    private void MoveArsenalSelection(int delta)
+    {
+        var count = GameRenderer.ArsenalItemCount;
+        _renderer.ArsenalMenuSelection = (_renderer.ArsenalMenuSelection + delta % count + count) % count;
+        _surface.Invalidate();
+    }
+
+    private void ConfirmArsenalSelection()
+    {
+        var menuSelection = Math.Clamp(
+            _renderer.ArsenalMenuSelection, 0, GameRenderer.ArsenalItemCount - 1);
+        _world.Knife?.SelectArsenalVisual(menuSelection - 1);
+        CloseArsenalMenu();
     }
 
     private void SelectNextConveyor()

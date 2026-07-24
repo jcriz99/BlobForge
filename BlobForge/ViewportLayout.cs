@@ -8,6 +8,9 @@ public static class ViewportLayout
     {
         if (available.Width <= 0 || available.Height <= 0 || logical.Width <= 0 || logical.Height <= 0)
             return Rectangle.Empty;
+        // Preserve the complete logical world while filling as much of the client
+        // area as its aspect ratio permits. Presentation scaling is handled by the
+        // host's fast blit path rather than by changing the simulation resolution.
         var scale = MathF.Min(
             available.Width / (float)logical.Width,
             available.Height / (float)logical.Height);

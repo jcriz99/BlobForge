@@ -2,6 +2,21 @@ using System.Numerics;
 
 namespace BlobForge.Physics;
 
+public readonly record struct BlobBloodStain(
+    int ParticleIndex,
+    Vector2 LocalOffset,
+    Vector2 ReferenceDirection,
+    float Amount,
+    float Wetness,
+    byte Variation);
+
+public enum BlobFaceExpression : byte
+{
+    Neutral,
+    Blink,
+    Hurt
+}
+
 public sealed class SoftBody
 {
     private const float BondCompliance = 0.00012f;
@@ -29,6 +44,7 @@ public sealed class SoftBody
     private Vector2 _grabMaximumOffset;
     private readonly bool[] _surfaceMask;
     private readonly bool[] _damageMask;
+    private bool _hasDamageMask;
     private readonly bool[] _convertedMask;
     // A released particle no longer belongs to any intact material cell. It is
     // removed from physics immediately, but remains an unconverted material
@@ -41,11 +57,29 @@ public sealed class SoftBody
     private readonly Vector2 _shapeReferenceCenter;
     private readonly List<WoundEvent> _pendingWounds = new();
     private readonly List<Vector2> _breakupImpactPoints = new(8);
+    private readonly List<BlobBloodStain> _bloodStains = new(32);
+    private byte _bloodStainSerial;
+    private float _faceClock;
+    private float _nextBlinkTime;
+    private float _blinkRemaining;
+    private float _hurtRemaining;
+    private float _hitFlashRemaining;
+    private uint _blinkSequence;
+    private bool _pendingExplosionFragmentMotion;
+    private Vector2 _pendingExplosionCenter;
+    private float _pendingExplosionMinimumSpeed;
+    private float _pendingExplosionMaximumSpeed;
+    private float _pendingExplosionDt;
+    private uint _explosionMotionSerial;
+    private float _looseFragmentAngle;
+    private float _looseFragmentAngularVelocity;
+    private const int MaximumBloodStains = 36;
 
     public SoftBody(Vector2 center, float radius, int targetParticleCount = 61)
     {
         Id = Interlocked.Increment(ref _nextId);
         ParentId = Id;
+        InitializeFaceAnimation();
         Radius = radius;
 
         var target = Math.Max(7, targetParticleCount);
@@ -122,6 +156,7 @@ public sealed class SoftBody
     {
         Id = Interlocked.Increment(ref _nextId);
         ParentId = parentId;
+        InitializeFaceAnimation();
         Particles = particles;
         Constraints = constraints;
         AreaConstraints = areaConstraints;
@@ -132,6 +167,7 @@ public sealed class SoftBody
         _grabOffsets = new Vector2[particles.Length];
         _surfaceMask = new bool[particles.Length];
         _damageMask = damageMask;
+        _hasDamageMask = Array.IndexOf(damageMask, true) >= 0;
         _convertedMask = new bool[particles.Length];
         _releasedMask = new bool[particles.Length];
         _activeParticleCount = particles.Length;
@@ -158,6 +194,9 @@ public sealed class SoftBody
     public float ParticleSpacing { get; }
     public float Radius { get; private set; }
     public float VisualRotation => CurrentShapeAngle(Center);
+    public float FragmentVisualRotation => PhysicalParticleCount < 2
+        ? _looseFragmentAngle
+        : VisualRotation;
     public SimulationMode Mode { get; private set; }
     public bool IsSleeping { get; private set; }
     public bool IsGrabbed { get; private set; }
@@ -178,10 +217,15 @@ public sealed class SoftBody
     public int LastSupportedParticles { get; private set; }
     public bool IsDetachedDebris { get; private set; }
     public bool IsCrumbling { get; private set; }
-    public bool HasLocalDamage => BrokenLinkCount > 0 || Array.IndexOf(_damageMask, true) >= 0;
+    public bool HasLocalDamage => BrokenLinkCount > 0 || _hasDamageMask;
     public bool IsPickable => !IsDetachedDebris && Mode != SimulationMode.LooseFragment && Particles.Length >= 7;
     public int ActiveParticleCount => _activeParticleCount;
     public int PhysicalParticleCount => _physicalParticleCount;
+    public IReadOnlyList<BlobBloodStain> BloodStains => _bloodStains;
+    public BlobFaceExpression FaceExpression => _hurtRemaining > 0f
+        ? BlobFaceExpression.Hurt
+        : _blinkRemaining > 0f ? BlobFaceExpression.Blink : BlobFaceExpression.Neutral;
+    public float HitFlash01 => Math.Clamp(_hitFlashRemaining / 0.18f, 0f, 1f);
 
     public Vector2 Center
     {
@@ -208,6 +252,60 @@ public sealed class SoftBody
             }
             return count > 0 ? sum / count : Vector2.Zero;
         }
+    }
+
+    private void InitializeFaceAnimation()
+    {
+        _blinkSequence = unchecked((uint)(ParentId * 747796405) ^ (uint)(Id * 2891336453L));
+        _nextBlinkTime = 1.4f + NextFaceSample() * 3.1f;
+    }
+
+    internal void AdvanceFaceAnimation(float dt)
+    {
+        if (dt <= 0f) return;
+        _hitFlashRemaining = MathF.Max(0f, _hitFlashRemaining - dt);
+        _faceClock += dt;
+        if (_hurtRemaining > 0f)
+        {
+            _hurtRemaining = MathF.Max(0f, _hurtRemaining - dt);
+            _blinkRemaining = 0f;
+            if (_hurtRemaining <= 0f && _nextBlinkTime <= _faceClock)
+                _nextBlinkTime = _faceClock + 1.1f + NextFaceSample() * 2.4f;
+            return;
+        }
+        if (_blinkRemaining > 0f)
+        {
+            _blinkRemaining = MathF.Max(0f, _blinkRemaining - dt);
+            return;
+        }
+        if (_faceClock < _nextBlinkTime) return;
+        _blinkRemaining = 0.12f;
+        _nextBlinkTime = _faceClock + 2.3f + NextFaceSample() * 3.4f;
+    }
+
+    private void ShowHurtExpression(float intensity)
+    {
+        if (intensity <= 0f || IsDetachedDebris) return;
+        var duration = 0.30f + Math.Clamp(intensity * 0.035f, 0f, 0.14f);
+        _hurtRemaining = MathF.Max(_hurtRemaining, duration);
+        _blinkRemaining = 0f;
+    }
+
+    public void RegisterHitReaction(float intensity = 1f, float flashSeconds = 0.18f)
+    {
+        ShowHurtExpression(MathF.Max(0.1f, intensity));
+        _hitFlashRemaining = MathF.Max(
+            _hitFlashRemaining,
+            Math.Clamp(flashSeconds, 0.04f, 0.30f));
+        Wake();
+    }
+
+    private float NextFaceSample()
+    {
+        _blinkSequence ^= _blinkSequence << 13;
+        _blinkSequence ^= _blinkSequence >> 17;
+        _blinkSequence ^= _blinkSequence << 5;
+        return (_blinkSequence & 0x00FFFFFFu) / 16777216f;
     }
 
     private DistanceConstraint MakeBond(int a, int b)
@@ -239,8 +337,20 @@ public sealed class SoftBody
     public void Integrate(float dt, Vector2 gravity)
     {
         _lastGravity = gravity;
+        for (var i = 0; i < _bloodStains.Count; i++)
+        {
+            var stain = _bloodStains[i];
+            _bloodStains[i] = stain with { Wetness = MathF.Max(0f, stain.Wetness - dt * 0.045f) };
+        }
         if (IsSleeping) return;
         var settings = ModeSettings.For(Mode);
+        if (MathF.Abs(_looseFragmentAngularVelocity) > 0.001f)
+        {
+            _looseFragmentAngle = MathF.IEEERemainder(
+                _looseFragmentAngle + _looseFragmentAngularVelocity * dt,
+                MathF.Tau);
+            _looseFragmentAngularVelocity *= settings.LinearDamping;
+        }
         var dt2 = dt * dt;
 
         for (var i = 0; i < Particles.Length; i++)
@@ -258,6 +368,69 @@ public sealed class SoftBody
             p.Position += velocity + (gravity + p.Acceleration) * dt2;
             p.Acceleration = Vector2.Zero;
         }
+    }
+
+    public void DepositBloodStain(int particleIndex, Vector2 worldContact, float amount)
+    {
+        if ((uint)particleIndex >= (uint)Particles.Length || !IsPhysicalParticle(particleIndex)) return;
+        var radius = MathF.Max(2f, Particles[particleIndex].Radius * 0.92f);
+        var localOffset = worldContact - Particles[particleIndex].Position;
+        var offsetLength = localOffset.Length();
+        if (offsetLength > radius) localOffset *= radius / offsetLength;
+        var referenceDirection = Particles[particleIndex].Position - Center;
+        if (referenceDirection.LengthSquared() < 0.0001f) referenceDirection = -Vector2.UnitY;
+        else referenceDirection = Vector2.Normalize(referenceDirection);
+
+        var searchStart = Math.Max(0, _bloodStains.Count - 16);
+        for (var i = _bloodStains.Count - 1; i >= searchStart; i--)
+        {
+            var existing = _bloodStains[i];
+            if (existing.ParticleIndex != particleIndex ||
+                Vector2.DistanceSquared(BloodStainWorldPosition(existing), worldContact) > 24f) continue;
+            var blendedWorld = Vector2.Lerp(BloodStainWorldPosition(existing), worldContact, 0.25f);
+            _bloodStains[i] = existing with
+            {
+                LocalOffset = blendedWorld - Particles[particleIndex].Position,
+                ReferenceDirection = referenceDirection,
+                Amount = MathF.Min(1f, existing.Amount + amount * 0.55f),
+                Wetness = 1f
+            };
+            return;
+        }
+
+        var mark = new BlobBloodStain(
+            particleIndex,
+            localOffset,
+            referenceDirection,
+            Math.Clamp(amount, 0.06f, 1f),
+            1f,
+            _bloodStainSerial++);
+        if (_bloodStains.Count < MaximumBloodStains)
+        {
+            _bloodStains.Add(mark);
+            return;
+        }
+
+        var weakest = 0;
+        for (var i = 1; i < _bloodStains.Count; i++)
+            if (_bloodStains[i].Amount < _bloodStains[weakest].Amount) weakest = i;
+        _bloodStains[weakest] = mark;
+    }
+
+    public Vector2 BloodStainWorldPosition(BlobBloodStain stain)
+    {
+        if ((uint)stain.ParticleIndex >= (uint)Particles.Length) return Center;
+        var currentDirection = Particles[stain.ParticleIndex].Position - Center;
+        if (currentDirection.LengthSquared() < 0.0001f || stain.ReferenceDirection.LengthSquared() < 0.0001f)
+            return Particles[stain.ParticleIndex].Position + stain.LocalOffset;
+        currentDirection = Vector2.Normalize(currentDirection);
+        var referenceDirection = Vector2.Normalize(stain.ReferenceDirection);
+        var cosine = Math.Clamp(Vector2.Dot(referenceDirection, currentDirection), -1f, 1f);
+        var sine = referenceDirection.X * currentDirection.Y - referenceDirection.Y * currentDirection.X;
+        var rotatedOffset = new Vector2(
+            stain.LocalOffset.X * cosine - stain.LocalOffset.Y * sine,
+            stain.LocalOffset.X * sine + stain.LocalOffset.Y * cosine);
+        return Particles[stain.ParticleIndex].Position + rotatedOffset;
     }
 
     public void PrepareConstraintSolve()
@@ -462,6 +635,139 @@ public sealed class SoftBody
         }
     }
 
+    public void AddLocalizedImpulse(Vector2 point, float radius, Vector2 impulse, float dt)
+    {
+        if (radius <= 0f || impulse.LengthSquared() <= 0.0001f) return;
+        Wake();
+        var radiusSquared = radius * radius;
+        for (var i = 0; i < Particles.Length; i++)
+        {
+            if (!IsPhysicalParticle(i)) continue;
+            var distanceSquared = Vector2.DistanceSquared(Particles[i].Position, point);
+            if (distanceSquared >= radiusSquared) continue;
+            var distance = MathF.Sqrt(distanceSquared);
+            var normalized = 1f - distance / radius;
+            var weight = normalized * normalized;
+            Particles[i].PreviousPosition -= impulse * (dt * weight);
+        }
+    }
+
+    public void AddRadialImpulse(Vector2 center, float radius, float strength, float dt)
+    {
+        if (radius <= 0f || strength <= 0f) return;
+        Wake();
+        var radiusSquared = radius * radius;
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index)) continue;
+            var delta = Particles[index].Position - center;
+            var distanceSquared = delta.LengthSquared();
+            if (distanceSquared >= radiusSquared) continue;
+            var distance = MathF.Sqrt(distanceSquared);
+            var direction = distance > 0.001f
+                ? delta / distance
+                : new Vector2(index % 2 == 0 ? -1f : 1f, -1f);
+            var falloff = 1f - distance / radius;
+            Particles[index].PreviousPosition -=
+                direction * (strength * falloff * falloff * dt);
+        }
+    }
+
+    public void AddRadialExplosion(
+        Vector2 center,
+        float minimumSpeed,
+        float maximumSpeed,
+        float dt)
+    {
+        if (dt <= 0f || maximumSpeed <= 0f) return;
+        minimumSpeed = Math.Clamp(minimumSpeed, 0f, maximumSpeed);
+        Wake();
+        _pendingExplosionFragmentMotion = true;
+        _pendingExplosionCenter = center;
+        _pendingExplosionMinimumSpeed = minimumSpeed;
+        _pendingExplosionMaximumSpeed = maximumSpeed;
+        _pendingExplosionDt = dt;
+        _explosionMotionSerial++;
+        var inverseDt = 1f / MathF.Max(dt, 0.0001f);
+        var radius = MathF.Max(Radius, 1f);
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index)) continue;
+            ref var particle = ref Particles[index];
+            var delta = particle.Position - center;
+            var distance = delta.Length();
+            var direction = distance > 0.001f
+                ? delta / distance
+                : Vector2.Normalize(new Vector2(
+                    (index & 1) == 0 ? -1f : 1f,
+                    (index & 2) == 0 ? -1f : 1f));
+            var normalizedDistance = Math.Clamp(distance / radius, 0f, 1f);
+            var targetSpeed = minimumSpeed +
+                              (maximumSpeed - minimumSpeed) *
+                              (0.82f + normalizedDistance * 0.18f);
+            var velocity = (particle.Position - particle.PreviousPosition) * inverseDt;
+            var outwardSpeed = Vector2.Dot(velocity, direction);
+            if (outwardSpeed < targetSpeed)
+                velocity += direction * (targetSpeed - outwardSpeed);
+            particle.PreviousPosition = particle.Position - velocity * dt;
+        }
+    }
+
+    public void AddAngularImpulse(float angularVelocity, float dt)
+    {
+        if (dt <= 0f || MathF.Abs(angularVelocity) < 0.001f ||
+            PhysicalParticleCount <= 0) return;
+        Wake();
+        if (PhysicalParticleCount < 2)
+        {
+            _looseFragmentAngularVelocity += angularVelocity;
+            return;
+        }
+        var center = Center;
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index)) continue;
+            var offset = Particles[index].Position - center;
+            var tangentialVelocity = new Vector2(-offset.Y, offset.X) * angularVelocity;
+            Particles[index].PreviousPosition -= tangentialVelocity * dt;
+        }
+    }
+
+    public void ScaleMaterial(float factor)
+    {
+        factor = Math.Clamp(factor, 1f, 1.08f);
+        if (factor <= 1.0001f || PhysicalParticleCount <= 0) return;
+        var center = Center;
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index)) continue;
+            var positionOffset = Particles[index].Position - center;
+            var previousOffset = Particles[index].PreviousPosition - center;
+            Particles[index].Position = center + positionOffset * factor;
+            Particles[index].PreviousPosition = center + previousOffset * factor;
+            Particles[index].Radius *= factor;
+        }
+        for (var index = 0; index < Constraints.Count; index++)
+        {
+            var constraint = Constraints[index];
+            constraint.RestLength *= factor;
+            constraint.Lambda = 0f;
+            Constraints[index] = constraint;
+        }
+        var areaScale = factor * factor;
+        for (var index = 0; index < AreaConstraints.Count; index++)
+        {
+            var area = AreaConstraints[index];
+            area.RestArea *= areaScale;
+            area.Lambda = 0f;
+            AreaConstraints[index] = area;
+        }
+        _restAreaTotal *= areaScale;
+        Radius *= factor;
+        TopologyRevision++;
+        Wake();
+    }
+
     public int DamageBonds(Vector2 point, float radius, float damage)
         => DamageLine(point, point, radius, damage);
 
@@ -469,6 +775,7 @@ public sealed class SoftBody
     {
         if (path.Count < 2) return 0;
         var broken = 0;
+        var touched = false;
         for (var i = 0; i < Constraints.Count; i++)
         {
             var bond = Constraints[i];
@@ -480,12 +787,14 @@ public sealed class SoftBody
                 distance = MathF.Min(distance, SegmentDistance(a, b, path[segmentIndex - 1], path[segmentIndex]));
             if (distance > thickness) continue;
 
+            touched = true;
             var falloff = Math.Clamp(1f - distance / MathF.Max(0.001f, thickness), 0.2f, 1f);
             bond.Health -= damage * falloff;
             Constraints[i] = bond;
             if (bond.Health <= 0f && BreakBond(i, true)) broken++;
         }
 
+        if (touched) ShowHurtExpression(damage);
         if (broken <= 0) return 0;
         for (var segmentIndex = 1; segmentIndex < path.Count; segmentIndex++)
             RecordCutSegment(new CutSegment(path[segmentIndex - 1], path[segmentIndex]));
@@ -495,8 +804,14 @@ public sealed class SoftBody
         return broken;
     }
 
-    public int DamageLine(Vector2 start, Vector2 end, float thickness, float damage)
+    public int DamageLine(
+        Vector2 start,
+        Vector2 end,
+        float thickness,
+        float damage,
+        int maximumBreaks = int.MaxValue)
     {
+        if (maximumBreaks <= 0) return 0;
         var requestedStart = start;
         var requestedEnd = end;
         var isSlice = Vector2.DistanceSquared(start, end) >= 1f;
@@ -509,8 +824,10 @@ public sealed class SoftBody
         }
 
         var broken = 0;
+        var touched = false;
         for (var i = 0; i < Constraints.Count; i++)
         {
+            if (broken >= maximumBreaks) break;
             var bond = Constraints[i];
             if (bond.Broken) continue;
             var a = Particles[bond.A].Position;
@@ -518,12 +835,14 @@ public sealed class SoftBody
             var distance = SegmentDistance(a, b, start, end);
             if (distance > thickness) continue;
 
+            touched = true;
             var falloff = Math.Clamp(1f - distance / MathF.Max(0.001f, thickness), 0.2f, 1f);
             bond.Health -= damage * falloff;
             Constraints[i] = bond;
             if (bond.Health <= 0f && BreakBond(i, true)) broken++;
         }
 
+        if (touched) ShowHurtExpression(damage);
         if (broken > 0)
         {
             if (isSlice)
@@ -552,6 +871,7 @@ public sealed class SoftBody
         TopologyRevision++;
         _damageMask[bond.A] = true;
         _damageMask[bond.B] = true;
+        _hasDamageMask = true;
         BrokenLinkCount++;
         BreakAreasUsingEdge(bond.A, bond.B);
         TopologyDirty = true;
@@ -619,7 +939,11 @@ public sealed class SoftBody
             components.Add(component);
         }
 
-        if (components.Count <= 1) return new List<SoftBody>();
+        if (components.Count <= 1)
+        {
+            _pendingExplosionFragmentMotion = false;
+            return new List<SoftBody>();
+        }
         var result = new List<SoftBody>(components.Count);
         var worldCutSegments = GetWorldCutSegments();
         foreach (var component in components)
@@ -653,13 +977,107 @@ public sealed class SoftBody
             for (var i = 0; i < component.Count; i++) damageMask[i] = _damageMask[component[i]];
             var child = new SoftBody(particles, bonds, areas, ParticleSpacing, ParentId, Mode, damageMask, worldCutSegments)
             {
-                BrokenLinkCount = damageMask.Count(damaged => damaged)
+                BrokenLinkCount = damageMask.Count(damaged => damaged),
+                _faceClock = _faceClock,
+                _nextBlinkTime = _nextBlinkTime,
+                _blinkRemaining = _blinkRemaining,
+                _hurtRemaining = _hurtRemaining,
+                _hitFlashRemaining = _hitFlashRemaining,
+                _blinkSequence = _blinkSequence
             };
+            foreach (var stain in _bloodStains)
+            {
+                if (!map.TryGetValue(stain.ParticleIndex, out var childParticle)) continue;
+                var worldMark = BloodStainWorldPosition(stain);
+                var childReference = child.Particles[childParticle].Position - child.Center;
+                if (childReference.LengthSquared() < 0.0001f) childReference = -Vector2.UnitY;
+                else childReference = Vector2.Normalize(childReference);
+                child._bloodStains.Add(stain with
+                {
+                    ParticleIndex = childParticle,
+                    LocalOffset = worldMark - child.Particles[childParticle].Position,
+                    ReferenceDirection = childReference
+                });
+                child._bloodStainSerial = Math.Max(child._bloodStainSerial, (byte)(stain.Variation + 1));
+            }
             child.Wake();
             result.Add(child);
         }
+        ApplyExplosionFragmentMotion(result);
         return result;
     }
+
+    private void ApplyExplosionFragmentMotion(IReadOnlyList<SoftBody> fragments)
+    {
+        if (!_pendingExplosionFragmentMotion || fragments.Count == 0) return;
+        _pendingExplosionFragmentMotion = false;
+
+        var simulationDt = MathF.Max(_pendingExplosionDt, 0.0001f);
+        var minimumSpeed = _pendingExplosionMinimumSpeed;
+        var maximumSpeed = MathF.Max(minimumSpeed, _pendingExplosionMaximumSpeed);
+        var seed = MixExplosionSeed(
+            unchecked((uint)ParentId * 0x9E3779B9u) ^
+            _explosionMotionSerial * 0x85EBCA6Bu ^
+            unchecked((uint)BrokenLinkCount * 0xC2B2AE35u));
+
+        for (var fragmentIndex = 0; fragmentIndex < fragments.Count; fragmentIndex++)
+        {
+            var fragment = fragments[fragmentIndex];
+            var fragmentSeed = MixExplosionSeed(
+                seed ^ unchecked((uint)(fragmentIndex + 1) * 0x27D4EB2Du));
+            var radial = fragment.Center - _pendingExplosionCenter;
+            if (radial.LengthSquared() < 0.001f)
+            {
+                var fallbackAngle = MathF.Tau * ExplosionSample(fragmentSeed);
+                radial = new Vector2(MathF.Cos(fallbackAngle), MathF.Sin(fallbackAngle));
+            }
+            else
+            {
+                radial = Vector2.Normalize(radial);
+            }
+
+            var tangent = new Vector2(-radial.Y, radial.X);
+            var launchSample = ExplosionSample(MixExplosionSeed(fragmentSeed + 0x68E31DA4u));
+            var lateralSample = ExplosionSample(MixExplosionSeed(fragmentSeed + 0xB5297A4Du)) * 2f - 1f;
+            var spinSample = ExplosionSample(MixExplosionSeed(fragmentSeed + 0x1B56C4E9u));
+            var spinSign = (fragmentSeed & 1u) == 0u ? -1f : 1f;
+
+            var velocity = fragment.AverageVelocity(simulationDt);
+            var currentOutwardSpeed = Vector2.Dot(velocity, radial);
+            var desiredOutwardSpeed = minimumSpeed +
+                                       (maximumSpeed - minimumSpeed) *
+                                       (0.76f + launchSample * 0.24f);
+            var outwardCorrection = MathF.Max(0f, desiredOutwardSpeed - currentOutwardSpeed);
+            var lateralSpeed = lateralSample *
+                               Math.Clamp(maximumSpeed * 0.15f, 34f, 128f);
+            fragment.AddImpulse(
+                radial * outwardCorrection + tangent * lateralSpeed,
+                simulationDt);
+
+            // Smaller pieces can tumble faster, while larger coherent slabs still
+            // receive enough torque to visibly break the radial/grid uniformity.
+            var sizeFactor = Math.Clamp(
+                8f / MathF.Sqrt(MathF.Max(2f, fragment.PhysicalParticleCount)),
+                0.48f,
+                1f);
+            var angularVelocity = spinSign *
+                                  (2.4f + spinSample * 5.8f) *
+                                  sizeFactor;
+            fragment.AddAngularImpulse(angularVelocity, simulationDt);
+        }
+    }
+
+    private static uint MixExplosionSeed(uint value)
+    {
+        value ^= value >> 16;
+        value *= 0x7FEB352Du;
+        value ^= value >> 15;
+        value *= 0x846CA68Bu;
+        return value ^ (value >> 16);
+    }
+
+    private static float ExplosionSample(uint value)
+        => (value & 0x00FFFFFFu) / 16777216f;
 
     private void StabilizeDamagedTopology()
     {
@@ -832,7 +1250,9 @@ public sealed class SoftBody
         => _releasedMask[particleIndex];
 
     public bool IsPhysicalParticle(int particleIndex)
-        => !_convertedMask[particleIndex] && !_releasedMask[particleIndex];
+        => (uint)particleIndex < (uint)Particles.Length &&
+           !_convertedMask[particleIndex] &&
+           !_releasedMask[particleIndex];
 
     public bool IsDamageAdjacentParticle(int particleIndex)
         => _damageMask[particleIndex];
@@ -1050,6 +1470,185 @@ public sealed class SoftBody
         ReleaseOrphanedErosionParticles();
         RefreshSurfaceMask();
         if (IsCrumbling && PhysicalParticleCount <= 3) Mode = SimulationMode.LooseFragment;
+    }
+
+    public int CrushAgainstSurface(
+        Vector2 impactCenter,
+        float halfWidth,
+        float crushDepth,
+        float surfaceY,
+        float severity)
+    {
+        if (_physicalParticleCount <= 0 || halfWidth <= 0f || crushDepth <= 0f)
+            return 0;
+
+        var crushTop = surfaceY - crushDepth;
+        var crushMask = new bool[Particles.Length];
+        var crushed = 0;
+        for (var particleIndex = 0; particleIndex < Particles.Length; particleIndex++)
+        {
+            if (!IsPhysicalParticle(particleIndex)) continue;
+            var particle = Particles[particleIndex];
+            if (MathF.Abs(particle.Position.X - impactCenter.X) >
+                    halfWidth + particle.Radius ||
+                particle.Position.Y + particle.Radius < crushTop ||
+                particle.Position.Y - particle.Radius > surfaceY + ParticleSpacing * 0.35f)
+                continue;
+            crushMask[particleIndex] = true;
+            crushed++;
+        }
+        if (crushed <= 0) return 0;
+
+        var brokenBonds = 0;
+        for (var bondIndex = 0; bondIndex < Constraints.Count; bondIndex++)
+        {
+            var bond = Constraints[bondIndex];
+            if (bond.Broken || (!crushMask[bond.A] && !crushMask[bond.B])) continue;
+            bond.Broken = true;
+            Constraints[bondIndex] = bond;
+            brokenBonds++;
+            if (!crushMask[bond.A]) _damageMask[bond.A] = true;
+            if (!crushMask[bond.B]) _damageMask[bond.B] = true;
+        }
+        for (var areaIndex = 0; areaIndex < AreaConstraints.Count; areaIndex++)
+        {
+            var area = AreaConstraints[areaIndex];
+            if (area.Broken ||
+                (!crushMask[area.A] && !crushMask[area.B] && !crushMask[area.C]))
+                continue;
+            area.Broken = true;
+            AreaConstraints[areaIndex] = area;
+        }
+
+        for (var particleIndex = 0; particleIndex < Particles.Length; particleIndex++)
+        {
+            if (!crushMask[particleIndex]) continue;
+            _convertedMask[particleIndex] = true;
+            _activeParticleCount--;
+            _physicalParticleCount--;
+            Particles[particleIndex].InverseMass = 0f;
+            Particles[particleIndex].Position = new Vector2(
+                Particles[particleIndex].Position.X,
+                MathF.Min(surfaceY, MathF.Max(crushTop, Particles[particleIndex].Position.Y)));
+            Particles[particleIndex].PreviousPosition = Particles[particleIndex].Position;
+        }
+
+        BrokenLinkCount += brokenBonds;
+        _hasDamageMask = true;
+        TopologyRevision++;
+        TopologyDirty = true;
+        RecordCutSegment(new CutSegment(
+            new Vector2(impactCenter.X - halfWidth, crushTop),
+            new Vector2(impactCenter.X + halfWidth, crushTop)));
+
+        var woundCount = 0;
+        var woundReach = ParticleSpacing * 2.25f;
+        for (var particleIndex = 0;
+             particleIndex < Particles.Length && woundCount < 5;
+             particleIndex++)
+        {
+            if (!IsPhysicalParticle(particleIndex)) continue;
+            var position = Particles[particleIndex].Position;
+            if (MathF.Abs(position.X - impactCenter.X) > halfWidth + ParticleSpacing ||
+                MathF.Abs(position.Y - crushTop) > woundReach)
+                continue;
+            _damageMask[particleIndex] = true;
+            _pendingWounds.Add(new WoundEvent(
+                position,
+                -Vector2.UnitY,
+                Math.Clamp(severity * 0.85f, 1.4f, 5.5f)));
+            woundCount++;
+        }
+
+        ShowHurtExpression(severity);
+        RefreshSurfaceMask();
+        Wake();
+        if (_physicalParticleCount <= 3) Mode = SimulationMode.LooseFragment;
+        return crushed;
+    }
+
+    public int ExciseSweptBand(
+        Vector2 start,
+        Vector2 end,
+        float radius,
+        int maximumParticles = 8)
+    {
+        if (_physicalParticleCount <= 0 || radius <= 0f || maximumParticles <= 0)
+            return 0;
+
+        var segment = end - start;
+        var segmentLengthSquared = segment.LengthSquared();
+        var candidates = new List<(int Index, float DistanceSquared)>(12);
+        for (var particleIndex = 0; particleIndex < Particles.Length; particleIndex++)
+        {
+            if (!IsPhysicalParticle(particleIndex)) continue;
+            var position = Particles[particleIndex].Position;
+            var amount = segmentLengthSquared < 0.0001f
+                ? 0f
+                : Math.Clamp(Vector2.Dot(position - start, segment) / segmentLengthSquared, 0f, 1f);
+            var closest = start + segment * amount;
+            var reach = radius + Particles[particleIndex].Radius * 0.35f;
+            var distanceSquared = Vector2.DistanceSquared(position, closest);
+            if (distanceSquared <= reach * reach)
+                candidates.Add((particleIndex, distanceSquared));
+        }
+        if (candidates.Count == 0) return 0;
+        candidates.Sort(static (left, right) =>
+            left.DistanceSquared.CompareTo(right.DistanceSquared));
+
+        var removed = Math.Min(maximumParticles, candidates.Count);
+        var removalMask = new bool[Particles.Length];
+        for (var index = 0; index < removed; index++)
+            removalMask[candidates[index].Index] = true;
+
+        var brokenBonds = 0;
+        for (var bondIndex = 0; bondIndex < Constraints.Count; bondIndex++)
+        {
+            var bond = Constraints[bondIndex];
+            if (bond.Broken || (!removalMask[bond.A] && !removalMask[bond.B])) continue;
+            bond.Broken = true;
+            Constraints[bondIndex] = bond;
+            brokenBonds++;
+            if (!removalMask[bond.A]) _damageMask[bond.A] = true;
+            if (!removalMask[bond.B]) _damageMask[bond.B] = true;
+        }
+        for (var areaIndex = 0; areaIndex < AreaConstraints.Count; areaIndex++)
+        {
+            var area = AreaConstraints[areaIndex];
+            if (area.Broken ||
+                (!removalMask[area.A] && !removalMask[area.B] && !removalMask[area.C]))
+                continue;
+            area.Broken = true;
+            AreaConstraints[areaIndex] = area;
+        }
+        for (var particleIndex = 0; particleIndex < Particles.Length; particleIndex++)
+        {
+            if (!removalMask[particleIndex]) continue;
+            _convertedMask[particleIndex] = true;
+            _activeParticleCount--;
+            _physicalParticleCount--;
+            Particles[particleIndex].InverseMass = 0f;
+            Particles[particleIndex].PreviousPosition = Particles[particleIndex].Position;
+        }
+
+        BrokenLinkCount += brokenBonds;
+        _hasDamageMask = true;
+        TopologyRevision++;
+        TopologyDirty = true;
+        RecordCutSegment(new CutSegment(start, end));
+        var woundDirection = segmentLengthSquared < 0.0001f
+            ? -Vector2.UnitY
+            : Vector2.Normalize(new Vector2(-segment.Y, segment.X));
+        for (var index = 0; index < Math.Min(3, removed); index++)
+        {
+            var position = Particles[candidates[index].Index].Position;
+            _pendingWounds.Add(new WoundEvent(position, woundDirection, 3.8f));
+        }
+        ShowHurtExpression(4.2f);
+        RefreshSurfaceMask();
+        Wake();
+        if (_physicalParticleCount <= 3) Mode = SimulationMode.LooseFragment;
+        return removed;
     }
 
     private void ReleaseOrphanedErosionParticles()
