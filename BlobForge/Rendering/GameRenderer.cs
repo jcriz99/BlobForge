@@ -141,6 +141,7 @@ public sealed class GameRenderer
         DashStyle = DashStyle.Dash
     };
     private readonly Pen _grenadeBouncePen = new(Color.FromArgb(235, 240, 195, 75), 2f);
+    private readonly Pen _grenadeBodyContactPen = new(Color.FromArgb(245, 235, 62, 74), 2f);
     private readonly Pen _slingshotRubberBackPen = new(Color.FromArgb(255, 23, 35, 42), 6f)
     {
         StartCap = LineCap.Round,
@@ -188,6 +189,9 @@ public sealed class GameRenderer
     private readonly Pen _constraintPen = new(Color.FromArgb(65, 255, 255, 255), 1f);
     private readonly SolidBrush _debugSupportedParticleBrush = new(Color.Gold);
     private readonly SolidBrush _debugParticleBrush = new(Color.FromArgb(155, 255, 255, 255));
+    private readonly Pen _debugBodyColliderPen = new(Color.FromArgb(145, 101, 230, 223), 1f);
+    private readonly Pen _debugToolColliderPen = new(Color.FromArgb(220, 255, 196, 64), 1.5f);
+    private readonly Pen _debugProjectileColliderPen = new(Color.FromArgb(230, 255, 92, 118), 1.5f);
     private readonly SolidBrush _debugPanelBackgroundBrush = new(Color.FromArgb(190, 5, 9, 15));
     private readonly SolidBrush _debugPanelTextBrush = new(Color.FromArgb(235, 161, 235, 205));
     private readonly GraphicsPath _debugConstraintPath = new();
@@ -1750,6 +1754,20 @@ public sealed class GameRenderer
                     g.DrawImage(sprite, new RectangleF(-anchor.X, -anchor.Y, 78f, 64f),
                         new RectangleF(0f, 0f, 78f, 64f), GraphicsUnit.Pixel);
                 }
+                else if (arsenalVariant == 11)
+                {
+                    // The thrown grenade was reduced to half scale previously, but
+                    // the same authored frame was still drawn full-size on the rack.
+                    // Keep one source sprite and apply the same 50% scale everywhere.
+                    g.DrawImage(sprite,
+                        new RectangleF(
+                            -anchor.X * 0.5f,
+                            -anchor.Y * 0.5f,
+                            48f,
+                            32f),
+                        new RectangleF(0f, 0f, sprite.Width, sprite.Height),
+                        GraphicsUnit.Pixel);
+                }
                 else
                 {
                     g.DrawImage(sprite, new RectangleF(-anchor.X, -anchor.Y, 96f, 64f),
@@ -1924,7 +1942,22 @@ public sealed class GameRenderer
             var point = points[i];
             g.DrawLine(_grenadeArcPen, previous.Position.X, previous.Position.Y,
                 point.Position.X, point.Position.Y);
-            if (point.Bounced)
+            if (point.BodyContact)
+            {
+                g.DrawEllipse(
+                    _grenadeBodyContactPen,
+                    point.Position.X - 7f,
+                    point.Position.Y - 7f,
+                    14f,
+                    14f);
+                g.DrawLine(
+                    _grenadeBodyContactPen,
+                    point.Position.X - 5f,
+                    point.Position.Y,
+                    point.Position.X + 5f,
+                    point.Position.Y);
+            }
+            else if (point.Bounced)
                 g.DrawEllipse(_grenadeBouncePen, point.Position.X - 5f, point.Position.Y - 5f, 10f, 10f);
         }
         var landing = points[^1].Position;
@@ -2049,7 +2082,7 @@ public sealed class GameRenderer
             SetFrozenShellPolygon(
                 _frozenShellPoints,
                 center,
-                body.Radius + (frozen.Generation == 0 ? 9f : 5f),
+                body.Radius + body.FrozenCollisionPadding,
                 body.ParentId,
                 frozen.Generation);
             g.FillPolygon(_iceBlockBrush, _frozenShellPoints);
@@ -4214,9 +4247,9 @@ public sealed class GameRenderer
             seed ^= seed >> 17;
             seed ^= seed << 5;
             var angle = MathF.Tau * point / points.Length;
-            var radial = radius * (0.80f + (seed & 255u) / 255f * 0.27f);
-            var xScale = 0.90f + ((seed >> 8) & 7u) * 0.018f;
-            var yScale = 0.88f + ((seed >> 12) & 7u) * 0.022f;
+            var radial = radius * (0.98f + (seed & 255u) / 255f * 0.06f);
+            var xScale = 0.99f + ((seed >> 8) & 7u) * 0.005f;
+            var yScale = 0.99f + ((seed >> 12) & 7u) * 0.006f;
             points[point] = new PointF(
                 MathF.Round(center.X + MathF.Cos(angle) * radial * xScale),
                 MathF.Round(center.Y + MathF.Sin(angle) * radial * yScale));
@@ -4437,6 +4470,12 @@ public sealed class GameRenderer
         {
             if (!body.IsPhysicalParticle(particleIndex)) continue;
             var particle = body.Particles[particleIndex];
+            g.DrawEllipse(
+                _debugBodyColliderPen,
+                particle.Position.X - particle.Radius,
+                particle.Position.Y - particle.Radius,
+                particle.Radius * 2f,
+                particle.Radius * 2f);
             var marker = new RectangleF(
                 MathF.Round(particle.Position.X) - 2f,
                 MathF.Round(particle.Position.Y) - 2f,
@@ -4519,6 +4558,7 @@ public sealed class GameRenderer
 
     private void DrawDebug(Graphics g, BlobWorld world)
     {
+        DrawCollisionDebug(g, world);
         const int x = 20;
         const int y = 82;
         var now = Environment.TickCount64;
@@ -4607,6 +4647,82 @@ public sealed class GameRenderer
         // fullscreen those buttons live in the outer letterbox, while this panel
         // remains attached to the logical game viewport.
         g.DrawImageUnscaled(_displayDebugPanel, 900, 250);
+    }
+
+    private void DrawCollisionDebug(Graphics g, BlobWorld world)
+    {
+        var knife = world.Knife;
+        if (knife is not { Visible: true }) return;
+
+        DrawCapsuleDebug(
+            g,
+            knife.HandleStart,
+            knife.HandleEnd,
+            knife.DebugHandleCollisionRadius,
+            _debugToolColliderPen);
+        DrawCapsuleDebug(
+            g,
+            knife.BladeCoreStart,
+            knife.BladeCoreEnd,
+            knife.DebugBladeCollisionRadius,
+            _debugToolColliderPen);
+        if (knife.DebugHasCuttingEdgeCollider)
+            DrawCapsuleDebug(
+                g,
+                knife.BladeEdgeStart,
+                knife.BladeEdgeEnd,
+                3.2f,
+                _debugProjectileColliderPen);
+        if (knife.DebugGloveStrikeColliderActive)
+        {
+            var center = knife.DebugGloveStrikeColliderCenter;
+            var radius = knife.DebugGloveStrikeColliderRadius;
+            g.DrawEllipse(
+                _debugProjectileColliderPen,
+                center.X - radius,
+                center.Y - radius,
+                radius * 2f,
+                radius * 2f);
+        }
+
+        foreach (var projectile in knife.ArsenalProjectiles)
+        {
+            var radius = PhysicalKnife.ProjectileRadius(projectile.Kind);
+            g.DrawEllipse(
+                _debugProjectileColliderPen,
+                projectile.Position.X - radius,
+                projectile.Position.Y - radius,
+                radius * 2f,
+                radius * 2f);
+        }
+    }
+
+    private static void DrawCapsuleDebug(
+        Graphics g,
+        Vector2 start,
+        Vector2 end,
+        float radius,
+        Pen pen)
+    {
+        var direction = end - start;
+        if (direction.LengthSquared() < 0.0001f)
+        {
+            g.DrawEllipse(
+                pen,
+                start.X - radius,
+                start.Y - radius,
+                radius * 2f,
+                radius * 2f);
+            return;
+        }
+        direction = Vector2.Normalize(direction);
+        var normal = new Vector2(-direction.Y, direction.X) * radius;
+        g.DrawLine(pen, start.X + normal.X, start.Y + normal.Y,
+            end.X + normal.X, end.Y + normal.Y);
+        g.DrawLine(pen, start.X - normal.X, start.Y - normal.Y,
+            end.X - normal.X, end.Y - normal.Y);
+        g.DrawEllipse(pen, start.X - radius, start.Y - radius, radius * 2f, radius * 2f);
+        g.DrawEllipse(pen, end.X - radius, end.Y - radius, radius * 2f, radius * 2f);
     }
 
     private sealed class BlobRenderScratch

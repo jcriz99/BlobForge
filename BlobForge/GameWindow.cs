@@ -101,6 +101,8 @@ public sealed class GameWindow : Form
     private bool _toolPrimaryHeld;
     private bool _toolRotationHeld;
     private bool _toolEquipKeyHeld;
+    private bool _rotateCounterClockwiseHeld;
+    private bool _rotateClockwiseHeld;
     private bool _arsenalMenuConsumedClick;
     private bool _highResolutionTimerActive;
     private int _resizeEventCount;
@@ -298,6 +300,11 @@ public sealed class GameWindow : Form
 
         KeyDown += OnKeyDown;
         KeyUp += OnKeyUp;
+        Deactivate += (_, _) =>
+        {
+            _rotateCounterClockwiseHeld = false;
+            _rotateClockwiseHeld = false;
+        };
         Resize += (_, _) =>
         {
             _resizeEventCount++;
@@ -650,6 +657,8 @@ public sealed class GameWindow : Form
             _toolPrimaryHeld = false;
             if (_toolRotationHeld) _world.Knife?.EndRotationAdjust();
             _toolRotationHeld = false;
+            _rotateCounterClockwiseHeld = false;
+            _rotateClockwiseHeld = false;
             _rightDragging = false;
             _pendingSlice.Clear();
             _sliceTarget = null;
@@ -789,6 +798,8 @@ public sealed class GameWindow : Form
         _toolPrimaryHeld = false;
         _toolRotationHeld = false;
         _toolEquipKeyHeld = false;
+        _rotateCounterClockwiseHeld = false;
+        _rotateClockwiseHeld = false;
         _arsenalMenuConsumedClick = false;
         _renderer.ArsenalMenuOpen = false;
         _spawnButton.Enabled = false;
@@ -885,6 +896,10 @@ public sealed class GameWindow : Form
     private void FixedUpdate(float dt)
     {
         _world.Gravity = _gravityEnabled ? new Vector2(0f, 980f) : Vector2.Zero;
+        var keyboardRotation = (_rotateClockwiseHeld ? 1f : 0f) -
+                               (_rotateCounterClockwiseHeld ? 1f : 0f);
+        if (MathF.Abs(keyboardRotation) > 0.01f)
+            _world.Knife?.RotateBaseBy(keyboardRotation * MathF.PI * 0.82f * dt);
         var line = _world.ProcessingLine;
         if (line?.Powered == true && _observedFactoryPower)
         {
@@ -1582,10 +1597,12 @@ public sealed class GameWindow : Form
                 _settingsDebug.Checked = _renderer.DebugDraw;
                 break;
             case Keys.A:
-                _world.Knife?.RotateBaseBy(-MathF.PI / 24f);
+                _rotateCounterClockwiseHeld = true;
+                e.SuppressKeyPress = true;
                 break;
             case Keys.D:
-                _world.Knife?.RotateBaseBy(MathF.PI / 24f);
+                _rotateClockwiseHeld = true;
+                e.SuppressKeyPress = true;
                 break;
             case Keys.B:
                 SpawnBlob();
@@ -1654,6 +1671,8 @@ public sealed class GameWindow : Form
     private void OnKeyUp(object? sender, KeyEventArgs e)
     {
         if (e.KeyCode == Keys.E) _toolEquipKeyHeld = false;
+        if (e.KeyCode == Keys.A) _rotateCounterClockwiseHeld = false;
+        if (e.KeyCode == Keys.D) _rotateClockwiseHeld = false;
     }
 
     private void ToggleEquippedTool()

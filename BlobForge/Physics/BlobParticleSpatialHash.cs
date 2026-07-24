@@ -91,6 +91,11 @@ internal sealed class BlobParticleSpatialHash
             if (a.IsSleeping && b.IsSleeping) continue;
             var delta = centers[j] - centers[i];
             var minimumDistance = (a.Radius + b.Radius) * 0.68f;
+            if (a.IsFrozen || b.IsFrozen)
+                minimumDistance = MathF.Max(
+                    minimumDistance,
+                    a.Radius + a.FrozenCollisionPadding +
+                    b.Radius + b.FrozenCollisionPadding);
             var distanceSq = delta.LengthSquared();
             if (distanceSq >= minimumDistance * minimumDistance) continue;
 

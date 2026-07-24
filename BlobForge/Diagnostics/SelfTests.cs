@@ -2603,6 +2603,7 @@ public static class SelfTests
         graphics.ResetClip();
         graphics.TranslateTransform(1280f, 0f);
         graphics.SetClip(new Rectangle(0, 0, 1280, 720));
+        renderer.DebugDraw = true;
         renderer.Draw(graphics, new Size(1280, 720), world, null);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
@@ -6707,6 +6708,28 @@ public static class SelfTests
             "held grenade did not expose its predicted throw and landing arc");
         Assert(grenade.GrenadeTrajectory.Any(point => point.Bounced),
             "grenade trajectory did not mark its predicted conveyor or wall bounce");
+        var blobPreviewGrenade = new PhysicalKnife(new Vector2(400f, 300f));
+        blobPreviewGrenade.SelectArsenalVisual(11);
+        Assert(blobPreviewGrenade.Equip(
+                blobPreviewGrenade.Position,
+                blobPreviewGrenade.Position) &&
+               blobPreviewGrenade.BeginPrimaryAction(),
+            "blob-collision grenade preview fixture could not begin aiming");
+        var previewBlocker = BlobArchetype.ProcessingUnit.Create(new Vector2(505f, 300f));
+        blobPreviewGrenade.SetGrabTarget(blobPreviewGrenade.Position + Vector2.UnitX * 190f);
+        for (var step = 0; step < 3; step++)
+            blobPreviewGrenade.Step(
+                Dt,
+                Vector2.Zero,
+                Array.Empty<ConveyorBelt>(),
+                new[] { previewBlocker },
+                1280f,
+                720f);
+        Assert(blobPreviewGrenade.GrenadeTrajectory.Any(point =>
+                point.BodyContact &&
+                Vector2.Distance(point.Position, previewBlocker.Center) <=
+                previewBlocker.Radius + previewBlocker.ParticleSpacing * 2f),
+            "grenade trajectory ignored the blob collider that the live throw would hit");
         grenade.EndPrimaryAction();
         grenade.Step(Dt, new Vector2(0f, 980f), new[] { grenadeBelt },
             new[] { grenadeTarget }, 1280f, 720f, grid: grenadeGrid);
@@ -6734,6 +6757,49 @@ public static class SelfTests
             "physical grenade entered a wall or conveyor instead of colliding and bouncing");
         Assert(grenade.ArsenalExplosionSerial == 1,
             "grenade did not travel and produce its fixed post-throw timed explosion");
+
+        var tubeGrenade = new PhysicalKnife(new Vector2(640f, 230f));
+        tubeGrenade.SelectArsenalVisual(11);
+        Assert(tubeGrenade.Equip(tubeGrenade.Position, tubeGrenade.Position),
+            "tube grenade fixture could not equip");
+        Assert(tubeGrenade.BeginPrimaryAction(),
+            "tube grenade fixture could not begin aiming");
+        tubeGrenade.SetGrabTarget(tubeGrenade.Position - Vector2.UnitY * 180f);
+        var overheadTube = new OverheadTubeFeed();
+        for (var step = 0; step < 3; step++)
+            tubeGrenade.Step(
+                Dt,
+                new Vector2(0f, 980f),
+                Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(),
+                1280f,
+                720f,
+                overheadTube);
+        Assert(tubeGrenade.GrenadeTrajectory.Any(point =>
+                point.Bounced &&
+                point.Position.Y >= OverheadTubeFeed.GlassBottom + 3.5f &&
+                point.Position.Y <= OverheadTubeFeed.GlassBottom + 5f),
+            "grenade preview passed through the overhead tube glass");
+        tubeGrenade.EndPrimaryAction();
+        var grenadeCrossedTube = false;
+        for (var step = 0; step < 80; step++)
+        {
+            tubeGrenade.Step(
+                Dt,
+                new Vector2(0f, 980f),
+                Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(),
+                1280f,
+                720f,
+                overheadTube);
+            grenadeCrossedTube |= tubeGrenade.ArsenalProjectiles.Any(projectile =>
+                projectile.Kind == ArsenalProjectileKind.Grenade &&
+                projectile.Position.Y <
+                OverheadTubeFeed.GlassBottom +
+                PhysicalKnife.ProjectileRadius(ArsenalProjectileKind.Grenade) - 0.1f);
+        }
+        Assert(!grenadeCrossedTube,
+            "live grenade passed through the overhead tube instead of bouncing");
 
         var (cancelGrenade, _) = Setup(11, new Vector2(880f, 300f));
         Assert(cancelGrenade.BeginPrimaryAction(), "grenade cancel fixture could not begin aiming");
@@ -6910,6 +6976,18 @@ public static class SelfTests
         Click(freeze, new[] { frozenTarget }, 48, Vector2.Zero);
         Assert(freeze.FrozenBlobs.Count == 1,
             "freeze projectile did not put the hit blob into an ice block");
+        var ordinaryParticleRadius = frozenTarget.ParticleSpacing * 0.58f;
+        Assert(frozenTarget.IsFrozen &&
+               frozenTarget.FrozenCollisionPadding >= 7.5f &&
+               frozenTarget.Particles
+                   .Where((_, index) => frozenTarget.IsPhysicalParticle(index))
+                   .All(particle => particle.Radius > ordinaryParticleRadius + 7f),
+            "frozen blob collider did not expand to the surrounding ice shell");
+        frozenTarget.RegisterHitReaction(2f);
+        for (var step = 0; step < 600; step++)
+            frozenTarget.AdvanceFaceAnimation(Dt);
+        Assert(frozenTarget.FaceExpression == BlobFaceExpression.Neutral,
+            "frozen blob continued blinking or playing hurt-face motion");
         var frozenDamageBefore = frozenTarget.BrokenLinkCount;
         frozenTarget.LastTerrainImpact = 500f;
         freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
@@ -6941,6 +7019,7 @@ public static class SelfTests
             frozenChildren, 1280f, 720f, granular: frozenGore);
         Assert(freeze.FrozenBlobs.Count < frozenChildren.Length &&
                terminalFrozen.IsCrumbling &&
+               !terminalFrozen.IsFrozen &&
                frozenGore.Particles.Count > 0,
             "second impact did not terminally shatter a frozen child into ordinary gore");
 

@@ -187,6 +187,39 @@ public sealed class OverheadTubeFeed
         return contacts;
     }
 
+    /// <summary>
+    /// Resolves a circular loose projectile against the same lower glass face used by
+    /// exterior soft bodies. Throw previews call this exact routine as well, so the
+    /// displayed grenade bounce cannot disagree with the live projectile.
+    /// </summary>
+    public bool ResolveExteriorProjectile(
+        Vector2 previous,
+        ref Vector2 position,
+        ref Vector2 velocity,
+        float radius,
+        float restitution,
+        out Vector2 contactNormal)
+    {
+        var minimumY = GlassBottom + radius;
+        contactNormal = Vector2.Zero;
+        if (position.Y >= minimumY) return false;
+
+        position.Y = minimumY;
+        contactNormal = Vector2.UnitY;
+        if (velocity.Y < 0f)
+        {
+            velocity.Y = -velocity.Y * Math.Clamp(restitution, 0f, 1f);
+            velocity.X *= 0.88f;
+        }
+        else if (previous.Y < minimumY)
+        {
+            // If a projectile was already overlapping when this routine first saw it,
+            // eject it without deleting its tangential motion.
+            velocity.Y = MathF.Max(18f, velocity.Y);
+        }
+        return true;
+    }
+
     private static float ResolveHorizontalGlass(
         ref Particle particle,
         float surfaceY,

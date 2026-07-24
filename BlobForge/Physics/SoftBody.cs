@@ -73,6 +73,8 @@ public sealed class SoftBody
     private uint _explosionMotionSerial;
     private float _looseFragmentAngle;
     private float _looseFragmentAngularVelocity;
+    private Vector2[] _frozenReferenceOffsets = Array.Empty<Vector2>();
+    private float _frozenCollisionPadding;
     private const int MaximumBloodStains = 36;
 
     public SoftBody(Vector2 center, float radius, int targetParticleCount = 61)
@@ -217,12 +219,16 @@ public sealed class SoftBody
     public int LastSupportedParticles { get; private set; }
     public bool IsDetachedDebris { get; private set; }
     public bool IsCrumbling { get; private set; }
+    public bool IsFrozen { get; private set; }
+    public float FrozenCollisionPadding => _frozenCollisionPadding;
     public bool HasLocalDamage => BrokenLinkCount > 0 || _hasDamageMask;
     public bool IsPickable => !IsDetachedDebris && Mode != SimulationMode.LooseFragment && Particles.Length >= 7;
     public int ActiveParticleCount => _activeParticleCount;
     public int PhysicalParticleCount => _physicalParticleCount;
     public IReadOnlyList<BlobBloodStain> BloodStains => _bloodStains;
-    public BlobFaceExpression FaceExpression => _hurtRemaining > 0f
+    public BlobFaceExpression FaceExpression => IsFrozen
+        ? BlobFaceExpression.Neutral
+        : _hurtRemaining > 0f
         ? BlobFaceExpression.Hurt
         : _blinkRemaining > 0f ? BlobFaceExpression.Blink : BlobFaceExpression.Neutral;
     public float HitFlash01 => Math.Clamp(_hitFlashRemaining / 0.18f, 0f, 1f);
@@ -264,6 +270,12 @@ public sealed class SoftBody
     {
         if (dt <= 0f) return;
         _hitFlashRemaining = MathF.Max(0f, _hitFlashRemaining - dt);
+        if (IsFrozen)
+        {
+            _blinkRemaining = 0f;
+            _hurtRemaining = 0f;
+            return;
+        }
         _faceClock += dt;
         if (_hurtRemaining > 0f)
         {
@@ -281,6 +293,54 @@ public sealed class SoftBody
         if (_faceClock < _nextBlinkTime) return;
         _blinkRemaining = 0.12f;
         _nextBlinkTime = _faceClock + 2.3f + NextFaceSample() * 3.4f;
+    }
+
+    public void SetFrozen(
+        bool frozen,
+        float collisionPadding = 7f,
+        bool collisionRadiiAlreadyExpanded = false)
+    {
+        collisionPadding = Math.Clamp(collisionPadding, 0f, ParticleSpacing * 1.4f);
+        if (!frozen)
+        {
+            if (!IsFrozen) return;
+            for (var index = 0; index < Particles.Length; index++)
+            {
+                if (!IsPhysicalParticle(index)) continue;
+                Particles[index].Radius = MathF.Max(
+                    1f,
+                    Particles[index].Radius - _frozenCollisionPadding);
+            }
+            IsFrozen = false;
+            _frozenCollisionPadding = 0f;
+            _frozenReferenceOffsets = Array.Empty<Vector2>();
+            Wake();
+            return;
+        }
+
+        var radiusAdjustment = IsFrozen
+            ? collisionPadding - _frozenCollisionPadding
+            : collisionRadiiAlreadyExpanded ? 0f : collisionPadding;
+        if (MathF.Abs(radiusAdjustment) > 0.001f)
+        {
+            for (var index = 0; index < Particles.Length; index++)
+            {
+                if (!IsPhysicalParticle(index)) continue;
+                Particles[index].Radius = MathF.Max(
+                    1f,
+                    Particles[index].Radius + radiusAdjustment);
+            }
+        }
+
+        IsFrozen = true;
+        _frozenCollisionPadding = collisionPadding;
+        _blinkRemaining = 0f;
+        _hurtRemaining = 0f;
+        var center = Center;
+        _frozenReferenceOffsets = new Vector2[Particles.Length];
+        for (var index = 0; index < Particles.Length; index++)
+            _frozenReferenceOffsets[index] = Particles[index].Position - center;
+        Wake();
     }
 
     private void ShowHurtExpression(float intensity)
@@ -465,6 +525,34 @@ public sealed class SoftBody
             AreaConstraints[i] = constraint;
         }
         if (IsGrabbed) SolveGrab();
+        if (IsFrozen) SolveFrozenShape();
+    }
+
+    private void SolveFrozenShape()
+    {
+        if (_frozenReferenceOffsets.Length != Particles.Length ||
+            PhysicalParticleCount <= 1)
+            return;
+
+        var center = Center;
+        var dot = 0f;
+        var cross = 0f;
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index)) continue;
+            var reference = _frozenReferenceOffsets[index];
+            var current = Particles[index].Position - center;
+            dot += Vector2.Dot(reference, current);
+            cross += reference.X * current.Y - reference.Y * current.X;
+        }
+        var angle = MathF.Atan2(cross, dot);
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index) || Particles[index].InverseMass <= 0f) continue;
+            var target = center + Rotate(_frozenReferenceOffsets[index], angle);
+            Particles[index].Position =
+                Vector2.Lerp(Particles[index].Position, target, 0.86f);
+        }
     }
 
     private void SolveDistance(ref DistanceConstraint constraint, float dt)
@@ -1000,6 +1088,11 @@ public sealed class SoftBody
                 });
                 child._bloodStainSerial = Math.Max(child._bloodStainSerial, (byte)(stain.Variation + 1));
             }
+            if (IsFrozen)
+                child.SetFrozen(
+                    true,
+                    _frozenCollisionPadding,
+                    collisionRadiiAlreadyExpanded: true);
             child.Wake();
             result.Add(child);
         }
@@ -1040,7 +1133,9 @@ public sealed class SoftBody
             var launchSample = ExplosionSample(MixExplosionSeed(fragmentSeed + 0x68E31DA4u));
             var lateralSample = ExplosionSample(MixExplosionSeed(fragmentSeed + 0xB5297A4Du)) * 2f - 1f;
             var spinSample = ExplosionSample(MixExplosionSeed(fragmentSeed + 0x1B56C4E9u));
-            var spinSign = (fragmentSeed & 1u) == 0u ? -1f : 1f;
+            // Alternate the deterministic sign while leaving magnitude random.
+            // Hash parity alone occasionally gave every fragment the same rotation.
+            var spinSign = ((fragmentIndex + (int)(seed & 1u)) & 1) == 0 ? -1f : 1f;
 
             var velocity = fragment.AverageVelocity(simulationDt);
             var currentOutwardSpeed = Vector2.Dot(velocity, radial);

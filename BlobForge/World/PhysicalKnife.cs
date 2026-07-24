@@ -59,7 +59,8 @@ public readonly record struct ArsenalProjectile(
 public readonly record struct GrenadeTrajectoryPoint(
     Vector2 Position,
     bool Bounced,
-    bool Final);
+    bool Final,
+    bool BodyContact = false);
 
 public readonly record struct ArsenalActionEffect(
     int Variant,
@@ -140,7 +141,6 @@ public sealed class BurningBlobState
 public sealed class FrozenBlobState
 {
     public required SoftBody Body { get; init; }
-    public required Vector2[] Offsets { get; init; }
     public float RemainingSeconds { get; set; }
     public float ShatterCooldown { get; set; }
     public bool PendingSplitPropagation { get; set; }
@@ -442,26 +442,43 @@ public sealed class PhysicalKnife
                 MathF.Cos(_heavyImpactAge * 173f) * amplitude * 0.72f);
         }
     }
-    private Vector2 LocalEdgeStart => ArsenalVisualVariant == 7 && _sledgeSwingRight
+    private Vector2 LocalEdgeStart => ArsenalVisualVariant == 11
+        ? Vector2.Zero
+        : ArsenalVisualVariant == 7 && _sledgeSwingRight
         ? new Vector2(-63f, -22f)
         : (uint)ArsenalVisualVariant < ArsenalEdgeStarts.Length &&
                                       ArsenalEdgeStarts[ArsenalVisualVariant] != Vector2.Zero
         ? ArsenalEdgeStarts[ArsenalVisualVariant]
         : new Vector2(-9f, 19f);
-    private Vector2 LocalEdgeEnd => ArsenalVisualVariant == 7 && _sledgeSwingRight
+    private Vector2 LocalEdgeEnd => ArsenalVisualVariant == 11
+        ? Vector2.Zero
+        : ArsenalVisualVariant == 7 && _sledgeSwingRight
         ? new Vector2(-47f, -22f)
         : (uint)ArsenalVisualVariant < ArsenalEdgeEnds.Length &&
                                     ArsenalEdgeEnds[ArsenalVisualVariant] != Vector2.Zero
         ? ArsenalEdgeEnds[ArsenalVisualVariant]
         : new Vector2(-51f, 19f);
-    public Vector2 HandleStart => Position + RotateToolLocal(new Vector2(13f, 0f));
-    public Vector2 HandleEnd => Position + RotateToolLocal(new Vector2(-8f, 0f));
+    public Vector2 HandleStart => ArsenalVisualVariant == 11
+        ? Position
+        : Position + RotateToolLocal(new Vector2(13f, 0f));
+    public Vector2 HandleEnd => ArsenalVisualVariant == 11
+        ? Position
+        : Position + RotateToolLocal(new Vector2(-8f, 0f));
     public Vector2 BladeCoreStart => Position + RotateToolLocal(
         ArsenalVisualVariant < 0 ? new Vector2(-9f, -7f) : LocalEdgeStart);
     public Vector2 BladeCoreEnd => Position + RotateToolLocal(
         ArsenalVisualVariant < 0 ? new Vector2(-51f, -7f) : LocalEdgeEnd);
     public Vector2 BladeEdgeStart => Position + RotateToolLocal(LocalEdgeStart);
     public Vector2 BladeEdgeEnd => Position + RotateToolLocal(LocalEdgeEnd);
+    public float DebugHandleCollisionRadius => 7f;
+    public float DebugBladeCollisionRadius =>
+        ArsenalVisualVariant == 7 ? SledgeFaceCollisionRadius : 12f;
+    public bool DebugHasCuttingEdgeCollider => ArsenalVisualVariant < 0;
+    public bool DebugGloveStrikeColliderActive =>
+        ArsenalVisualVariant == 10 && _gloveStrikeAge >= 0f;
+    public Vector2 DebugGloveStrikeColliderCenter =>
+        RenderPosition + _gloveStrikeDirection * 48f;
+    public float DebugGloveStrikeColliderRadius => 28f;
     public Vector2 SlingshotCradlePosition => Position + Rotate(
         new Vector2(0f, _slingshotHeightIndex switch { 0 => -102f, 2 => -162f, _ => -134f }),
         Angle);
@@ -485,6 +502,15 @@ public sealed class PhysicalKnife
                        deployedLocal.Y >= -184f && deployedLocal.Y <= 8f;
             }
             var local = InverseRotate(point - Position, Angle);
+            if (ArsenalVisualVariant == 11)
+            {
+                var bounds = ArsenalLocalBounds[11];
+                const float grenadePadding = 3f;
+                return local.X >= bounds.MinX * 0.5f - grenadePadding &&
+                       local.X <= bounds.MaxX * 0.5f + grenadePadding &&
+                       local.Y >= bounds.MinY * 0.5f - grenadePadding &&
+                       local.Y <= bounds.MaxY * 0.5f + grenadePadding;
+            }
             var anchor = ArsenalVisualAnchors[ArsenalVisualVariant];
             const float padding = 3f;
             return local.X >= -anchor.X - padding && local.X <= 96f - anchor.X + padding &&
@@ -996,7 +1022,8 @@ public sealed class PhysicalKnife
         {
             UpdateArsenalPrimary(dt, bodies, tubeFeed);
             if (ArsenalVisualVariant == 11 && _arsenalPrimaryHeld)
-                BuildGrenadeTrajectory(gravity, conveyors, worldWidth, worldHeight, grid);
+                BuildGrenadeTrajectory(
+                    gravity, conveyors, bodies, worldWidth, worldHeight, tubeFeed, grid);
             else
                 _grenadeTrajectory.Clear();
         }
@@ -2123,7 +2150,8 @@ public sealed class PhysicalKnife
                 isSaw ? 0.34f : isBaseball ? 0.72f : isRat ? 0.38f : 0f;
             var hitEnvironment = ResolveProjectileEnvironment(previous, ref position, ref velocity,
                 radius, restitution, dt,
-                conveyors, worldWidth, worldHeight, grid, out _, out var environmentNormal);
+                conveyors, worldWidth, worldHeight, tubeFeed, grid,
+                out _, out var environmentNormal);
             if (hitEnvironment && !isGrenade)
             {
                 if (isBlackHole)
@@ -2253,21 +2281,16 @@ public sealed class PhysicalKnife
             }
             else if (isGrenade)
             {
-                foreach (var body in bodies)
-                {
-                    if (body.IsDetachedDebris || tubeFeed?.Contains(body) == true ||
-                        DistanceToSegment(body.Center, previous, position) > body.Radius + radius)
-                        continue;
-                    var normal = position - body.Center;
-                    if (normal.LengthSquared() < 0.001f) normal = -Vector2.UnitY;
-                    else normal = Vector2.Normalize(normal);
-                    var intoBody = Vector2.Dot(velocity, normal);
-                    if (intoBody < 0f) velocity -= normal * intoBody * 1.55f;
-                    velocity *= 0.84f;
-                    position = previous;
-                    body.AddImpulse(-normal * MathF.Min(12f, velocity.Length() * 0.018f), dt);
-                    break;
-                }
+                ResolveGrenadeBodyCollision(
+                    previous,
+                    ref position,
+                    ref velocity,
+                    radius,
+                    bodies,
+                    tubeFeed,
+                    dt,
+                    applyImpulse: true,
+                    out _);
             }
             else if (isBlackHole)
             {
@@ -3269,15 +3292,15 @@ public sealed class PhysicalKnife
             existing.PendingSplitPropagation = false;
             return;
         }
-        if (_frozenBlobs.Count >= 24) _frozenBlobs.RemoveAt(0);
-        var center = body.Center;
-        var offsets = new Vector2[body.Particles.Length];
-        for (var index = 0; index < offsets.Length; index++)
-            offsets[index] = body.Particles[index].Position - center;
+        if (_frozenBlobs.Count >= 24)
+        {
+            _frozenBlobs[0].Body.SetFrozen(false);
+            _frozenBlobs.RemoveAt(0);
+        }
+        body.SetFrozen(true, generation == 0 ? 8f : 5f);
         _frozenBlobs.Add(new FrozenBlobState
         {
             Body = body,
-            Offsets = offsets,
             RemainingSeconds = remainingSeconds,
             ShatterCooldown = 0f,
             PendingSplitPropagation = false,
@@ -3316,6 +3339,7 @@ public sealed class PhysicalKnife
             }
             if (state.RemainingSeconds <= 0f || body.PhysicalParticleCount <= 3)
             {
+                body.SetFrozen(false);
                 _frozenBlobs.RemoveAt(stateIndex);
                 continue;
             }
@@ -3353,6 +3377,7 @@ public sealed class PhysicalKnife
                 {
                     // A frozen descendant's next hard impact is its terminal
                     // shatter: it ceases being ice and enters ordinary gore.
+                    body.SetFrozen(false);
                     body.AddRadialExplosion(center, 65f, 190f, dt);
                     for (var crack = 0; crack < 3; crack++)
                     {
@@ -3376,19 +3401,6 @@ public sealed class PhysicalKnife
                 }
                 PuncturedThisStep = true;
                 continue;
-            }
-            if (body.IsGrabbed) continue;
-            var velocity = body.AverageVelocity(dt);
-            var centerNow = body.Center;
-            var count = Math.Min(body.Particles.Length, state.Offsets.Length);
-            for (var index = 0; index < count; index++)
-            {
-                if (!body.IsPhysicalParticle(index)) continue;
-                var target = centerNow + state.Offsets[index];
-                body.Particles[index].Position =
-                    Vector2.Lerp(body.Particles[index].Position, target, 0.78f);
-                body.Particles[index].PreviousPosition =
-                    body.Particles[index].Position - velocity * dt;
             }
         }
     }
@@ -3663,7 +3675,7 @@ public sealed class PhysicalKnife
         PuncturedThisStep = true;
     }
 
-    private static float ProjectileRadius(ArsenalProjectileKind kind) => kind switch
+    public static float ProjectileRadius(ArsenalProjectileKind kind) => kind switch
     {
         ArsenalProjectileKind.Nail => 3.2f,
         ArsenalProjectileKind.ShotgunPellet => 2.0f,
@@ -3696,7 +3708,8 @@ public sealed class PhysicalKnife
     private static bool ResolveProjectileEnvironment(Vector2 previous, ref Vector2 position,
         ref Vector2 velocity, float radius, float restitution, float dt,
         IReadOnlyList<ConveyorBelt> conveyors, float worldWidth, float worldHeight,
-        DestructibleGrid? grid, out bool bounced, out Vector2 contactNormal)
+        OverheadTubeFeed? tubeFeed, DestructibleGrid? grid,
+        out bool bounced, out Vector2 contactNormal)
     {
         var hit = false;
         var didBounce = false;
@@ -3717,6 +3730,19 @@ public sealed class PhysicalKnife
                 position = particle.Position;
                 Reflect(collision.Normal);
             }
+        }
+
+        if (tubeFeed?.ResolveExteriorProjectile(
+                previous,
+                ref position,
+                ref resolvedVelocity,
+                radius,
+                restitution,
+                out var tubeNormal) == true)
+        {
+            hit = true;
+            didBounce = restitution > 0f;
+            resolvedNormal = tubeNormal;
         }
 
         foreach (var conveyor in conveyors)
@@ -3769,8 +3795,14 @@ public sealed class PhysicalKnife
         }
     }
 
-    private void BuildGrenadeTrajectory(Vector2 gravity, IReadOnlyList<ConveyorBelt> conveyors,
-        float worldWidth, float worldHeight, DestructibleGrid? grid)
+    private void BuildGrenadeTrajectory(
+        Vector2 gravity,
+        IReadOnlyList<ConveyorBelt> conveyors,
+        IReadOnlyList<SoftBody> bodies,
+        float worldWidth,
+        float worldHeight,
+        OverheadTubeFeed? tubeFeed,
+        DestructibleGrid? grid)
     {
         _grenadeTrajectory.Clear();
         const float previewDt = 1f / 120f;
@@ -3785,9 +3817,22 @@ public sealed class PhysicalKnife
             velocity += gravity * (previewDt * 0.72f);
             position += velocity * previewDt;
             ResolveProjectileEnvironment(previous, ref position, ref velocity, 4f, 0.46f,
-                previewDt, conveyors, worldWidth, worldHeight, grid, out var bounced, out _);
+                previewDt, conveyors, worldWidth, worldHeight, tubeFeed, grid,
+                out var bounced, out _);
+            var bodyCollision = ResolveGrenadeBodyCollision(
+                previous,
+                ref position,
+                ref velocity,
+                ProjectileRadius(ArsenalProjectileKind.Grenade),
+                bodies,
+                tubeFeed,
+                previewDt,
+                applyImpulse: false,
+                out _);
+            bounced |= bodyCollision;
             if ((step % 5 == 0 || bounced) && _grenadeTrajectory.Count < 48)
-                _grenadeTrajectory.Add(new GrenadeTrajectoryPoint(position, bounced, false));
+                _grenadeTrajectory.Add(
+                    new GrenadeTrajectoryPoint(position, bounced, false, bodyCollision));
         }
         if (_grenadeTrajectory.Count == 0)
             _grenadeTrajectory.Add(new GrenadeTrajectoryPoint(position, false, true));
@@ -3799,6 +3844,124 @@ public sealed class PhysicalKnife
             else
                 _grenadeTrajectory[^1] = last with { Position = position, Final = true };
         }
+    }
+
+    private static bool ResolveGrenadeBodyCollision(
+        Vector2 previous,
+        ref Vector2 position,
+        ref Vector2 velocity,
+        float grenadeRadius,
+        IReadOnlyList<SoftBody> bodies,
+        OverheadTubeFeed? tubeFeed,
+        float dt,
+        bool applyImpulse,
+        out SoftBody? hitBody)
+    {
+        hitBody = null;
+        var earliestTime = float.MaxValue;
+        var hitParticlePosition = Vector2.Zero;
+        var hitCombinedRadius = 0f;
+
+        foreach (var body in bodies)
+        {
+            if (tubeFeed?.Contains(body) == true ||
+                DistanceToSegment(body.Center, previous, position) >
+                body.Radius + grenadeRadius + body.ParticleSpacing)
+                continue;
+
+            for (var particleIndex = 0; particleIndex < body.Particles.Length; particleIndex++)
+            {
+                if (!body.IsPhysicalParticle(particleIndex)) continue;
+                var particle = body.Particles[particleIndex];
+                var combinedRadius = grenadeRadius + particle.Radius;
+                if (!TrySweptCircleHit(
+                        previous,
+                        position,
+                        particle.Position,
+                        combinedRadius,
+                        out var hitTime))
+                    continue;
+                if (hitTime >= earliestTime) continue;
+                earliestTime = hitTime;
+                hitParticlePosition = particle.Position;
+                hitCombinedRadius = combinedRadius;
+                hitBody = body;
+            }
+        }
+
+        if (hitBody is null) return false;
+
+        var impactPosition = Vector2.Lerp(previous, position, earliestTime);
+        var normal = impactPosition - hitParticlePosition;
+        if (normal.LengthSquared() < 0.0001f)
+            normal = velocity.LengthSquared() > 0.0001f
+                ? -Vector2.Normalize(velocity)
+                : -Vector2.UnitY;
+        else
+            normal = Vector2.Normalize(normal);
+
+        // Place the grenade completely outside the surviving material particle.
+        // This prevents the next fixed step from repeatedly damping an overlapping
+        // grenade until it appears glued inside a blob.
+        position = hitParticlePosition + normal * (hitCombinedRadius + 0.35f);
+        var incomingNormalSpeed = Vector2.Dot(velocity, normal);
+        if (incomingNormalSpeed < 0f)
+        {
+            var tangentVelocity = velocity - normal * incomingNormalSpeed;
+            velocity = tangentVelocity * 0.91f - normal * incomingNormalSpeed * 0.48f;
+        }
+
+        if (applyImpulse)
+        {
+            var impulseSpeed = MathF.Min(18f, MathF.Abs(incomingNormalSpeed) * 0.024f);
+            if (impulseSpeed > 0.1f)
+                hitBody.AddLocalizedImpulse(
+                    hitParticlePosition,
+                    hitBody.ParticleSpacing * 2.2f,
+                    -normal * impulseSpeed,
+                    dt);
+        }
+        return true;
+    }
+
+    private static bool TrySweptCircleHit(
+        Vector2 start,
+        Vector2 end,
+        Vector2 circleCenter,
+        float combinedRadius,
+        out float hitTime)
+    {
+        var startOffset = start - circleCenter;
+        var radiusSquared = combinedRadius * combinedRadius;
+        if (startOffset.LengthSquared() <= radiusSquared)
+        {
+            hitTime = 0f;
+            return true;
+        }
+
+        var travel = end - start;
+        var a = travel.LengthSquared();
+        if (a < 0.000001f)
+        {
+            hitTime = 0f;
+            return false;
+        }
+        var b = 2f * Vector2.Dot(startOffset, travel);
+        var c = startOffset.LengthSquared() - radiusSquared;
+        var discriminant = b * b - 4f * a * c;
+        if (discriminant < 0f)
+        {
+            hitTime = 0f;
+            return false;
+        }
+        var root = (-b - MathF.Sqrt(discriminant)) / (2f * a);
+        if (root < 0f || root > 1f)
+        {
+            hitTime = 0f;
+            return false;
+        }
+        hitTime = root;
+        return true;
     }
 
     private void ExplodeGrenade(Vector2 position, IReadOnlyList<SoftBody> bodies,
@@ -4470,6 +4633,12 @@ public sealed class PhysicalKnife
         var bounds = ArsenalVisualVariant == 0
             ? SaberHiltBounds
             : ArsenalLocalBounds[ArsenalVisualVariant];
+        if (ArsenalVisualVariant == 11)
+            bounds = new ToolBounds(
+                bounds.MinX * 0.5f,
+                bounds.MinY * 0.5f,
+                bounds.MaxX * 0.5f,
+                bounds.MaxY * 0.5f);
         if (local.X < bounds.MinX - radius || local.X > bounds.MaxX + radius ||
             local.Y < bounds.MinY - radius || local.Y > bounds.MaxY + radius)
             return false;
@@ -4538,6 +4707,12 @@ public sealed class PhysicalKnife
         if ((uint)ArsenalVisualVariant < ArsenalLocalBounds.Length)
         {
             var bounds = ArsenalLocalBounds[ArsenalVisualVariant];
+            if (ArsenalVisualVariant == 11)
+                bounds = new ToolBounds(
+                    bounds.MinX * 0.5f,
+                    bounds.MinY * 0.5f,
+                    bounds.MaxX * 0.5f,
+                    bounds.MaxY * 0.5f);
             local = new Vector2(
                 Math.Clamp(local.X, bounds.MinX, bounds.MaxX),
                 Math.Clamp(local.Y, bounds.MinY, bounds.MaxY));

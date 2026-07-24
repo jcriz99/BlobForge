@@ -39,7 +39,9 @@ internal static class BlobBodyBroadPhase
                 if (excludeDetachedDebris && bodies[bodyIndex].IsDetachedDebris) continue;
                 entries[entryCount++] = new SweepEntry(
                     bodyIndex,
-                    centers[bodyIndex].X - bodies[bodyIndex].Radius * radiusScale);
+                    centers[bodyIndex].X -
+                    (bodies[bodyIndex].Radius * radiusScale +
+                     bodies[bodyIndex].FrozenCollisionPadding));
             }
             Array.Sort(entries, 0, entryCount, SweepEntryComparer);
 
@@ -48,7 +50,7 @@ internal static class BlobBodyBroadPhase
                 var bodyIndex = entries[entryIndex].BodyIndex;
                 var body = bodies[bodyIndex];
                 var center = centers[bodyIndex];
-                var radius = body.Radius * radiusScale;
+                var radius = body.Radius * radiusScale + body.FrozenCollisionPadding;
                 var maximumX = center.X + radius;
 
                 for (var otherEntryIndex = entryIndex + 1;
@@ -63,7 +65,9 @@ internal static class BlobBodyBroadPhase
                     if (body.IsSleeping && otherBody.IsSleeping) continue;
                     if (tubeFeed is not null &&
                         tubeFeed.Contains(body) != tubeFeed.Contains(otherBody)) continue;
-                    var pairRadius = radius + otherBody.Radius * radiusScale;
+                    var pairRadius = radius +
+                                     otherBody.Radius * radiusScale +
+                                     otherBody.FrozenCollisionPadding;
                     if (MathF.Abs(centers[otherBodyIndex].Y - center.Y) > pairRadius) continue;
 
                     if (candidateCount == candidates.Length)
