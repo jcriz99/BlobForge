@@ -1577,9 +1577,15 @@ public sealed class GameWindow : Form
                 _settingsGravity.Checked = _gravityEnabled;
                 foreach (var body in _world.Bodies) body.Wake();
                 break;
-            case Keys.D:
+            case Keys.M:
                 _renderer.DebugDraw = !_renderer.DebugDraw;
                 _settingsDebug.Checked = _renderer.DebugDraw;
+                break;
+            case Keys.A:
+                _world.Knife?.RotateBaseBy(-MathF.PI / 24f);
+                break;
+            case Keys.D:
+                _world.Knife?.RotateBaseBy(MathF.PI / 24f);
                 break;
             case Keys.B:
                 SpawnBlob();

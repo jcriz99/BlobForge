@@ -44,6 +44,7 @@ public static class SelfTests
             ("nearby cleaver flies back to its centered wall rack", KnifeReturnsToHolster),
             ("arsenal selection swaps the grabbable tool in the centered rack", ArsenalSelectionSwapsCenteredTool),
             ("arsenal primary actions dispatch weapon-specific behavior", ArsenalPrimaryActionsAreDistinct),
+            ("slingshot impacts damage launched and struck blobs", SlingshotImpactsDamageBothBodies),
             ("expanded arsenal entities keep their promised distinct mechanics", ExpandedArsenalMechanicsAreDistinct),
             ("explosive fractures launch outward with varied fragment spin", ExplosiveFracturesHaveVariedSpin),
             ("single exit drain routes blood and tissue after full belt travel", ContinuousEndDrainRoutesMatter),
@@ -1002,20 +1003,8 @@ public static class SelfTests
         }
         Assert(spillLeft == spillRight,
             $"full-basin overflow was not evenly distributed ({spillLeft} left/{spillRight} right)");
-        Assert(continuousLine.Basin.FrontOverflowStains.Count >= 6 &&
-               continuousLine.Basin.FrontOverflowStains.Max(stain => stain.X) -
-               continuousLine.Basin.FrontOverflowStains.Min(stain => stain.X) >
-               continuousLine.Basin.Width * 0.5f,
-            "full basin produced no distributed 2.5D overflow trails across its front glass");
-        var overflowXs = continuousLine.Basin.FrontOverflowStains
-            .Select(stain => stain.X)
-            .OrderBy(x => x)
-            .ToArray();
-        var overflowGaps = overflowXs.Zip(overflowXs.Skip(1), (a, b) => b - a).ToArray();
-        Assert(continuousLine.Basin.FrontOverflowStains.Max(stain => stain.Width) -
-               continuousLine.Basin.FrontOverflowStains.Min(stain => stain.Width) > 1.5f &&
-               overflowGaps.Max() - overflowGaps.Min() > 12f,
-            "front overflow trails were uniformly spaced or uniformly thick");
+        Assert(continuousLine.Basin.FrontOverflowStains.Count == 0,
+            "full basin still created the disabled front-glass overflow trails");
     }
 
     private static void BloodWorkerAutomatesMachinery()
@@ -5379,10 +5368,21 @@ public static class SelfTests
             Variation = 29
         });
         for (var step = 0; step < 8; step++) basinWorld.Step(Dt);
-        Assert(basinWorld.Granular.ForegroundSpills.Count == 1 &&
+        Assert(basinWorld.Granular.ForegroundSpills.Count == 0 &&
+               basinWorld.Granular.ForegroundSpillReemittedTotal == 1 &&
+               basinWorld.Granular.Particles.Count == 1 &&
                MathF.Abs(line.Basin.StoredVolume - fullStoredVolume) < 0.001f &&
                line.Basin.TotalOverflowed > overflowBefore,
-            "a full basin stored or cloned a foreground pixel instead of redirecting that same pixel over a lip");
+            "a full basin did not return the same foreground pixel to physical overflow");
+        var reemitted = basinWorld.Granular.Particles[0];
+        var reemittedVelocity =
+            (reemitted.Position - reemitted.PreviousPosition) / Dt;
+        Assert((reemitted.Position.X < line.Basin.Left ||
+                reemitted.Position.X > line.Basin.Right) &&
+               MathF.Abs(reemittedVelocity.X) > 20f,
+            "full-basin foreground blood remained a steady 2.5D diagonal instead of ejecting physically");
+        Assert(line.Basin.FrontOverflowStains.Count == 0,
+            "foreground full-basin impact recreated a front-glass trail");
     }
 
     private static void ConveyorCarriesBlob()
@@ -6224,6 +6224,18 @@ public static class SelfTests
         Assert(tool.ArsenalShotSerial > 0 && mountedSlingBody.AverageVelocity(Dt).X > 0f,
             "mounted slingshot did not launch opposite its physical pull direction");
 
+        tool.SelectArsenalVisual(8);
+        Assert(tool.Equip(holster, holster),
+            "slingshot could not be re-equipped for side-wall placement");
+        tool.SetGrabTarget(new Vector2(16f, 320f));
+        tool.Step(Dt, Vector2.Zero, new[] { mountBelt },
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(tool.PlacementPreviewValid &&
+               MathF.Abs(tool.PlacementPreviewAngle - MathF.PI * 0.5f) < 0.01f &&
+               tool.PlaceAtPreview() &&
+               tool.SlingshotCradlePosition.X > tool.Position.X + 80f,
+            "left-wall slingshot preview did not rotate its forks east into the room");
+
         tool.SelectArsenalVisual(9);
         Assert(tool.Equip(holster, holster), "pike could not be equipped for wall placement");
         var pikeBelt = new ConveyorBelt(new Vector2(300f, 460f), 700f, 34f, 0f,
@@ -6270,6 +6282,39 @@ public static class SelfTests
             "cleaver inventory entry did not restore the original centered tool");
     }
 
+    private static void SlingshotImpactsDamageBothBodies()
+    {
+        var sling = new PhysicalKnife(new Vector2(500f, 390f));
+        sling.SelectArsenalVisual(8);
+        Assert(sling.Equip(sling.Position, sling.Position) &&
+               MathF.Abs(sling.Angle) < 0.001f,
+            "held slingshot did not equip in its locked north-facing pose");
+        var launched = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 390f));
+        var struck = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 205f));
+        var world = new BlobWorld(FlatGrid())
+        {
+            Gravity = Vector2.Zero,
+            Knife = sling
+        };
+        world.Bodies.Add(launched);
+        world.Bodies.Add(struck);
+        Assert(sling.BeginPrimaryAction(),
+            "slingshot bilateral-impact fixture could not begin charging");
+        for (var step = 0; step < 96; step++) world.Step(Dt);
+        Assert(sling.EndPrimaryAction(),
+            "slingshot bilateral-impact fixture could not release");
+        var launchedDamage = launched.BrokenLinkCount;
+        var struckDamage = struck.BrokenLinkCount;
+        for (var step = 0; step < 150 &&
+             (launched.BrokenLinkCount == launchedDamage ||
+              struck.BrokenLinkCount == struckDamage); step++)
+            world.Step(Dt);
+        Assert(launched.BrokenLinkCount > launchedDamage,
+            "slingshot impact did not damage the fired blob");
+        Assert(struck.BrokenLinkCount > struckDamage,
+            "slingshot impact damaged only its ammunition and not the struck blob");
+    }
+
     private static void ArsenalPrimaryActionsAreDistinct()
     {
         static (PhysicalKnife Tool, SoftBody Body) Setup(int variant, Vector2 bodyPosition)
@@ -6277,22 +6322,35 @@ public static class SelfTests
             var tool = new PhysicalKnife(new Vector2(640f, 300f));
             tool.SelectArsenalVisual(variant);
             Assert(tool.Equip(tool.Position, tool.Position), $"arsenal variant {variant} could not equip");
-            var expectedHolsterDirection = variant is >= 1 and <= 6
+            var expectedHolsterDirection = variant is >= 1 and <= 6 or 8 or 10
                 ? -Vector2.UnitX
                 : -Vector2.UnitY;
             Assert(Vector2.Dot(tool.BaseAimDirection, expectedHolsterDirection) > 0.98f,
                 $"arsenal variant {variant} did not inherit its authored holster orientation");
             var rotationOrigin = tool.Position;
-            Assert(tool.BeginRotationAdjust(rotationOrigin),
-                $"arsenal variant {variant} rejected base-rotation control");
-            Assert(!tool.BeginPrimaryAction(),
-                $"arsenal variant {variant} activated while its rotation control was held");
-            tool.UpdateRotationAdjust(rotationOrigin + new Vector2(60f, 0f));
-            tool.EndRotationAdjust();
+            if (variant == 8)
+            {
+                Assert(!tool.BeginRotationAdjust(rotationOrigin) &&
+                       !tool.RotateBaseBy(MathF.PI / 12f) &&
+                       MathF.Abs(tool.Angle) < 0.001f,
+                    "held slingshot accepted rotation instead of remaining north-facing");
+            }
+            else
+            {
+                Assert(tool.BeginRotationAdjust(rotationOrigin),
+                    $"arsenal variant {variant} rejected base-rotation control");
+                Assert(!tool.BeginPrimaryAction(),
+                    $"arsenal variant {variant} activated while its rotation control was held");
+                tool.UpdateRotationAdjust(rotationOrigin + new Vector2(60f, 0f));
+                tool.EndRotationAdjust();
+            }
             if (variant == 7)
                 Assert(!tool.RotationAdjusting && tool.SledgeSwingRight &&
                        Vector2.Dot(tool.BaseAimDirection, -Vector2.UnitY) > 0.98f,
                     "sledge RMB did not toggle its swing side or incorrectly changed base rotation");
+            else if (variant == 8)
+                Assert(MathF.Abs(tool.Angle) < 0.001f,
+                    "slingshot did not retain its authored north-facing pose");
             else
                 Assert(!tool.RotationAdjusting &&
                        Vector2.Dot(tool.BaseAimDirection, Vector2.UnitX) > 0.98f,
@@ -6600,8 +6658,8 @@ public static class SelfTests
             sling.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { slingBody }, 1280f, 720f);
         sling.EndPrimaryAction();
         sling.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { slingBody }, 1280f, 720f);
-        Assert(sling.ArsenalShotSerial > 0 && slingBody.AverageVelocity(Dt).Length() > 1f,
-            "blob slingshot did not release its loaded blob with stored impulse");
+        Assert(sling.ArsenalShotSerial > 0 && slingBody.AverageVelocity(Dt).Y < -100f,
+            "north-facing held slingshot did not release its blob upward with stored impulse");
 
         var pike = new PhysicalKnife(new Vector2(640f, 300f));
         pike.SelectArsenalVisual(9);
@@ -6693,15 +6751,19 @@ public static class SelfTests
 
         var (axe, axeTarget) = Setup(12, new Vector2(730f, 300f));
         var axeStartAngle = axe.Angle;
-        Assert(axe.BeginPrimaryAction(), "battleaxe rejected the shared melee windup");
+        var axeDamageBefore = axeTarget.BrokenLinkCount;
+        Assert(axe.BeginPrimaryAction(), "battleaxe rejected its held whirlwind attack");
         for (var step = 0; step < 90; step++)
             axe.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { axeTarget }, 1280f, 720f);
-        Assert(axe.EndPrimaryAction(), "battleaxe windup did not release");
+        Assert(axe.ArsenalPrimaryHeld &&
+               MathF.Abs(axe.Angle - axeStartAngle) > 1f &&
+               axeTarget.BrokenLinkCount > axeDamageBefore,
+            "holding battleaxe LMB did not continuously spin and damage contacted tissue");
+        Assert(axe.EndPrimaryAction(), "battleaxe whirlwind did not stop on release");
         for (var step = 0; step < 8; step++)
             axe.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { axeTarget }, 1280f, 720f);
-        Assert(axe.ControlState is CleaverControlState.Swing or CleaverControlState.Impact &&
-               MathF.Abs(axe.Angle - axeStartAngle) > 1f,
-            "battleaxe did not use the cleaver-relative charged swing arc");
+        Assert(!axe.ArsenalPrimaryHeld,
+            "battleaxe continued its whirlwind after LMB release");
     }
 
     private static void ExpandedArsenalMechanicsAreDistinct()
@@ -6827,8 +6889,9 @@ public static class SelfTests
         flame.EndPrimaryAction();
         Assert(flameTarget.BrokenLinkCount > 0 &&
                flame.BurningBlobs.Count > 0 &&
-               flame.FlamePatches.Count > 0,
-            "flamethrower did not leave flame trails and a persistent burning blob");
+               flame.FlamePatches.Count > 0 &&
+               flame.SmokeParticles.Count is > 0 and <= 128,
+            "flamethrower did not leave bounded pixel fire, smoke, and a persistent burning blob");
         var travelingFlame = Equipped(16);
         Assert(travelingFlame.BeginPrimaryAction(),
             "flamethrower travel fixture rejected continuous fire");
@@ -6869,8 +6932,17 @@ public static class SelfTests
             frozenChildren, 1280f, 720f);
         Assert(freeze.FrozenBlobs.Count == frozenChildren.Length &&
                frozenChildren.All(child => freeze.FrozenBlobs.Any(state =>
-                   ReferenceEquals(state.Body, child))),
+                   ReferenceEquals(state.Body, child) && state.Generation >= 1)),
             "ice state did not propagate to the chunks produced by a frozen shatter");
+        var terminalFrozen = frozenChildren[0];
+        terminalFrozen.LastTerrainImpact = 500f;
+        var frozenGore = new GranularMaterialSystem();
+        freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            frozenChildren, 1280f, 720f, granular: frozenGore);
+        Assert(freeze.FrozenBlobs.Count < frozenChildren.Length &&
+               terminalFrozen.IsCrumbling &&
+               frozenGore.Particles.Count > 0,
+            "second impact did not terminally shatter a frozen child into ordinary gore");
 
         var lightning = Equipped(18);
         var lightningFirst = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));

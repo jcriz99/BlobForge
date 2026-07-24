@@ -112,6 +112,22 @@ public readonly record struct FlamePatch(
     float SpreadCooldown,
     byte Variation);
 
+public enum SmokeKind : byte
+{
+    Fire,
+    Acid,
+    Saber
+}
+
+public readonly record struct SmokeParticle(
+    Vector2 Position,
+    Vector2 Velocity,
+    float RemainingSeconds,
+    float LifetimeSeconds,
+    float Radius,
+    SmokeKind Kind,
+    byte Variation);
+
 public sealed class BurningBlobState
 {
     public required SoftBody Body { get; set; }
@@ -128,6 +144,7 @@ public sealed class FrozenBlobState
     public float RemainingSeconds { get; set; }
     public float ShatterCooldown { get; set; }
     public bool PendingSplitPropagation { get; set; }
+    public int Generation { get; init; }
 }
 
 public sealed class PhysicalKnife
@@ -215,6 +232,7 @@ public sealed class PhysicalKnife
     private readonly List<RatAgent> _rats = new(12);
     private readonly List<AcidPool> _acidPools = new(8);
     private readonly List<FlamePatch> _flamePatches = new(48);
+    private readonly List<SmokeParticle> _smokeParticles = new(128);
     private readonly List<BurningBlobState> _burningBlobs = new(12);
     private readonly List<FrozenBlobState> _frozenBlobs = new(24);
     private readonly Dictionary<int, float> _enlargementScales = new();
@@ -277,8 +295,12 @@ public sealed class PhysicalKnife
     private Vector2 _gloveStrikeDirection;
     private Vector2 _glovePreviousOffset;
     private int _gloveHitParentId = -1;
+    private float _gloveBlockedReach = 1f;
+    private SoftBody? _gloveCarriedBody;
+    private bool _gloveUppercutFinished;
     private float _specialEffectCooldown;
     private float _flameTrailCooldown;
+    private float _smokeSpawnCooldown;
     private bool _baseballInPlay;
     private uint _arsenalRandom = 0x9E3779B9u;
     private const float MagneticReturnRadius = 112f;
@@ -338,8 +360,12 @@ public sealed class PhysicalKnife
     public bool PuncturedThisStep { get; private set; }
     public CleaverControlState ControlState { get; private set; }
     public float WindupStrength => _windupStrength;
-    public float PrimaryCharge => IsCharging ? _windupStrength : 0f;
-    public bool PrimaryChargeVisible => IsCharging && _controlStateTime >= PrimaryChargeBarDelay;
+    public float PrimaryCharge => ArsenalVisualVariant == 10 && _arsenalPrimaryHeld
+        ? Math.Clamp(_arsenalPrimaryTime / 0.72f, 0f, 1f)
+        : IsCharging ? _windupStrength : 0f;
+    public bool PrimaryChargeVisible => ArsenalVisualVariant == 10
+        ? IsEquipped && _arsenalPrimaryHeld && _arsenalPrimaryTime >= 0.12f
+        : IsCharging && _controlStateTime >= PrimaryChargeBarDelay;
     public bool HeavyImpactActive => _heavyImpactAge >= 0f;
     public float HeavyImpactAge => MathF.Max(0f, _heavyImpactAge);
     public float HeavyImpactStrength => _heavyImpactStrength;
@@ -354,6 +380,7 @@ public sealed class PhysicalKnife
     public IReadOnlyList<RatAgent> Rats => _rats;
     public IReadOnlyList<AcidPool> AcidPools => _acidPools;
     public IReadOnlyList<FlamePatch> FlamePatches => _flamePatches;
+    public IReadOnlyList<SmokeParticle> SmokeParticles => _smokeParticles;
     public IReadOnlyList<BurningBlobState> BurningBlobs => _burningBlobs;
     public IReadOnlyList<FrozenBlobState> FrozenBlobs => _frozenBlobs;
     public bool BaseballInPlay => _baseballInPlay;
@@ -383,9 +410,21 @@ public sealed class PhysicalKnife
             var fullCharge = _gloveStrikeCharge >= 0.98f;
             var duration = fullCharge ? 0.34f : 0.24f;
             var phase = Math.Clamp(_gloveStrikeAge / duration, 0f, 1f);
-            var reach = MathF.Sin(phase * MathF.PI);
+            var reach = MathF.Min(MathF.Sin(phase * MathF.PI), _gloveBlockedReach);
             if (fullCharge)
-                return (_gloveStrikeDirection * 76f - Vector2.UnitY * 88f) * reach;
+            {
+                if (phase < 0.18f)
+                    return Vector2.UnitY * (52f * SmoothStep01(phase / 0.18f));
+                if (phase < 0.72f)
+                    return Vector2.Lerp(
+                        Vector2.UnitY * 52f,
+                        _gloveStrikeDirection * 76f - Vector2.UnitY * 88f,
+                        SmoothStep01((phase - 0.18f) / 0.54f));
+                return Vector2.Lerp(
+                    _gloveStrikeDirection * 76f - Vector2.UnitY * 88f,
+                    Vector2.Zero,
+                    SmoothStep01((phase - 0.72f) / 0.28f));
+            }
             return _gloveStrikeDirection * (reach * (58f + _gloveStrikeCharge * 34f));
         }
     }
@@ -423,10 +462,13 @@ public sealed class PhysicalKnife
         ArsenalVisualVariant < 0 ? new Vector2(-51f, -7f) : LocalEdgeEnd);
     public Vector2 BladeEdgeStart => Position + RotateToolLocal(LocalEdgeStart);
     public Vector2 BladeEdgeEnd => Position + RotateToolLocal(LocalEdgeEnd);
-    public Vector2 SlingshotCradlePosition => Position + new Vector2(0f,
-        _slingshotHeightIndex switch { 0 => -102f, 2 => -162f, _ => -134f });
-    public Vector2 SlingshotForkLeft => SlingshotCradlePosition + new Vector2(-18f, -10f);
-    public Vector2 SlingshotForkRight => SlingshotCradlePosition + new Vector2(17f, -10f);
+    public Vector2 SlingshotCradlePosition => Position + Rotate(
+        new Vector2(0f, _slingshotHeightIndex switch { 0 => -102f, 2 => -162f, _ => -134f }),
+        Angle);
+    public Vector2 SlingshotForkLeft => SlingshotCradlePosition +
+                                         Rotate(new Vector2(-18f, -10f), Angle);
+    public Vector2 SlingshotForkRight => SlingshotCradlePosition +
+                                          Rotate(new Vector2(17f, -10f), Angle);
     public Vector2 HeavyBloodBridgeToolPosition(HeavyBloodBridge bridge) =>
         Position + Rotate(bridge.ToolLocalAnchor, Angle);
 
@@ -437,8 +479,11 @@ public sealed class PhysicalKnife
         if ((uint)ArsenalVisualVariant < ArsenalVariantCount)
         {
             if (IsDeployed && ArsenalVisualVariant == 8)
-                return point.X >= Position.X - 48f && point.X <= Position.X + 48f &&
-                       point.Y >= Position.Y - 184f && point.Y <= Position.Y + 8f;
+            {
+                var deployedLocal = InverseRotate(point - Position, Angle);
+                return deployedLocal.X >= -48f && deployedLocal.X <= 48f &&
+                       deployedLocal.Y >= -184f && deployedLocal.Y <= 8f;
+            }
             var local = InverseRotate(point - Position, Angle);
             var anchor = ArsenalVisualAnchors[ArsenalVisualVariant];
             const float padding = 3f;
@@ -458,7 +503,7 @@ public sealed class PhysicalKnife
     public void SelectArsenalVisual(int variant)
     {
         ArsenalVisualVariant = Math.Clamp(variant, -1, ArsenalVariantCount - 1);
-        _baseRotationAngle = UsesBarrelOrientation || ArsenalVisualVariant == 21
+        _baseRotationAngle = UsesBarrelOrientation || ArsenalVisualVariant is 8 or 10 or 21
             ? 0f
             : ReadyAngle;
         _saberIgnited = false;
@@ -497,6 +542,12 @@ public sealed class PhysicalKnife
         ControlState = CleaverControlState.Carry;
         if (mode == ToolHoldMode.Equipped)
         {
+            if (ArsenalVisualVariant == 8) _baseRotationAngle = 0f;
+            if (ArsenalVisualVariant == 10)
+                _baseRotationAngle = MathF.Abs(ShortestAngle(_baseRotationAngle, 0f)) <
+                                     MathF.PI * 0.5f
+                    ? 0f
+                    : MathF.PI;
             // E-equipping establishes the useful blade-up ready pose immediately.
             // The old blade-down pose forced a full half-turn before every chop.
             Angle = _baseRotationAngle;
@@ -516,11 +567,23 @@ public sealed class PhysicalKnife
     public bool BeginRotationAdjust(Vector2 pointer)
     {
         if (!IsEquipped) return false;
+        if (ArsenalVisualVariant == 8) return false;
         if (ArsenalVisualVariant == 7)
         {
             // The hammer has a deliberate two-sided stance instead of free
             // rotation. RMB captures the gesture and flips the next arc.
             _sledgeSwingRight = !_sledgeSwingRight;
+            _sledgeToggleGesture = true;
+            return true;
+        }
+        if (ArsenalVisualVariant == 10)
+        {
+            _baseRotationAngle = MathF.Abs(ShortestAngle(_baseRotationAngle, 0f)) <
+                                 MathF.PI * 0.5f
+                ? MathF.PI
+                : 0f;
+            Angle = _baseRotationAngle;
+            _angularVelocity = 0f;
             _sledgeToggleGesture = true;
             return true;
         }
@@ -556,6 +619,26 @@ public sealed class PhysicalKnife
         Angle = _baseRotationAngle;
         _angularVelocity = 0f;
         _arsenalAimDirection = BaseAimDirection;
+    }
+
+    public bool RotateBaseBy(float radians)
+    {
+        if (!IsEquipped || ArsenalVisualVariant is 7 or 8 or 10 ||
+            !float.IsFinite(radians) || MathF.Abs(radians) < 0.0001f)
+            return false;
+        ResetArsenalPrimary();
+        _primaryActionHeld = false;
+        _primaryActionBuffered = false;
+        _primaryActionSwing = false;
+        _windupDistance = 0f;
+        _windupStrength = 0f;
+        _controlStateTime = 0f;
+        ControlState = CleaverControlState.Carry;
+        _baseRotationAngle += radians;
+        Angle = _baseRotationAngle;
+        _angularVelocity = 0f;
+        _arsenalAimDirection = BaseAimDirection;
+        return true;
     }
 
     public void EndRotationAdjust()
@@ -669,6 +752,21 @@ public sealed class PhysicalKnife
 
         if (ArsenalVisualVariant == 8)
         {
+            const float sideWallSnapDistance = 72f;
+            if (Position.X <= sideWallSnapDistance)
+            {
+                Position = new Vector2(8f, Math.Clamp(Position.Y, 196f, 620f));
+                Angle = MathF.PI * 0.5f;
+                FinishDeployment();
+                return true;
+            }
+            if (Position.X >= worldWidth - sideWallSnapDistance)
+            {
+                Position = new Vector2(worldWidth - 8f, Math.Clamp(Position.Y, 196f, 620f));
+                Angle = -MathF.PI * 0.5f;
+                FinishDeployment();
+                return true;
+            }
             ConveyorBelt? mount = null;
             var bestDistance = 96f;
             foreach (var conveyor in conveyors)
@@ -704,16 +802,21 @@ public sealed class PhysicalKnife
                 return false;
         }
 
-        _previousPosition = Position;
-        _gripVelocity = Vector2.Zero;
-        _angularVelocity = 0f;
-        IsGrabbed = false;
-        HoldMode = ToolHoldMode.None;
-        IsHolstered = false;
-        IsReturningToHolster = false;
-        IsDeployed = true;
-        ResetArsenalPrimary();
+        FinishDeployment();
         return true;
+
+        void FinishDeployment()
+        {
+            _previousPosition = Position;
+            _gripVelocity = Vector2.Zero;
+            _angularVelocity = 0f;
+            IsGrabbed = false;
+            HoldMode = ToolHoldMode.None;
+            IsHolstered = false;
+            IsReturningToHolster = false;
+            IsDeployed = true;
+            ResetArsenalPrimary();
+        }
     }
 
     public bool PlaceAtPreview()
@@ -747,6 +850,29 @@ public sealed class PhysicalKnife
         if (!IsEquipped || ArsenalVisualVariant is not (8 or 9)) return;
         if (ArsenalVisualVariant == 8)
         {
+            const float sideWallSnapDistance = 72f;
+            if (_grabTarget.X <= sideWallSnapDistance)
+            {
+                _placementPreviewPosition = new Vector2(
+                    8f,
+                    Math.Clamp(MathF.Round(_grabTarget.Y / 8f) * 8f,
+                        196f, worldHeight - 64f));
+                _placementPreviewAngle = MathF.PI * 0.5f;
+                _placementPreviewShown = true;
+                _placementPreviewValid = true;
+                return;
+            }
+            if (_grabTarget.X >= worldWidth - sideWallSnapDistance)
+            {
+                _placementPreviewPosition = new Vector2(
+                    worldWidth - 8f,
+                    Math.Clamp(MathF.Round(_grabTarget.Y / 8f) * 8f,
+                        196f, worldHeight - 64f));
+                _placementPreviewAngle = -MathF.PI * 0.5f;
+                _placementPreviewShown = true;
+                _placementPreviewValid = true;
+                return;
+            }
             ConveyorBelt? bestBelt = null;
             var best = float.MaxValue;
             foreach (var conveyor in conveyors)
@@ -854,11 +980,13 @@ public sealed class PhysicalKnife
         _arsenalFireCooldown = MathF.Max(0f, _arsenalFireCooldown - dt);
         _specialEffectCooldown = MathF.Max(0f, _specialEffectCooldown - dt);
         _flameTrailCooldown = MathF.Max(0f, _flameTrailCooldown - dt);
+        _smokeSpawnCooldown = MathF.Max(0f, _smokeSpawnCooldown - dt);
         UpdateNailPins(dt);
         UpdatePikePins(dt);
         UpdateRats(dt, bodies, conveyors, tubeFeed, grid, granular);
         UpdateFlameEffects(dt, bodies, conveyors, tubeFeed);
         UpdateAcidPools(dt, bodies, conveyors, tubeFeed);
+        UpdateSmokeParticles(dt);
         UpdateFrozenBlobs(dt, bodies, granular);
         UpdatePlacementPreview(conveyors, worldWidth, worldHeight);
         UpdateSlingshotImpact(dt, bodies, tubeFeed);
@@ -1088,6 +1216,16 @@ public sealed class PhysicalKnife
                 _gripVelocity = (Position - _previousPosition) / MathF.Max(dt, 0.0001f);
                 _angularVelocity = 0f;
             }
+            else if (ArsenalVisualVariant == 8)
+            {
+                Angle = _baseRotationAngle;
+                _angularVelocity = 0f;
+            }
+            else if (ArsenalVisualVariant == 12 && _arsenalPrimaryHeld)
+            {
+                Angle += 11.5f * dt;
+                _angularVelocity = 11.5f;
+            }
             else
             {
                 var torque = ShortestAngle(Angle, targetAngle) * rotationSpring -
@@ -1205,7 +1343,7 @@ public sealed class PhysicalKnife
             BeginRespawn();
     }
 
-    private bool UsesCleaverSwing => ArsenalVisualVariant is -1 or 0 or 7 or 12;
+    private bool UsesCleaverSwing => ArsenalVisualVariant is -1 or 0 or 7;
     private bool UsesBarrelOrientation =>
         ArsenalVisualVariant is 1 or 2 or 3 or 4 or 5 or 6 or
         13 or 14 or 15 or 16 or 17 or 18 or 19 or 20;
@@ -1341,6 +1479,10 @@ public sealed class PhysicalKnife
                 }
                 _arsenalTriggerPending = false;
                 break;
+            case 12: // whirlwind axe: the held trigger is the attack
+                if (_arsenalPrimaryHeld)
+                    ApplyWhirlwindSweep(bodies, tubeFeed, dt);
+                break;
             case 13: // miniature black-hole projector
                 if (_arsenalTriggerPending && _arsenalFireCooldown <= 0f)
                 {
@@ -1473,6 +1615,7 @@ public sealed class PhysicalKnife
             if (launchDirection.LengthSquared() > 12f * 12f)
                 return Vector2.Normalize(launchDirection);
         }
+        if (ArsenalVisualVariant == 8) return -Vector2.UnitY;
         if (ArsenalVisualVariant == 11 && _arsenalPrimaryHeld) return _grenadeThrowDirection;
         return BaseAimDirection;
     }
@@ -1497,6 +1640,33 @@ public sealed class PhysicalKnife
             var broken = body.DamageLine(start, end, 8f, 4.8f, maximumBreaks: 24);
             broken += body.DamageBonds(contact, 12f, 5.5f);
             if (broken > 0) PuncturedThisStep = true;
+        }
+    }
+
+    private void ApplyWhirlwindSweep(
+        IReadOnlyList<SoftBody> bodies,
+        OverheadTubeFeed? tubeFeed,
+        float dt)
+    {
+        var start = BladeEdgeStart;
+        var end = BladeEdgeEnd;
+        var edgeCenter = (start + end) * 0.5f;
+        var outward = edgeCenter - Position;
+        if (outward.LengthSquared() < 0.001f) outward = -Vector2.UnitX;
+        else outward = Vector2.Normalize(outward);
+        foreach (var body in bodies)
+        {
+            if (body.IsDetachedDebris || tubeFeed?.Contains(body) == true ||
+                _damageCooldowns.ContainsKey(body.ParentId) ||
+                DistanceToSegment(body.Center, start, end) > body.Radius + 13f)
+                continue;
+            var contact = ClosestPoint(body.Center, start, end);
+            body.DamageLine(start, end, 12f, 3.8f, maximumBreaks: 12);
+            body.DamageBonds(contact, 18f, 4.6f);
+            body.AddLocalizedImpulse(contact, 34f, outward * 235f, dt);
+            body.RegisterHitReaction(1f, 0.13f);
+            _damageCooldowns[body.ParentId] = 0.085f;
+            PuncturedThisStep = true;
         }
     }
 
@@ -1604,21 +1774,49 @@ public sealed class PhysicalKnife
         var velocity = launched.AverageVelocity(dt);
         var previousSpeed = _slingshotPreviousVelocity.Length();
         var speed = velocity.Length();
-        var hitOtherBody = bodies.Any(body =>
-            body != launched && !body.IsDetachedDebris && tubeFeed?.Contains(body) != true &&
-            Vector2.DistanceSquared(body.Center, launched.Center) <
-            (body.Radius + launched.Radius + 8f) * (body.Radius + launched.Radius + 8f));
-        if (previousSpeed > 430f && (speed < previousSpeed * 0.64f || hitOtherBody))
+        SoftBody? struckBody = null;
+        var struckDistance = float.MaxValue;
+        foreach (var body in bodies)
+        {
+            if (body == launched || body.IsDetachedDebris || tubeFeed?.Contains(body) == true)
+                continue;
+            var distance = Vector2.DistanceSquared(body.Center, launched.Center);
+            var reach = body.Radius + launched.Radius + 12f;
+            if (distance >= reach * reach || distance >= struckDistance) continue;
+            struckDistance = distance;
+            struckBody = body;
+        }
+        var hitEnvironment = launched.LastTerrainImpact > 260f;
+        if (previousSpeed > 360f &&
+            (speed < previousSpeed * 0.78f || struckBody is not null || hitEnvironment))
         {
             var direction = _slingshotPreviousVelocity.LengthSquared() > 0.01f
                 ? Vector2.Normalize(_slingshotPreviousVelocity)
                 : Vector2.UnitX;
-            var impactPoint = launched.Center + direction * launched.Radius * 0.68f;
+            var impactPoint = hitEnvironment
+                ? launched.LastTerrainImpactPoint
+                : launched.Center + direction * launched.Radius * 0.68f;
             var severity = Math.Clamp(_slingshotLaunchPower, 0.25f, 1f);
             launched.DamageLine(impactPoint - direction * 8f, impactPoint + direction * 8f,
                 12f + severity * 13f, 1.6f + severity * 3.8f,
                 maximumBreaks: 8 + (int)MathF.Round(severity * 18f));
             launched.DamageBonds(impactPoint, 15f + severity * 12f, 3f + severity * 4f);
+            launched.RegisterHitReaction(1.1f + severity, 0.18f);
+            if (struckBody is not null)
+            {
+                var struckPoint = struckBody.Center - direction * struckBody.Radius * 0.72f;
+                struckBody.DamageLine(
+                    struckPoint - new Vector2(-direction.Y, direction.X) * 10f,
+                    struckPoint + new Vector2(-direction.Y, direction.X) * 10f,
+                    11f + severity * 11f,
+                    1.4f + severity * 3.2f,
+                    maximumBreaks: 7 + (int)MathF.Round(severity * 15f));
+                struckBody.DamageBonds(
+                    struckPoint, 15f + severity * 13f, 2.8f + severity * 4.4f);
+                struckBody.AddLocalizedImpulse(
+                    struckPoint, 46f, direction * (260f + severity * 390f), dt);
+                struckBody.RegisterHitReaction(1.2f + severity, 0.2f);
+            }
             PuncturedThisStep = true;
             _slingshotLaunchRemaining = 0f;
             _launchedSlingshotBody = null;
@@ -1632,11 +1830,14 @@ public sealed class PhysicalKnife
     {
         _gloveStrikeAge = 0f;
         _gloveStrikeCharge = Math.Clamp(_arsenalPrimaryTime / 0.72f, 0.18f, 1f);
-        _gloveStrikeDirection = _arsenalAimDirection.LengthSquared() > 0.001f
-            ? Vector2.Normalize(_arsenalAimDirection)
-            : -Vector2.UnitX;
+        _gloveStrikeDirection = new Vector2(
+            _arsenalAimDirection.X >= 0f ? 1f : -1f,
+            0f);
         _glovePreviousOffset = Vector2.Zero;
         _gloveHitParentId = -1;
+        _gloveBlockedReach = 1f;
+        _gloveCarriedBody = null;
+        _gloveUppercutFinished = false;
         LastArsenalActionPosition = Position;
         ArsenalShotSerial++;
     }
@@ -1650,6 +1851,8 @@ public sealed class PhysicalKnife
         _gloveStrikeAge += dt;
         var currentOffset = GloveStrikeOffset;
         var fullCharge = _gloveStrikeCharge >= 0.98f;
+        var duration = fullCharge ? 0.34f : 0.24f;
+        var phase = Math.Clamp(_gloveStrikeAge / duration, 0f, 1f);
         // The authored glove face sits roughly 48 px forward of the grip after
         // the sprite is rotated into its aim direction. Sweep that visible face,
         // not the hidden piston pivot behind it.
@@ -1675,19 +1878,22 @@ public sealed class PhysicalKnife
                     : _gloveStrikeDirection;
                 if (fullCharge)
                 {
-                    body.AddLocalizedImpulse(contactPoint, 58f,
-                        strikeDirection * 690f, dt);
-                    body.AddImpulse(new Vector2(_gloveStrikeDirection.X * 95f, -260f), dt);
-                    body.DamageBonds(contactPoint, 30f, 4.6f);
-                    body.DamageLine(contactPoint - new Vector2(22f, 8f),
-                        contactPoint + new Vector2(22f, -18f),
-                        13f, 3.2f, maximumBreaks: 8);
+                    _gloveCarriedBody = body;
+                    body.AddLocalizedImpulse(
+                        contactPoint,
+                        44f,
+                        new Vector2(_gloveStrikeDirection.X * 170f, -130f),
+                        dt);
+                    body.DamageBonds(contactPoint, 20f, 1.8f);
                 }
                 else
                 {
+                    _gloveBlockedReach = MathF.Min(
+                        _gloveBlockedReach,
+                        MathF.Max(0.18f, MathF.Sin(phase * MathF.PI)));
                     body.AddLocalizedImpulse(contactPoint, 34f + _gloveStrikeCharge * 18f,
-                        strikeDirection * (180f + _gloveStrikeCharge * 330f), dt);
-                    body.AddImpulse(strikeDirection * (28f + _gloveStrikeCharge * 65f), dt);
+                        strikeDirection * (320f + _gloveStrikeCharge * 420f), dt);
+                    body.AddImpulse(strikeDirection * (65f + _gloveStrikeCharge * 105f), dt);
                     body.DamageBonds(contactPoint, 15f + _gloveStrikeCharge * 9f,
                         0.45f + _gloveStrikeCharge * 0.65f);
                 }
@@ -1697,12 +1903,48 @@ public sealed class PhysicalKnife
                 break;
             }
         }
+        if (fullCharge && _gloveCarriedBody is { } carried)
+        {
+            if (!bodies.Contains(carried))
+            {
+                _gloveCarriedBody = null;
+            }
+            else
+            {
+                var carryPoint = Position + currentOffset + _gloveStrikeDirection * 48f;
+                var desiredVelocity = (carryPoint - carried.Center) * 9.5f;
+                var desiredSpeed = desiredVelocity.Length();
+                if (desiredSpeed > 620f) desiredVelocity *= 620f / desiredSpeed;
+                carried.AddImpulse(
+                    (desiredVelocity - carried.AverageVelocity(dt)) * 0.42f,
+                    dt);
+                if (phase >= 0.68f && !_gloveUppercutFinished)
+                {
+                    carried.AddLocalizedImpulse(
+                        carryPoint,
+                        62f,
+                        new Vector2(_gloveStrikeDirection.X * 210f, -720f),
+                        dt);
+                    carried.DamageLine(
+                        carryPoint - new Vector2(24f, 10f),
+                        carryPoint + new Vector2(24f, -22f),
+                        16f,
+                        7.2f,
+                        maximumBreaks: 18);
+                    carried.DamageBonds(carryPoint, 34f, 8.4f);
+                    carried.RegisterHitReaction(2f, 0.24f);
+                    _gloveUppercutFinished = true;
+                    PuncturedThisStep = true;
+                }
+            }
+        }
         _glovePreviousOffset = currentOffset;
-        var duration = fullCharge ? 0.34f : 0.24f;
         if (_gloveStrikeAge >= duration)
         {
             _gloveStrikeAge = -1f;
             _glovePreviousOffset = Vector2.Zero;
+            _gloveCarriedBody = null;
+            _gloveBlockedReach = 1f;
         }
     }
 
@@ -2550,6 +2792,51 @@ public sealed class PhysicalKnife
             (byte)(_arsenalRandom & 255)));
     }
 
+    private void AddSmoke(
+        Vector2 position,
+        SmokeKind kind,
+        float intensity = 1f)
+    {
+        if (_smokeParticles.Count >= 128) _smokeParticles.RemoveAt(0);
+        intensity = Math.Clamp(intensity, 0.35f, 1.8f);
+        var lifetime = (0.55f + NextArsenal01() * 0.85f) * intensity;
+        _smokeParticles.Add(new SmokeParticle(
+            position + new Vector2(-3f + NextArsenal01() * 6f, -2f),
+            new Vector2(-17f + NextArsenal01() * 34f, -32f - NextArsenal01() * 38f),
+            lifetime,
+            lifetime,
+            2f + NextArsenal01() * 3.4f * intensity,
+            kind,
+            (byte)(_arsenalRandom++ & 255)));
+    }
+
+    private void UpdateSmokeParticles(float dt)
+    {
+        for (var index = _smokeParticles.Count - 1; index >= 0; index--)
+        {
+            var smoke = _smokeParticles[index];
+            var remaining = smoke.RemainingSeconds - dt;
+            if (remaining <= 0f)
+            {
+                _smokeParticles.RemoveAt(index);
+                continue;
+            }
+            var age01 = 1f - remaining / MathF.Max(0.001f, smoke.LifetimeSeconds);
+            var velocity = smoke.Velocity + new Vector2(
+                ((smoke.Variation & 1) == 0 ? -1f : 1f) *
+                (5f + (smoke.Variation % 5)) * dt,
+                -8f * dt);
+            velocity *= MathF.Exp(-0.48f * dt);
+            _smokeParticles[index] = smoke with
+            {
+                Position = smoke.Position + velocity * dt,
+                Velocity = velocity,
+                RemainingSeconds = remaining,
+                Radius = smoke.Radius + dt * (2.2f + age01 * 3.8f)
+            };
+        }
+    }
+
     private void AddSurfaceFlame(
         Vector2 position,
         Vector2 surfaceNormal,
@@ -2610,6 +2897,19 @@ public sealed class PhysicalKnife
         IReadOnlyList<ConveyorBelt> conveyors,
         OverheadTubeFeed? tubeFeed)
     {
+        if (_flamePatches.Count > 0 && _smokeSpawnCooldown <= 0f)
+        {
+            var sampleCount = Math.Min(3, 1 + _flamePatches.Count / 14);
+            for (var sample = 0; sample < sampleCount; sample++)
+            {
+                var flame = _flamePatches[
+                    (int)((_arsenalRandom + (uint)(sample * 17)) %
+                          (uint)_flamePatches.Count)];
+                AddSmoke(flame.Position, SmokeKind.Fire,
+                    flame.SurfaceFire ? 1.15f : 0.72f);
+            }
+            _smokeSpawnCooldown = 0.065f;
+        }
         for (var index = _flamePatches.Count - 1; index >= 0; index--)
         {
             var flame = _flamePatches[index];
@@ -2827,6 +3127,12 @@ public sealed class PhysicalKnife
         IReadOnlyList<ConveyorBelt> conveyors,
         OverheadTubeFeed? tubeFeed)
     {
+        if (_acidPools.Count > 0 && _smokeSpawnCooldown <= 0f)
+        {
+            var pool = _acidPools[(int)(_arsenalRandom % (uint)_acidPools.Count)];
+            AddSmoke(pool.Position, SmokeKind.Acid, 0.78f);
+            _smokeSpawnCooldown = 0.09f;
+        }
         for (var index = _acidPools.Count - 1; index >= 0; index--)
         {
             var pool = _acidPools[index];
@@ -2951,7 +3257,10 @@ public sealed class PhysicalKnife
         }
     }
 
-    private void FreezeBody(SoftBody body, float remainingSeconds = 8f)
+    private void FreezeBody(
+        SoftBody body,
+        float remainingSeconds = 8f,
+        int generation = 0)
     {
         var existing = _frozenBlobs.FirstOrDefault(state => ReferenceEquals(state.Body, body));
         if (existing is not null)
@@ -2971,7 +3280,8 @@ public sealed class PhysicalKnife
             Offsets = offsets,
             RemainingSeconds = remainingSeconds,
             ShatterCooldown = 0f,
-            PendingSplitPropagation = false
+            PendingSplitPropagation = false,
+            Generation = generation
         });
     }
 
@@ -2998,7 +3308,10 @@ public sealed class PhysicalKnife
                     .ToArray();
                 _frozenBlobs.RemoveAt(stateIndex);
                 foreach (var descendant in descendants)
-                    FreezeBody(descendant, MathF.Max(2.8f, state.RemainingSeconds));
+                    FreezeBody(
+                        descendant,
+                        MathF.Max(2.8f, state.RemainingSeconds),
+                        state.Generation + 1);
                 continue;
             }
             if (state.RemainingSeconds <= 0f || body.PhysicalParticleCount <= 3)
@@ -3011,23 +3324,56 @@ public sealed class PhysicalKnife
                 (body.LastTerrainImpact > 250f || body.LastImpact > 420f))
             {
                 var center = body.Center;
-                body.AddRadialExplosion(center, 240f, 680f, dt);
                 var crackRadius = MathF.Max(3f, body.ParticleSpacing * 0.72f);
-                body.DamageLine(center - Vector2.UnitX * body.Radius,
-                    center + Vector2.UnitX * body.Radius,
-                    crackRadius, 7f, maximumBreaks: 36);
-                body.DamageLine(center - Vector2.UnitY * body.Radius,
-                    center + Vector2.UnitY * body.Radius,
-                    crackRadius, 7f, maximumBreaks: 36);
-                var diagonal = Vector2.Normalize(new Vector2(1f, 1f)) * body.Radius;
-                body.DamageLine(center - diagonal, center + diagonal,
-                    crackRadius * 0.75f, 5.5f, maximumBreaks: 24);
-                if (granular is not null)
-                    EmitRadialArsenalGore(
-                        granular, center, dt, 18, 210f, 590f);
-                state.PendingSplitPropagation = true;
-                state.ShatterCooldown = 0.32f;
-                state.RemainingSeconds = MathF.Max(state.RemainingSeconds, 3.2f);
+                if (state.Generation == 0)
+                {
+                    // First impact creates physical frozen descendants. Their
+                    // launch is deliberately modest so they read as shattered
+                    // matter instead of a second grenade.
+                    body.AddRadialExplosion(center, 90f, 245f, dt);
+                    const int crackCount = 3;
+                    for (var crack = 0; crack < crackCount; crack++)
+                    {
+                        var angle = (crack + ((body.ParentId * 37) & 15) / 16f) *
+                                    MathF.PI / crackCount;
+                        var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle)) *
+                                        body.Radius;
+                        body.DamageLine(
+                            center - direction,
+                            center + direction,
+                            crackRadius * (0.48f + crack % 3 * 0.08f),
+                            5.8f,
+                            maximumBreaks: 24);
+                    }
+                    state.PendingSplitPropagation = true;
+                    state.ShatterCooldown = 0.42f;
+                    state.RemainingSeconds = MathF.Max(state.RemainingSeconds, 3.2f);
+                }
+                else
+                {
+                    // A frozen descendant's next hard impact is its terminal
+                    // shatter: it ceases being ice and enters ordinary gore.
+                    body.AddRadialExplosion(center, 65f, 190f, dt);
+                    for (var crack = 0; crack < 3; crack++)
+                    {
+                        var angle = crack * MathF.PI / 3f +
+                                    ((body.ParentId & 7) - 3) * 0.04f;
+                        var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle)) *
+                                        body.Radius;
+                        body.DamageLine(
+                            center - direction,
+                            center + direction,
+                            crackRadius,
+                            12f,
+                            maximumBreaks: 48);
+                    }
+                    body.DamageBonds(center, body.Radius * 1.2f, 16f);
+                    body.BeginCrumbling();
+                    if (granular is not null)
+                        EmitRadialArsenalGore(
+                            granular, center, dt, 14, 45f, 180f);
+                    _frozenBlobs.RemoveAt(stateIndex);
+                }
                 PuncturedThisStep = true;
                 continue;
             }
@@ -3059,9 +3405,10 @@ public sealed class PhysicalKnife
             if (body.IsDetachedDebris || tubeFeed?.Contains(body) == true) continue;
             var delta = position - body.Center;
             var distance = delta.Length();
-            if (distance > 170f + body.Radius) continue;
+            const float pullRadius = 124f;
+            if (distance > pullRadius + body.Radius) continue;
             var direction = distance < 0.01f ? Vector2.UnitY : delta / distance;
-            var falloff = 1f - Math.Clamp(distance / 170f, 0f, 1f);
+            var falloff = 1f - Math.Clamp(distance / pullRadius, 0f, 1f);
             body.AddImpulse(direction * (32f + 210f * falloff), dt);
             if (distance > 34f + body.Radius * 0.25f || _specialEffectCooldown > 0f)
                 continue;
@@ -3323,7 +3670,7 @@ public sealed class PhysicalKnife
         ArsenalProjectileKind.MagnumBullet => 2.7f,
         ArsenalProjectileKind.SmgBullet => 1.8f,
         ArsenalProjectileKind.SawBlade => 11f,
-        ArsenalProjectileKind.Grenade => 8f,
+        ArsenalProjectileKind.Grenade => 4f,
         ArsenalProjectileKind.BlackHole => 12f,
         ArsenalProjectileKind.Rat => 9.5f,
         ArsenalProjectileKind.GrowthPulse => 5f,
@@ -3437,7 +3784,7 @@ public sealed class PhysicalKnife
             var previous = position;
             velocity += gravity * (previewDt * 0.72f);
             position += velocity * previewDt;
-            ResolveProjectileEnvironment(previous, ref position, ref velocity, 8f, 0.46f,
+            ResolveProjectileEnvironment(previous, ref position, ref velocity, 4f, 0.46f,
                 previewDt, conveyors, worldWidth, worldHeight, grid, out var bounced, out _);
             if ((step % 5 == 0 || bounced) && _grenadeTrajectory.Count < 48)
                 _grenadeTrajectory.Add(new GrenadeTrajectoryPoint(position, bounced, false));
@@ -3464,19 +3811,58 @@ public sealed class PhysicalKnife
             var offset = body.Center - position;
             var distance = offset.Length();
             if (distance > radius + body.Radius) continue;
+            if (IsBlastOccluded(position, body, bodies, tubeFeed)) continue;
             var direction = distance > 0.01f ? offset / distance : -Vector2.UnitY;
             var strength = Math.Clamp(1f - distance / radius, 0.12f, 1f);
-            body.DamageLine(position, body.Center, 12f + strength * 9f,
-                1.05f + strength * 1.65f, maximumBreaks: 10);
+            var face = body.Center - direction * body.Radius * 0.72f;
+            var tangent = new Vector2(-direction.Y, direction.X);
+            body.DamageLine(
+                face - tangent * (10f + strength * 12f),
+                face + tangent * (10f + strength * 12f),
+                12f + strength * 11f,
+                1.7f + strength * 4.2f,
+                maximumBreaks: 8 + (int)MathF.Round(strength * 16f));
+            body.DamageBonds(face, 18f + strength * 18f, 3.1f + strength * 6f);
+            body.AddLocalizedImpulse(
+                face,
+                58f + strength * 34f,
+                direction * (420f + strength * 720f) - Vector2.UnitY * (90f * strength),
+                dt);
             body.AddRadialExplosion(
                 position,
-                110f + strength * 90f,
-                330f + strength * 250f,
+                130f + strength * 100f,
+                420f + strength * 420f,
                 dt);
+            body.RegisterHitReaction(1.2f + strength, 0.22f);
         }
         LastArsenalActionPosition = position;
         AddArsenalActionEffect(11, position, position, 0.14f, radius);
         ArsenalExplosionSerial++;
+    }
+
+    private static bool IsBlastOccluded(
+        Vector2 origin,
+        SoftBody target,
+        IReadOnlyList<SoftBody> bodies,
+        OverheadTubeFeed? tubeFeed)
+    {
+        var ray = target.Center - origin;
+        var rayLengthSquared = ray.LengthSquared();
+        if (rayLengthSquared < 1f) return false;
+        foreach (var blocker in bodies)
+        {
+            if (ReferenceEquals(blocker, target) || blocker.IsDetachedDebris ||
+                tubeFeed?.Contains(blocker) == true)
+                continue;
+            var amount = Vector2.Dot(blocker.Center - origin, ray) / rayLengthSquared;
+            if (amount <= 0.06f || amount >= 0.92f) continue;
+            var closest = origin + ray * amount;
+            var shieldRadius = blocker.Radius * 0.78f;
+            if (Vector2.DistanceSquared(blocker.Center, closest) <=
+                shieldRadius * shieldRadius)
+                return true;
+        }
+        return false;
     }
 
     private void ResolveTubeGlass(OverheadTubeFeed? tubeFeed, float dt)
@@ -4072,6 +4458,7 @@ public sealed class PhysicalKnife
                 AddArsenalActionEffect(13, blood.Position,
                     blood.Position + new Vector2((_stainSerial & 1) == 0 ? -2f : 2f, -8f),
                     0.095f, radius);
+                AddSmoke(blood.Position, SmokeKind.Saber, 0.46f);
                 SaberSizzleSerial++;
                 _stainSerial++;
                 return true;
@@ -4349,6 +4736,12 @@ public sealed class PhysicalKnife
     }
 
     private static Vector2 InverseRotate(Vector2 value, float angle) => Rotate(value, -angle);
+
+    private static float SmoothStep01(float amount)
+    {
+        amount = Math.Clamp(amount, 0f, 1f);
+        return amount * amount * (3f - 2f * amount);
+    }
 
     private Vector2 RotateToolLocal(Vector2 value)
     {

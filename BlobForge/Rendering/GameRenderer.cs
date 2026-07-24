@@ -107,6 +107,11 @@ public sealed class GameRenderer
     private readonly SolidBrush _blackHoleBrush = new(Color.FromArgb(255, 5, 8, 12));
     private readonly Pen _blackHoleRingPen = new(Color.FromArgb(230, 101, 230, 223), 2f);
     private readonly SolidBrush _flameBrush = new(Color.FromArgb(235, 198, 65, 53));
+    private readonly SolidBrush _flameHotBrush = new(Color.FromArgb(245, 230, 181, 58));
+    private readonly SolidBrush _flameDarkBrush = new(Color.FromArgb(225, 124, 31, 36));
+    private readonly SolidBrush _fireSmokeBrush = new(Color.FromArgb(150, 58, 62, 62));
+    private readonly SolidBrush _acidSmokeBrush = new(Color.FromArgb(145, 53, 92, 66));
+    private readonly SolidBrush _saberSmokeBrush = new(Color.FromArgb(130, 113, 139, 143));
     private readonly SolidBrush _iceProjectileBrush = new(Color.FromArgb(235, 217, 255, 255));
     private readonly SolidBrush _acidBrush = new(Color.FromArgb(220, 78, 224, 157));
     private readonly SolidBrush _waterBrush = new(Color.FromArgb(220, 101, 230, 223));
@@ -306,7 +311,8 @@ public sealed class GameRenderer
     private readonly SolidBrush _basinMeterBackBrush = new(Color.FromArgb(220, 12, 18, 22));
     private readonly ConditionalWeakTable<SoftBody, BlobRenderScratch> _blobRenderScratch = new();
     private readonly PointF[] _fragmentPolygonPoints = new PointF[7];
-    private readonly PointF[] _detachedFragmentPoints = new PointF[4];
+    private readonly PointF[] _detachedFragmentPoints = new PointF[7];
+    private readonly PointF[] _frozenShellPoints = new PointF[9];
     private DestructibleGrid? _bloodSurfaceClipGrid;
     private int _bloodSurfaceClipRevision = -1;
     private Region? _bloodSurfaceClip;
@@ -1979,18 +1985,42 @@ public sealed class GameRenderer
 
     private void DrawArsenalPersistentEffects(Graphics g, PhysicalKnife knife)
     {
-        var elementalFrames = ElementalEffectFrames.Value;
         foreach (var flame in knife.FlamePatches)
         {
-            var frame = (int)(flame.RemainingSeconds * 13f + flame.Variation) & 3;
-            var angle = flame.SurfaceFire &&
-                        flame.SurfaceNormal.LengthSquared() > 0.001f
-                ? MathF.Atan2(flame.SurfaceNormal.Y, flame.SurfaceNormal.X) +
-                  MathF.PI * 0.5f
-                : flame.Velocity.LengthSquared() > 36f
-                ? MathF.Atan2(flame.Velocity.Y, flame.Velocity.X) + MathF.PI * 0.5f
-                : 0f;
-            DrawElementalEffect(g, elementalFrames[frame], flame.Position, angle);
+            DrawPixelFlame(
+                g,
+                flame.Position,
+                flame.Velocity,
+                flame.Variation,
+                flame.SurfaceFire ? 1.25f : 0.82f,
+                flame.RemainingSeconds);
+        }
+        foreach (var smoke in knife.SmokeParticles)
+        {
+            var life = Math.Clamp(
+                smoke.RemainingSeconds / MathF.Max(0.001f, smoke.LifetimeSeconds),
+                0f,
+                1f);
+            var brush = smoke.Kind switch
+            {
+                SmokeKind.Acid => _acidSmokeBrush,
+                SmokeKind.Saber => _saberSmokeBrush,
+                _ => _fireSmokeBrush
+            };
+            var size = MathF.Max(2f, MathF.Round(smoke.Radius * (0.72f + life * 0.28f)));
+            var x = MathF.Round(smoke.Position.X - size * 0.5f);
+            var y = MathF.Round(smoke.Position.Y - size * 0.5f);
+            g.FillRectangle(brush, x, y, size, size);
+            if (size >= 4f)
+            {
+                var side = (smoke.Variation & 1) == 0 ? -1f : 1f;
+                g.FillRectangle(
+                    brush,
+                    x + side * MathF.Max(2f, size * 0.55f),
+                    y + MathF.Round(size * 0.28f),
+                    MathF.Max(2f, size * 0.58f),
+                    MathF.Max(2f, size * 0.52f));
+            }
         }
         var acidSurfaceFrames = AcidSurfaceDisplayFrames.Value;
         var acidCoatFrames = AcidCoatDisplayFrames.Value;
@@ -2016,15 +2046,18 @@ public sealed class GameRenderer
         {
             var body = frozen.Body;
             var center = body.Center;
-            var half = body.Radius + 9f;
-            g.FillRectangle(_iceBlockBrush,
-                center.X - half, center.Y - half, half * 2f, half * 2f);
-            g.DrawRectangle(_iceBlockPen,
-                center.X - half, center.Y - half, half * 2f, half * 2f);
-            g.DrawLine(_iceBlockPen, center.X - half + 5f, center.Y - half + 7f,
-                center.X - 3f, center.Y - 2f);
-            g.DrawLine(_iceBlockPen, center.X + half - 5f, center.Y + half - 8f,
-                center.X + 4f, center.Y + 3f);
+            SetFrozenShellPolygon(
+                _frozenShellPoints,
+                center,
+                body.Radius + (frozen.Generation == 0 ? 9f : 5f),
+                body.ParentId,
+                frozen.Generation);
+            g.FillPolygon(_iceBlockBrush, _frozenShellPoints);
+            g.DrawPolygon(_iceBlockPen, _frozenShellPoints);
+            var first = _frozenShellPoints[(body.ParentId & 3) + 1];
+            var second = _frozenShellPoints[5 + (body.ParentId & 1)];
+            g.DrawLine(_iceBlockPen, first.X, first.Y, center.X - 2f, center.Y - 1f);
+            g.DrawLine(_iceBlockPen, second.X, second.Y, center.X + 3f, center.Y + 2f);
         }
         var ratFrames = RatDisplayFrames.Value;
         foreach (var rat in knife.Rats)
@@ -2065,7 +2098,7 @@ public sealed class GameRenderer
                 g.RotateTransform(projectile.Angle * 180f / MathF.PI);
                 var sprite = frames[11];
                 if (sprite is not null)
-                    g.DrawImage(sprite, new RectangleF(-48f, -31f, 96f, 64f),
+                    g.DrawImage(sprite, new RectangleF(-24f, -16f, 48f, 32f),
                         new RectangleF(0f, 0f, 96f, 64f), GraphicsUnit.Pixel);
             }
             else if (projectile.Kind == ArsenalProjectileKind.BlackHole)
@@ -2089,15 +2122,15 @@ public sealed class GameRenderer
             }
             else if (projectile.Kind == ArsenalProjectileKind.Flame)
             {
-                var direction = projectile.Velocity.LengthSquared() > 0.001f
-                    ? projectile.Velocity
-                    : -Vector2.UnitY;
-                var angle = MathF.Atan2(direction.Y, direction.X) + MathF.PI * 0.5f;
-                g.RotateTransform(angle * 180f / MathF.PI);
-                var frame = (int)(projectile.RemainingSeconds * 14f) & 3;
-                var sprite = ElementalEffectFrames.Value[frame];
-                if (sprite is not null)
-                    g.DrawImageUnscaled(sprite, -16, -8);
+                g.Restore(state);
+                DrawPixelFlame(
+                    g,
+                    projectile.Position,
+                    projectile.Velocity,
+                    (byte)(projectile.RemainingSeconds * 91f),
+                    0.72f,
+                    projectile.RemainingSeconds);
+                continue;
             }
             else if (projectile.Kind == ArsenalProjectileKind.IceBolt)
             {
@@ -2158,6 +2191,39 @@ public sealed class GameRenderer
             g.RotateTransform(angle * 180f / MathF.PI);
         g.DrawImageUnscaled(sprite, -sprite.Width / 2, -sprite.Height / 2);
         g.Restore(state);
+    }
+
+    private void DrawPixelFlame(
+        Graphics g,
+        Vector2 position,
+        Vector2 velocity,
+        byte variation,
+        float scale,
+        float time)
+    {
+        var direction = velocity.LengthSquared() > 4f
+            ? Vector2.Normalize(velocity)
+            : -Vector2.UnitY;
+        var rise = Vector2.Normalize(Vector2.Lerp(direction, -Vector2.UnitY, 0.72f));
+        var tangent = new Vector2(-rise.Y, rise.X);
+        var count = 5 + variation % 4;
+        for (var pixel = 0; pixel < count; pixel++)
+        {
+            var phase = time * (12f + pixel) + variation * 0.17f + pixel * 1.91f;
+            var along = pixel * (2.4f + scale * 1.4f);
+            var sideways = MathF.Sin(phase) * (2f + pixel * 0.45f) * scale;
+            var point = position + rise * along + tangent * sideways;
+            var size = MathF.Max(2f, MathF.Round((4.5f - pixel * 0.32f) * scale));
+            var brush = pixel == 0 || pixel % 4 == 0
+                ? _flameHotBrush
+                : pixel % 3 == 0 ? _flameDarkBrush : _flameBrush;
+            g.FillRectangle(
+                brush,
+                MathF.Round(point.X - size * 0.5f),
+                MathF.Round(point.Y - size * 0.5f),
+                size,
+                size);
+        }
     }
 
     private static void DrawKnifeHeavyImpact(Graphics g, PhysicalKnife? knife)
@@ -2575,7 +2641,8 @@ public sealed class GameRenderer
         g.DrawString($"{percent:00}%\n{basin.CurrentFluidVolume:0000}",
             _basinMeterFont, _basinMeterTextBrush,
             monitorBounds.Right + 4f, monitorBounds.Top + 21f);
-        DrawBasinFrontOverflow(g, basin);
+        // Basin-front overflow trails are intentionally disabled. Full-basin
+        // excess remains visible as physical blood ejected over the lips.
     }
 
     private void DrawBasinFrontOverflow(Graphics g, BloodBasin basin)
@@ -4117,13 +4184,42 @@ public sealed class GameRenderer
     {
         var cosine = MathF.Cos(angle);
         var sine = MathF.Sin(angle);
-        for (var corner = 0; corner < 4; corner++)
+        var shapeSeed = (int)MathF.Round(
+            center.X * 7f + center.Y * 13f + angle * 101f);
+        for (var corner = 0; corner < points.Length; corner++)
         {
-            var localX = (corner is 0 or 3 ? -1f : 1f) * halfWidth;
-            var localY = (corner < 2 ? -1f : 1f) * halfHeight;
+            var polar = MathF.Tau * corner / points.Length;
+            var irregular = 0.72f +
+                            ((shapeSeed + corner * 17) & 7) * 0.043f;
+            var localX = MathF.Cos(polar) * halfWidth * irregular;
+            var localY = MathF.Sin(polar) * halfHeight *
+                         (0.80f + ((shapeSeed >> (corner & 7)) & 3) * 0.08f);
             points[corner] = new PointF(
                 MathF.Round(center.X + localX * cosine - localY * sine),
                 MathF.Round(center.Y + localX * sine + localY * cosine));
+        }
+    }
+
+    private static void SetFrozenShellPolygon(
+        PointF[] points,
+        Vector2 center,
+        float radius,
+        int parentId,
+        int generation)
+    {
+        var seed = unchecked((uint)(parentId * 747796405 + generation * 2891336453L));
+        for (var point = 0; point < points.Length; point++)
+        {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            var angle = MathF.Tau * point / points.Length;
+            var radial = radius * (0.80f + (seed & 255u) / 255f * 0.27f);
+            var xScale = 0.90f + ((seed >> 8) & 7u) * 0.018f;
+            var yScale = 0.88f + ((seed >> 12) & 7u) * 0.022f;
+            points[point] = new PointF(
+                MathF.Round(center.X + MathF.Cos(angle) * radial * xScale),
+                MathF.Round(center.Y + MathF.Sin(angle) * radial * yScale));
         }
     }
 

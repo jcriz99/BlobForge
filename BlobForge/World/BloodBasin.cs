@@ -254,7 +254,10 @@ public sealed class BloodBasin
         RegisterSurfaceImpact(x, downwardSpeed, radius, displacedVolume);
         RegisterInflowVisual(x, downwardSpeed, displacedVolume, stainPipe: false);
         _overflowSideSerial++;
-        RegisterFrontOverflowStain(downwardSpeed, displacedVolume);
+        // Front-glass overflow trails are deliberately disabled until their
+        // presentation is redesigned. Clear any legacy marks retained by a
+        // long-running session while preserving physical lip overflow.
+        _frontOverflowStains.Clear();
         // Drain position must not bias the exterior spill. Strict alternation keeps
         // long full-basin runs evenly distributed across both lips.
         return (_overflowSideSerial & 1) != 0;

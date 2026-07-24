@@ -37,9 +37,8 @@ public sealed class OverheadTubeFeed
         {
             spawned = factory(Inlet);
             bodies.Add(spawned);
-            var direction = (spawned.ParentId & 1) == 0 ? 1f : -1f;
             var entry = new Entry(spawned, Inlet,
-                direction * (0.78f + (spawned.ParentId % 5) * 0.12f),
+                -(0.78f + (spawned.ParentId % 5) * 0.12f),
                 (spawned.ParentId % 11) * 0.57f);
             _entries.Add(entry);
             _entryByBody.Add(spawned, entry);

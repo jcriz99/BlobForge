@@ -12,6 +12,13 @@ public enum CartCycleState : byte
     Returning
 }
 
+public enum ForegroundBasinContact : byte
+{
+    None,
+    Collected,
+    ReemitPhysical
+}
+
 public readonly record struct DoorwayBloodStain(
     Vector2 Position,
     float Amount,
@@ -43,6 +50,7 @@ public sealed class ProcessingLine
     private const float BayWidth = 48f;
     private const float OutputTransferWidth = 64f;
     private const float BeltHeight = 26f;
+    private int _basinOverflowEjectionSerial;
     private const float FirstX = 256f;
     private const float CartSpeed = 205f;
     private const float BloodFluidConversion = 0.20f;
@@ -1428,8 +1436,9 @@ public sealed class ProcessingLine
                     ? Basin.Right + BasinCaptureMargin + particle.Radius + 2f
                     : Basin.Left - BasinCaptureMargin - particle.Radius - 2f,
                 Basin.Top + 3f + particle.Radius * 0.25f);
-            var spillVelocity = new Vector2(direction * (34f + MathF.Min(42f, downwardSpeed * 0.12f)),
-                18f + MathF.Min(34f, downwardSpeed * 0.08f));
+            var spillVelocity = NextBasinOverflowEjectionVelocity(
+                direction,
+                downwardSpeed);
             particle.PreviousPosition = particle.Position - spillVelocity * safeDt;
             particle.RestFrames = 0;
             particle.SplatterOnImpact = true;
@@ -1446,23 +1455,24 @@ public sealed class ProcessingLine
         return true;
     }
 
-    public bool TryCollectForegroundSpill(
+    public ForegroundBasinContact TryCollectForegroundSpill(
         ref ForegroundGranularSpill spill,
         float dt)
     {
-        if (spill.Kind == GranularKind.Acid) return false;
+        if (spill.Kind == GranularKind.Acid) return ForegroundBasinContact.None;
         const float openingInset = 6f;
         if (spill.Position.X + spill.Radius < Basin.Left + openingInset ||
             spill.Position.X - spill.Radius > Basin.Right - openingInset ||
             spill.Position.Y + spill.Radius < Basin.Top)
-            return false;
+            return ForegroundBasinContact.None;
 
         var depositX = Math.Clamp(
             spill.Position.X,
             Basin.Left + openingInset,
             Basin.Right - openingInset);
         var surfaceY = Basin.SurfaceYAt(depositX);
-        if (spill.Position.Y + spill.Radius < surfaceY) return false;
+        if (spill.Position.Y + spill.Radius < surfaceY)
+            return ForegroundBasinContact.None;
 
         var downwardSpeed = MathF.Max(0f, spill.Velocity.Y);
         var pixelArea = MathF.PI * spill.Radius * spill.Radius;
@@ -1487,10 +1497,10 @@ public sealed class ProcessingLine
                     ? Basin.Right + openingInset + spill.Radius + 2f
                     : Basin.Left - openingInset - spill.Radius - 2f,
                 Basin.Top + 3f + spill.Radius * 0.25f);
-            spill.Velocity = new Vector2(
-                direction * (34f + MathF.Min(42f, downwardSpeed * 0.12f)),
-                18f + MathF.Min(34f, downwardSpeed * 0.08f));
-            return false;
+            spill.Velocity = NextBasinOverflowEjectionVelocity(
+                direction,
+                downwardSpeed);
+            return ForegroundBasinContact.ReemitPhysical;
         }
 
         Basin.AddSuspendedMaterial(
@@ -1503,7 +1513,27 @@ public sealed class ProcessingLine
             downwardSpeed,
             nutrition,
             spill.Radius);
-        return true;
+        return ForegroundBasinContact.Collected;
+    }
+
+    private Vector2 NextBasinOverflowEjectionVelocity(
+        float direction,
+        float downwardSpeed)
+    {
+        var serial = ++_basinOverflowEjectionSerial;
+        var hash = unchecked((uint)(serial * 747796405 + 2891336453));
+        hash ^= hash >> 16;
+        var lateralVariation = (hash & 31) / 31f;
+        var verticalVariation = ((hash >> 8) & 31) / 31f;
+        var lateralSpeed =
+            28f +
+            lateralVariation * 54f +
+            MathF.Min(24f, downwardSpeed * 0.055f);
+        var verticalSpeed =
+            -72f +
+            verticalVariation * 108f +
+            MathF.Min(16f, downwardSpeed * 0.025f);
+        return new Vector2(direction * lateralSpeed, verticalSpeed);
     }
 
     public bool IsBasinProtectedFloor(Vector2 point)

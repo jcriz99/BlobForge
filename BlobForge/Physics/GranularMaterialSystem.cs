@@ -62,7 +62,8 @@ public sealed class GranularMaterialSystem
     private const float DensePileMaximumSpeed = 150f;
     private const int DensePileThreshold = 20;
     private const int DensePileScanStride = 6;
-    private const int DensePileSpillBudget = 8;
+    private const int DensePileSpillBaseBudget = 8;
+    private const int DensePileSpillMaximumBudget = 32;
     private const int DensePileMaximumColumns = 64;
     private const int DensePileMaximumRows = 40;
 
@@ -90,6 +91,7 @@ public sealed class GranularMaterialSystem
     public int ForegroundSpillConvertedTotal { get; private set; }
     public int ForegroundSpillExpiredTotal { get; private set; }
     public int ForegroundSpillCollectedTotal { get; private set; }
+    public int ForegroundSpillReemittedTotal { get; private set; }
     public int SpawnedThisStep { get; private set; }
     public int BloodSpawnedThisStep { get; private set; }
     public int BloodSplatteredThisStep { get; private set; }
@@ -517,10 +519,20 @@ public sealed class GranularMaterialSystem
             spill.Lifetime -= dt;
             spill.Velocity.Y = MathF.Min(540f, spill.Velocity.Y + 135f * dt);
             spill.Position += spill.Velocity * dt;
-            if (processingLine?.TryCollectForegroundSpill(ref spill, dt) == true)
+            var basinContact = processingLine?.TryCollectForegroundSpill(
+                ref spill,
+                dt) ?? ForegroundBasinContact.None;
+            if (basinContact == ForegroundBasinContact.Collected)
             {
                 RemoveForegroundSpillAtSwapBack(i);
                 ForegroundSpillCollectedTotal++;
+                continue;
+            }
+            if (basinContact == ForegroundBasinContact.ReemitPhysical &&
+                TryReemitForegroundSpill(spill, dt))
+            {
+                RemoveForegroundSpillAtSwapBack(i);
+                ForegroundSpillReemittedTotal++;
                 continue;
             }
             if (spill.Lifetime <= 0f ||
@@ -533,6 +545,25 @@ public sealed class GranularMaterialSystem
             }
             ForegroundSpills[i] = spill;
         }
+    }
+
+    private bool TryReemitForegroundSpill(
+        ForegroundGranularSpill spill,
+        float dt)
+    {
+        if (Particles.Count >= ParticleCapacity) return false;
+        Particles.Add(new GranularParticle
+        {
+            Position = spill.Position,
+            PreviousPosition = spill.Position - spill.Velocity * dt,
+            Radius = spill.Radius,
+            Lifetime = MathF.Max(4f, spill.Lifetime),
+            Kind = spill.Kind,
+            Appearance = spill.Appearance,
+            SplatterOnImpact = spill.Kind == GranularKind.Blood,
+            ForegroundSupportFrames = 0
+        });
+        return true;
     }
 
     private void ConvertDensePilesToForegroundSpills(
@@ -554,17 +585,21 @@ public sealed class GranularMaterialSystem
             DensePileMaximumRows);
         Array.Clear(_densePileCounts, 0, columns * rows);
         var maximumSpeedSquared = DensePileMaximumSpeed * DensePileMaximumSpeed;
+        var maximumLocalDensity = 0;
         for (var i = 0; i < Particles.Count; i++)
         {
             var particle = Particles[i];
             if (!IsDensePileCandidate(particle, dt, maximumSpeedSquared)) continue;
             if (!TryDensePileIndex(particle.Position, columns, rows, out var densityIndex))
                 continue;
-            _densePileCounts[densityIndex]++;
+            var density = ++_densePileCounts[densityIndex];
+            maximumLocalDensity = Math.Max(maximumLocalDensity, density);
         }
 
+        var pressureBudget = DensePileSpillBaseBudget +
+                             Math.Max(0, maximumLocalDensity - DensePileThreshold) / 2;
         var remainingBudget = Math.Min(
-            DensePileSpillBudget,
+            Math.Min(DensePileSpillMaximumBudget, pressureBudget),
             ForegroundSpillCapacity - ForegroundSpills.Count);
         for (var i = Particles.Count - 1; i >= 0 && remainingBudget > 0; i--)
         {
