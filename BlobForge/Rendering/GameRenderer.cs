@@ -11,6 +11,22 @@ namespace BlobForge.Rendering;
 
 public sealed class GameRenderer
 {
+    private enum DebugOverlayControl : byte
+    {
+        AllOn,
+        AllOff,
+        Fps,
+        BlobPoints,
+        Bonds,
+        Tools,
+        Metrics
+    }
+
+    private readonly record struct DebugOverlayButton(
+        DebugOverlayControl Control,
+        RectangleF Bounds,
+        string Label);
+
     private const int FactoryTileSize = 32;
     private const int BasinFluidVisualScaleY = 3;
     internal const float BasinBubbleThreshold = 0.35f;
@@ -194,6 +210,13 @@ public sealed class GameRenderer
     private readonly Pen _debugProjectileColliderPen = new(Color.FromArgb(230, 255, 92, 118), 1.5f);
     private readonly SolidBrush _debugPanelBackgroundBrush = new(Color.FromArgb(190, 5, 9, 15));
     private readonly SolidBrush _debugPanelTextBrush = new(Color.FromArgb(235, 161, 235, 205));
+    private readonly SolidBrush _debugToggleOffBrush = new(Color.FromArgb(225, 14, 22, 28));
+    private readonly SolidBrush _debugToggleOnBrush = new(Color.FromArgb(235, 32, 67, 70));
+    private readonly SolidBrush _debugToggleIndicatorOffBrush =
+        new(Color.FromArgb(255, 85, 113, 123));
+    private readonly SolidBrush _debugToggleIndicatorOnBrush =
+        new(Color.FromArgb(255, 101, 230, 223));
+    private readonly Pen _debugToggleBorderPen = new(Color.FromArgb(230, 85, 113, 123), 1f);
     private readonly GraphicsPath _debugConstraintPath = new();
     private readonly GraphicsPath _debugParticlePath = new(FillMode.Winding);
     private readonly GraphicsPath _debugSupportedParticlePath = new(FillMode.Winding);
@@ -231,6 +254,18 @@ public sealed class GameRenderer
     private readonly Bitmap _debugPanel = new(318, 640);
     private readonly Bitmap _displayDebugPanel = new(360, 282);
     private long _nextDebugPanelRefresh;
+    private long _nextDebugFpsRefresh;
+    private string _debugFpsText = "FPS  --";
+    private static readonly DebugOverlayButton[] DebugOverlayButtons =
+    [
+        new(DebugOverlayControl.AllOn, new RectangleF(20f, 82f, 54f, 22f), "ALL+"),
+        new(DebugOverlayControl.AllOff, new RectangleF(78f, 82f, 54f, 22f), "ALL-"),
+        new(DebugOverlayControl.Fps, new RectangleF(136f, 82f, 54f, 22f), "FPS"),
+        new(DebugOverlayControl.BlobPoints, new RectangleF(194f, 82f, 66f, 22f), "BLOBS"),
+        new(DebugOverlayControl.Bonds, new RectangleF(264f, 82f, 60f, 22f), "BONDS"),
+        new(DebugOverlayControl.Tools, new RectangleF(328f, 82f, 60f, 22f), "TOOLS"),
+        new(DebugOverlayControl.Metrics, new RectangleF(392f, 82f, 72f, 22f), "METRICS")
+    ];
     private readonly SolidBrush[] _wetStainBrushes =
     {
         new(Color.FromArgb(140, 148, 4, 14)),
@@ -348,6 +383,11 @@ public sealed class GameRenderer
     private readonly PointF[] _shopPanelPolygon = new PointF[7];
 
     public bool DebugDraw { get; set; }
+    public bool DebugShowFps { get; private set; } = true;
+    public bool DebugShowBlobPoints { get; private set; } = true;
+    public bool DebugShowBonds { get; private set; }
+    public bool DebugShowToolColliders { get; private set; } = true;
+    public bool DebugShowMetrics { get; private set; }
     public double FrameMs { get; set; }
     public double Fps { get; set; }
     public double RenderMs { get; set; }
@@ -406,6 +446,50 @@ public sealed class GameRenderer
     public double StainStageMs { get; private set; }
     public double GranularStageMs { get; private set; }
     public double BlobStageMs { get; private set; }
+
+    public bool TryHandleDebugOverlayClick(Vector2 point)
+    {
+        if (!DebugDraw) return false;
+        foreach (var button in DebugOverlayButtons)
+        {
+            if (!button.Bounds.Contains(point.X, point.Y)) continue;
+            switch (button.Control)
+            {
+                case DebugOverlayControl.AllOn:
+                    SetAllDebugLayers(true);
+                    break;
+                case DebugOverlayControl.AllOff:
+                    SetAllDebugLayers(false);
+                    break;
+                case DebugOverlayControl.Fps:
+                    DebugShowFps = !DebugShowFps;
+                    break;
+                case DebugOverlayControl.BlobPoints:
+                    DebugShowBlobPoints = !DebugShowBlobPoints;
+                    break;
+                case DebugOverlayControl.Bonds:
+                    DebugShowBonds = !DebugShowBonds;
+                    break;
+                case DebugOverlayControl.Tools:
+                    DebugShowToolColliders = !DebugShowToolColliders;
+                    break;
+                case DebugOverlayControl.Metrics:
+                    DebugShowMetrics = !DebugShowMetrics;
+                    break;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void SetAllDebugLayers(bool visible)
+    {
+        DebugShowFps = visible;
+        DebugShowBlobPoints = visible;
+        DebugShowBonds = visible;
+        DebugShowToolColliders = visible;
+        DebugShowMetrics = visible;
+    }
 
     public const int ArsenalItemCount = PhysicalKnife.ArsenalVariantCount + 1;
     public bool ArsenalMenuOpen { get; set; }
@@ -4164,7 +4248,8 @@ public sealed class GameRenderer
             g.SmoothingMode = fallbackSmoothing;
             if (machineLit && !debris && body.Particles.Length >= 7)
                 DrawFace(g, body, faceRotation);
-            if (DebugDraw) DrawBodyDebug(g, body);
+            if (DebugDraw && (DebugShowBlobPoints || DebugShowBonds))
+                DrawBodyDebug(g, body);
             return;
         }
 
@@ -4205,7 +4290,8 @@ public sealed class GameRenderer
         g.SmoothingMode = previousSmoothing;
 
         if (!debris && body.Particles.Length >= 7) DrawFace(g, body, faceRotation);
-        if (DebugDraw) DrawBodyDebug(g, body);
+        if (DebugDraw && (DebugShowBlobPoints || DebugShowBonds))
+            DrawBodyDebug(g, body);
     }
 
     private static void SetDetachedFragmentPolygon(
@@ -4457,15 +4543,20 @@ public sealed class GameRenderer
         _debugConstraintPath.Reset();
         _debugParticlePath.Reset();
         _debugSupportedParticlePath.Reset();
-        foreach (var constraint in body.Constraints)
+        if (DebugShowBonds)
         {
-            if (constraint.Broken) continue;
-            var a = body.Particles[constraint.A].Position;
-            var b = body.Particles[constraint.B].Position;
-            _debugConstraintPath.StartFigure();
-            _debugConstraintPath.AddLine(a.X, a.Y, b.X, b.Y);
+            foreach (var constraint in body.Constraints)
+            {
+                if (constraint.Broken) continue;
+                var a = body.Particles[constraint.A].Position;
+                var b = body.Particles[constraint.B].Position;
+                _debugConstraintPath.StartFigure();
+                _debugConstraintPath.AddLine(a.X, a.Y, b.X, b.Y);
+            }
+            if (_debugConstraintPath.PointCount > 0)
+                g.DrawPath(_constraintPen, _debugConstraintPath);
         }
-        if (_debugConstraintPath.PointCount > 0) g.DrawPath(_constraintPen, _debugConstraintPath);
+        if (!DebugShowBlobPoints) return;
         for (var particleIndex = 0; particleIndex < body.Particles.Length; particleIndex++)
         {
             if (!body.IsPhysicalParticle(particleIndex)) continue;
@@ -4558,10 +4649,27 @@ public sealed class GameRenderer
 
     private void DrawDebug(Graphics g, BlobWorld world)
     {
-        DrawCollisionDebug(g, world);
-        const int x = 20;
-        const int y = 82;
+        if (DebugShowToolColliders) DrawCollisionDebug(g, world);
+        DrawDebugControls(g);
         var now = Environment.TickCount64;
+        if (DebugShowFps)
+        {
+            if (now >= _nextDebugFpsRefresh)
+            {
+                _nextDebugFpsRefresh = now + 200;
+                _debugFpsText = $"FPS {Fps,5:0.0}";
+            }
+            g.FillRectangle(_debugPanelBackgroundBrush, 20f, 108f, 78f, 22f);
+            g.DrawRectangle(_debugToggleBorderPen, 20.5f, 108.5f, 77f, 21f);
+            g.DrawString(_debugFpsText, _shopFont, _debugPanelTextBrush, 26f, 113f);
+        }
+
+        // The expensive diagnostic text is opt-in. Normal collider inspection now
+        // avoids the string/LINQ work and large bitmap overlays that distort the FPS
+        // reading the player is trying to observe.
+        if (!DebugShowMetrics) return;
+        const int x = 20;
+        const int y = 136;
         if (now >= _nextDebugPanelRefresh)
         {
             _nextDebugPanelRefresh = now + 200;
@@ -4648,6 +4756,49 @@ public sealed class GameRenderer
         // remains attached to the logical game viewport.
         g.DrawImageUnscaled(_displayDebugPanel, 900, 250);
     }
+
+    private void DrawDebugControls(Graphics g)
+    {
+        foreach (var button in DebugOverlayButtons)
+        {
+            var enabled = IsDebugControlEnabled(button.Control);
+            g.FillRectangle(enabled ? _debugToggleOnBrush : _debugToggleOffBrush, button.Bounds);
+            g.DrawRectangle(
+                _debugToggleBorderPen,
+                button.Bounds.X + 0.5f,
+                button.Bounds.Y + 0.5f,
+                button.Bounds.Width - 1f,
+                button.Bounds.Height - 1f);
+            g.FillRectangle(
+                enabled ? _debugToggleIndicatorOnBrush : _debugToggleIndicatorOffBrush,
+                button.Bounds.X + 5f,
+                button.Bounds.Y + 8f,
+                5f,
+                5f);
+            g.DrawString(
+                button.Label,
+                _shopFont,
+                _debugPanelTextBrush,
+                button.Bounds.X + 14f,
+                button.Bounds.Y + 5f);
+        }
+    }
+
+    private bool IsDebugControlEnabled(DebugOverlayControl control) => control switch
+    {
+        DebugOverlayControl.AllOn =>
+            DebugShowFps && DebugShowBlobPoints && DebugShowBonds &&
+            DebugShowToolColliders && DebugShowMetrics,
+        DebugOverlayControl.AllOff =>
+            !DebugShowFps && !DebugShowBlobPoints && !DebugShowBonds &&
+            !DebugShowToolColliders && !DebugShowMetrics,
+        DebugOverlayControl.Fps => DebugShowFps,
+        DebugOverlayControl.BlobPoints => DebugShowBlobPoints,
+        DebugOverlayControl.Bonds => DebugShowBonds,
+        DebugOverlayControl.Tools => DebugShowToolColliders,
+        DebugOverlayControl.Metrics => DebugShowMetrics,
+        _ => false
+    };
 
     private void DrawCollisionDebug(Graphics g, BlobWorld world)
     {

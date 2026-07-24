@@ -321,6 +321,8 @@ public sealed class SoftBody
         var radiusAdjustment = IsFrozen
             ? collisionPadding - _frozenCollisionPadding
             : collisionRadiiAlreadyExpanded ? 0f : collisionPadding;
+        if (!IsFrozen && !collisionRadiiAlreadyExpanded && collisionPadding > 0.001f)
+            ShiftAwayFromFreezeSupport(collisionPadding);
         if (MathF.Abs(radiusAdjustment) > 0.001f)
         {
             for (var index = 0; index < Particles.Length; index++)
@@ -341,6 +343,55 @@ public sealed class SoftBody
         for (var index = 0; index < Particles.Length; index++)
             _frozenReferenceOffsets[index] = Particles[index].Position - center;
         Wake();
+    }
+
+    private void ShiftAwayFromFreezeSupport(float collisionPadding)
+    {
+        var center = Center;
+        var bottomContacts = 0;
+        var topContacts = 0;
+        var leftContacts = 0;
+        var rightContacts = 0;
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            if (!IsPhysicalParticle(index) || !Particles[index].Contacting) continue;
+            var offset = Particles[index].Position - center;
+            if (MathF.Abs(offset.Y) >= MathF.Abs(offset.X))
+            {
+                if (offset.Y >= 0f) bottomContacts++;
+                else topContacts++;
+            }
+            else if (offset.X >= 0f)
+            {
+                rightContacts++;
+            }
+            else
+            {
+                leftContacts++;
+            }
+        }
+
+        var maximumContacts = Math.Max(
+            Math.Max(bottomContacts, topContacts),
+            Math.Max(leftContacts, rightContacts));
+        if (maximumContacts <= 0) return;
+
+        // Move the old body away from its dominant supporting surface before
+        // expanding the particle radii. Translating both Verlet positions and
+        // clearing their relative velocity makes this a quiet accommodation for
+        // the new ice thickness, not an impact that launches or shatters the blob.
+        var shift = maximumContacts == bottomContacts
+            ? -Vector2.UnitY * collisionPadding
+            : maximumContacts == topContacts
+                ? Vector2.UnitY * collisionPadding
+                : maximumContacts == leftContacts
+                    ? Vector2.UnitX * collisionPadding
+                    : -Vector2.UnitX * collisionPadding;
+        for (var index = 0; index < Particles.Length; index++)
+        {
+            Particles[index].Position += shift;
+            Particles[index].PreviousPosition = Particles[index].Position;
+        }
     }
 
     private void ShowHurtExpression(float intensity)

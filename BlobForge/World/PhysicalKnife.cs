@@ -2152,6 +2152,8 @@ public sealed class PhysicalKnife
                 radius, restitution, dt,
                 conveyors, worldWidth, worldHeight, tubeFeed, grid,
                 out _, out var environmentNormal);
+            if (isGrenade && hitEnvironment)
+                EnsureGrenadeEscapeVelocity(ref velocity, environmentNormal, 105f);
             if (hitEnvironment && !isGrenade)
             {
                 if (isBlackHole)
@@ -2281,7 +2283,7 @@ public sealed class PhysicalKnife
             }
             else if (isGrenade)
             {
-                ResolveGrenadeBodyCollision(
+                if (ResolveGrenadeBodyCollision(
                     previous,
                     ref position,
                     ref velocity,
@@ -2290,7 +2292,9 @@ public sealed class PhysicalKnife
                     tubeFeed,
                     dt,
                     applyImpulse: true,
-                    out _);
+                    out _,
+                    out var bodyNormal))
+                    EnsureGrenadeEscapeVelocity(ref velocity, bodyNormal, 135f);
             }
             else if (isBlackHole)
             {
@@ -3302,7 +3306,10 @@ public sealed class PhysicalKnife
         {
             Body = body,
             RemainingSeconds = remainingSeconds,
-            ShatterCooldown = 0f,
+            // Collider expansion and its one-time support shift are not attacks.
+            // Ignore settling contacts briefly so a freshly frozen grounded blob
+            // cannot immediately shatter from the act of becoming ice.
+            ShatterCooldown = 0.08f,
             PendingSplitPropagation = false,
             Generation = generation
         });
@@ -3344,7 +3351,6 @@ public sealed class PhysicalKnife
                 continue;
             }
             if (state.ShatterCooldown <= 0f &&
-                state.RemainingSeconds < 7.72f &&
                 (body.LastTerrainImpact > 250f || body.LastImpact > 420f))
             {
                 var center = body.Center;
@@ -3818,7 +3824,9 @@ public sealed class PhysicalKnife
             position += velocity * previewDt;
             ResolveProjectileEnvironment(previous, ref position, ref velocity, 4f, 0.46f,
                 previewDt, conveyors, worldWidth, worldHeight, tubeFeed, grid,
-                out var bounced, out _);
+                out var bounced, out var environmentNormal);
+            if (bounced)
+                EnsureGrenadeEscapeVelocity(ref velocity, environmentNormal, 105f);
             var bodyCollision = ResolveGrenadeBodyCollision(
                 previous,
                 ref position,
@@ -3828,11 +3836,20 @@ public sealed class PhysicalKnife
                 tubeFeed,
                 previewDt,
                 applyImpulse: false,
+                out _,
                 out _);
-            bounced |= bodyCollision;
+            if (bodyCollision)
+            {
+                var contactPoint = new GrenadeTrajectoryPoint(position, true, true, true);
+                if (_grenadeTrajectory.Count < 48)
+                    _grenadeTrajectory.Add(contactPoint);
+                else
+                    _grenadeTrajectory[^1] = contactPoint;
+                break;
+            }
             if ((step % 5 == 0 || bounced) && _grenadeTrajectory.Count < 48)
                 _grenadeTrajectory.Add(
-                    new GrenadeTrajectoryPoint(position, bounced, false, bodyCollision));
+                    new GrenadeTrajectoryPoint(position, bounced, false));
         }
         if (_grenadeTrajectory.Count == 0)
             _grenadeTrajectory.Add(new GrenadeTrajectoryPoint(position, false, true));
@@ -3855,9 +3872,11 @@ public sealed class PhysicalKnife
         OverheadTubeFeed? tubeFeed,
         float dt,
         bool applyImpulse,
-        out SoftBody? hitBody)
+        out SoftBody? hitBody,
+        out Vector2 contactNormal)
     {
         hitBody = null;
+        contactNormal = Vector2.Zero;
         var earliestTime = float.MaxValue;
         var hitParticlePosition = Vector2.Zero;
         var hitCombinedRadius = 0f;
@@ -3904,6 +3923,13 @@ public sealed class PhysicalKnife
         // This prevents the next fixed step from repeatedly damping an overlapping
         // grenade until it appears glued inside a blob.
         position = hitParticlePosition + normal * (hitCombinedRadius + 0.35f);
+        SeparateGrenadeFromBodyParticles(
+            ref position,
+            grenadeRadius,
+            bodies,
+            tubeFeed,
+            ref normal);
+        contactNormal = normal;
         var incomingNormalSpeed = Vector2.Dot(velocity, normal);
         if (incomingNormalSpeed < 0f)
         {
@@ -3922,6 +3948,79 @@ public sealed class PhysicalKnife
                     dt);
         }
         return true;
+    }
+
+    private static void SeparateGrenadeFromBodyParticles(
+        ref Vector2 position,
+        float grenadeRadius,
+        IReadOnlyList<SoftBody> bodies,
+        OverheadTubeFeed? tubeFeed,
+        ref Vector2 escapeNormal)
+    {
+        // A blob is a cluster of real particle circles. Escaping only the first
+        // struck circle can leave a grenade overlapping its neighbors, which then
+        // looks like the grenade has glued itself into the tissue. A few bounded
+        // Gauss-Seidel passes move it outside the complete surviving cluster.
+        for (var pass = 0; pass < 6; pass++)
+        {
+            var moved = false;
+            foreach (var body in bodies)
+            {
+                var searchRadius =
+                    body.Radius + grenadeRadius + body.ParticleSpacing;
+                if (tubeFeed?.Contains(body) == true ||
+                    Vector2.DistanceSquared(position, body.Center) >
+                    searchRadius * searchRadius)
+                    continue;
+
+                for (var particleIndex = 0;
+                     particleIndex < body.Particles.Length;
+                     particleIndex++)
+                {
+                    if (!body.IsPhysicalParticle(particleIndex)) continue;
+                    var particle = body.Particles[particleIndex];
+                    var minimumDistance = grenadeRadius + particle.Radius + 0.45f;
+                    var delta = position - particle.Position;
+                    var distanceSquared = delta.LengthSquared();
+                    if (distanceSquared >= minimumDistance * minimumDistance) continue;
+                    var distance = MathF.Sqrt(MathF.Max(0.0001f, distanceSquared));
+                    var normal = distanceSquared < 0.0001f
+                        ? escapeNormal
+                        : delta / distance;
+                    if (normal.LengthSquared() < 0.001f) normal = -Vector2.UnitY;
+                    position += normal * (minimumDistance - distance);
+                    escapeNormal += normal;
+                    moved = true;
+                }
+            }
+            if (!moved) break;
+        }
+
+        if (escapeNormal.LengthSquared() < 0.001f) escapeNormal = -Vector2.UnitY;
+        else escapeNormal = Vector2.Normalize(escapeNormal);
+    }
+
+    private static void EnsureGrenadeEscapeVelocity(
+        ref Vector2 velocity,
+        Vector2 contactNormal,
+        float minimumNormalSpeed)
+    {
+        if (contactNormal.LengthSquared() < 0.001f) return;
+        contactNormal = Vector2.Normalize(contactNormal);
+        var outwardSpeed = Vector2.Dot(velocity, contactNormal);
+        if (outwardSpeed < minimumNormalSpeed)
+            velocity += contactNormal * (minimumNormalSpeed - outwardSpeed);
+
+        // Preserve a little lateral travel even in a tight pocket. This keeps a
+        // low-speed grenade moving across the surface until its short fuse ends
+        // instead of balancing on one contact point.
+        var tangent = new Vector2(-contactNormal.Y, contactNormal.X);
+        var tangentSpeed = Vector2.Dot(velocity, tangent);
+        if (MathF.Abs(tangentSpeed) < 38f)
+        {
+            var sign = velocity.X < 0f ? -1f : 1f;
+            velocity += tangent * (sign * 38f - tangentSpeed);
+        }
     }
 
     private static bool TrySweptCircleHit(

@@ -276,7 +276,7 @@ public sealed class GameWindow : Form
         _settingsPanel = CreateMenuPanel("SETTINGS");
         _settingsPanel.Size = new Size(500, 430);
         _settingsFullscreen = CreateMenuCheckBox("Fullscreen", 78);
-        _settingsDebug = CreateMenuCheckBox("Debug metrics", 118);
+        _settingsDebug = CreateMenuCheckBox("Debug overlay", 118);
         _settingsGravity = CreateMenuCheckBox("Gravity simulation", 158);
         var settingsBackButton = CreateMenuButton("BACK", 378);
         settingsBackButton.Left = 134;
@@ -1076,6 +1076,12 @@ public sealed class GameWindow : Form
                     ConfirmArsenalSelection();
                 }
             }
+            _surface.Focus();
+            return;
+        }
+        if (e.Button == MouseButtons.Left &&
+            _renderer.TryHandleDebugOverlayClick(_input.MousePosition))
+        {
             _surface.Focus();
             return;
         }

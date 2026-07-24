@@ -19,6 +19,7 @@ public static class SelfTests
             ("standard archetype spawns consistently", StandardArchetypeSpawnsConsistently),
             ("processing units use the compact physical scale", ProcessingUnitUsesCompactScale),
             ("fixed viewport fits and maps the whole world", FixedViewportFitsAndMapsWorld),
+            ("debug overlay layers toggle independently", DebugOverlayLayersToggleIndependently),
             ("factory tiles follow structural topology", FactoryTilesFollowStructure),
             ("holding chamber contains releases and feeds one at a time", HoldingChamberFeedsOneAtATime),
             ("lever holds the hatch and pixel lighting stays cached", LeverAndLightingAreDeterministic),
@@ -218,6 +219,39 @@ public static class SelfTests
         }
         Assert(ViewportLayout.Fit(new Size(1920, 1080), logical) == new Rectangle(0, 0, 1920, 1080),
             "16:9 fullscreen did not fill the display");
+    }
+
+    private static void DebugOverlayLayersToggleIndependently()
+    {
+        var renderer = new GameRenderer { DebugDraw = true };
+        Assert(renderer.DebugShowFps &&
+               renderer.DebugShowBlobPoints &&
+               !renderer.DebugShowBonds &&
+               renderer.DebugShowToolColliders &&
+               !renderer.DebugShowMetrics,
+            "debug overlay did not start in the lightweight inspection layout");
+
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(227f, 93f)) &&
+               !renderer.DebugShowBlobPoints &&
+               renderer.DebugShowToolColliders,
+            "BLOBS toggle also hid the independent tool colliders");
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(428f, 93f)) &&
+               renderer.DebugShowMetrics,
+            "METRICS toggle did not expose the detailed diagnostic text");
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(105f, 93f)) &&
+               !renderer.DebugShowFps &&
+               !renderer.DebugShowBlobPoints &&
+               !renderer.DebugShowBonds &&
+               !renderer.DebugShowToolColliders &&
+               !renderer.DebugShowMetrics,
+            "ALL- did not disable every optional debug layer");
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(47f, 93f)) &&
+               renderer.DebugShowFps &&
+               renderer.DebugShowBlobPoints &&
+               renderer.DebugShowBonds &&
+               renderer.DebugShowToolColliders &&
+               renderer.DebugShowMetrics,
+            "ALL+ did not restore every optional debug layer");
     }
 
     private static void FactoryTilesFollowStructure()
@@ -6730,6 +6764,59 @@ public static class SelfTests
                 Vector2.Distance(point.Position, previewBlocker.Center) <=
                 previewBlocker.Radius + previewBlocker.ParticleSpacing * 2f),
             "grenade trajectory ignored the blob collider that the live throw would hit");
+        Assert(blobPreviewGrenade.GrenadeTrajectory[^1] is
+               { BodyContact: true, Final: true } &&
+               blobPreviewGrenade.GrenadeTrajectory.Count(point => point.BodyContact) == 1,
+            "grenade trajectory kept predicting an erratic path after its first blob contact");
+
+        blobPreviewGrenade.EndPrimaryAction();
+        blobPreviewGrenade.Step(
+            Dt,
+            Vector2.Zero,
+            Array.Empty<ConveyorBelt>(),
+            new[] { previewBlocker },
+            1280f,
+            720f);
+        Vector2? previousGrenadePosition = null;
+        var maximumStationarySteps = 0;
+        var stationarySteps = 0;
+        var grenadeOverlappedTissue = false;
+        for (var step = 0; step < 100; step++)
+        {
+            blobPreviewGrenade.Step(
+                Dt,
+                Vector2.Zero,
+                Array.Empty<ConveyorBelt>(),
+                new[] { previewBlocker },
+                1280f,
+                720f);
+            var liveGrenade = blobPreviewGrenade.ArsenalProjectiles.FirstOrDefault(projectile =>
+                projectile.Kind == ArsenalProjectileKind.Grenade);
+            if (liveGrenade.Kind != ArsenalProjectileKind.Grenade) continue;
+            if (previousGrenadePosition is { } previousGrenade)
+            {
+                stationarySteps = Vector2.DistanceSquared(previousGrenade, liveGrenade.Position) < 0.16f
+                    ? stationarySteps + 1
+                    : 0;
+                maximumStationarySteps = Math.Max(maximumStationarySteps, stationarySteps);
+            }
+            previousGrenadePosition = liveGrenade.Position;
+            for (var particleIndex = 0;
+                 particleIndex < previewBlocker.Particles.Length;
+                 particleIndex++)
+            {
+                if (!previewBlocker.IsPhysicalParticle(particleIndex)) continue;
+                var particle = previewBlocker.Particles[particleIndex];
+                var minimumDistance =
+                    PhysicalKnife.ProjectileRadius(ArsenalProjectileKind.Grenade) +
+                    particle.Radius - 0.3f;
+                grenadeOverlappedTissue |=
+                    Vector2.DistanceSquared(liveGrenade.Position, particle.Position) <
+                    minimumDistance * minimumDistance;
+            }
+        }
+        Assert(!grenadeOverlappedTissue && maximumStationarySteps < 3,
+            "live grenade embedded in or stopped moving against blob particles");
         grenade.EndPrimaryAction();
         grenade.Step(Dt, new Vector2(0f, 980f), new[] { grenadeBelt },
             new[] { grenadeTarget }, 1280f, 720f, grid: grenadeGrid);
@@ -6972,6 +7059,26 @@ public static class SelfTests
             "flamethrower projectile expired in open air before reaching a surface");
 
         var freeze = Equipped(17);
+        var supportedFreeze = BlobArchetype.ProcessingUnit.Create(new Vector2(640f, 380f));
+        var supportedCenterBefore = supportedFreeze.Center;
+        for (var particleIndex = 0;
+             particleIndex < supportedFreeze.Particles.Length;
+             particleIndex++)
+        {
+            if (!supportedFreeze.IsPhysicalParticle(particleIndex)) continue;
+            ref var particle = ref supportedFreeze.Particles[particleIndex];
+            if (particle.Position.Y < supportedCenterBefore.Y +
+                supportedFreeze.Radius * 0.30f)
+                continue;
+            particle.Contacting = true;
+            particle.ContactMemory = 6;
+            particle.PreviousPosition = particle.Position - new Vector2(0f, 4f);
+        }
+        supportedFreeze.SetFrozen(true, 8f);
+        Assert(supportedFreeze.Center.Y <= supportedCenterBefore.Y - 7.5f &&
+               supportedFreeze.AverageVelocity(Dt).Length() < 0.1f,
+            "grounded freeze expansion bounced instead of quietly shifting above its new ice edge");
+
         var frozenTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
         Click(freeze, new[] { frozenTarget }, 48, Vector2.Zero);
         Assert(freeze.FrozenBlobs.Count == 1,
@@ -6988,6 +7095,9 @@ public static class SelfTests
             frozenTarget.AdvanceFaceAnimation(Dt);
         Assert(frozenTarget.FaceExpression == BlobFaceExpression.Neutral,
             "frozen blob continued blinking or playing hurt-face motion");
+        for (var step = 0; step < 70; step++)
+            freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { frozenTarget }, 1280f, 720f);
         var frozenDamageBefore = frozenTarget.BrokenLinkCount;
         frozenTarget.LastTerrainImpact = 500f;
         freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
@@ -7012,6 +7122,14 @@ public static class SelfTests
                frozenChildren.All(child => freeze.FrozenBlobs.Any(state =>
                    ReferenceEquals(state.Body, child) && state.Generation >= 1)),
             "ice state did not propagate to the chunks produced by a frozen shatter");
+        foreach (var frozenChild in frozenChildren)
+        {
+            frozenChild.LastTerrainImpact = 0f;
+            frozenChild.LastImpact = 0f;
+        }
+        for (var step = 0; step < 70; step++)
+            freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                frozenChildren, 1280f, 720f);
         var terminalFrozen = frozenChildren[0];
         terminalFrozen.LastTerrainImpact = 500f;
         var frozenGore = new GranularMaterialSystem();
