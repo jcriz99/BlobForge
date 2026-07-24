@@ -35,6 +35,7 @@ public sealed class BlobWorld
     public PhysicalKnife? Knife { get; set; }
     public DestructibleGrid Grid { get; }
     public Vector2 Gravity { get; set; } = new(0f, 980f);
+    public bool EnableBlobPersonalities { get; set; }
     public double LastSimulationMs { get; private set; }
     public double LastBodyPhysicsMs { get; private set; }
     public double LastGranularSimulationMs { get; private set; }
@@ -182,6 +183,17 @@ public sealed class BlobWorld
         foreach (var body in Bodies) body.ApplyResidualPressureDamping(dt);
         foreach (var body in Bodies) body.ApplyRestingViscosity(dt);
         foreach (var body in Bodies) body.ApplyDamagedShapeRecovery(dt);
+        if (EnableBlobPersonalities) foreach (var body in Bodies)
+        {
+            if (TubeFeed?.Contains(body) == true) continue;
+            var personalityAllowed =
+                ProcessingLine?.Powered != false &&
+                ProcessingLine?.IsLocked(body) != true &&
+                ProcessingLine?.HasEnteredBayOne(body) != true &&
+                ProcessingLine?.IsContinuousPortalTransit(body) != true &&
+                (HoldingChamber is null || !HoldingChamber.IsInFeedEnvelope(body));
+            body.TryApplyPersonalityHop(dt, inTube: false, allowed: personalityAllowed);
+        }
         foreach (var body in Bodies) body.UpdateSleep(dt);
         ProcessTopology(TopologyBodiesPerStep, dt);
         RegisterPendingWounds(dt);

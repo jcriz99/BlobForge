@@ -759,7 +759,10 @@ public sealed class GameWindow : Form
         var cellSize = 32;
         var grid = new DestructibleGrid(WorldWidth / cellSize, WorldHeight / cellSize, cellSize);
         grid.BuildProcessingStation();
-        _world = new BlobWorld(grid);
+        _world = new BlobWorld(grid)
+        {
+            EnableBlobPersonalities = true
+        };
         _world.Lighting.ConfigureProcessingStation();
         _world.Lighting.SetFactoryPower(false);
         _world.HoldingChamber = null;
@@ -769,7 +772,10 @@ public sealed class GameWindow : Form
             powered: false,
             breakerPosition: _fixtureLayout.BreakerBoxPosition,
             continuousFlow: true);
-        _world.TubeFeed = new OverheadTubeFeed(_world.ProcessingLine.DeckY);
+        _world.TubeFeed = new OverheadTubeFeed(_world.ProcessingLine.DeckY)
+        {
+            EnableBlobPersonalities = true
+        };
         grid.OpenContinuousConveyorPortals();
         _world.Knife = new PhysicalKnife(_world.ProcessingLine.ContinuousToolRackCenter);
         _world.ProcessingLine.SetBreakerPosition(

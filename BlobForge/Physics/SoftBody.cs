@@ -65,6 +65,8 @@ public sealed class SoftBody
     private float _hurtRemaining;
     private float _hitFlashRemaining;
     private uint _blinkSequence;
+    private uint _personalitySequence;
+    private float _personalityHopTimer;
     private bool _pendingExplosionFragmentMotion;
     private Vector2 _pendingExplosionCenter;
     private float _pendingExplosionMinimumSpeed;
@@ -82,6 +84,7 @@ public sealed class SoftBody
         Id = Interlocked.Increment(ref _nextId);
         ParentId = Id;
         InitializeFaceAnimation();
+        InitializePersonality();
         Radius = radius;
 
         var target = Math.Max(7, targetParticleCount);
@@ -159,6 +162,7 @@ public sealed class SoftBody
         Id = Interlocked.Increment(ref _nextId);
         ParentId = parentId;
         InitializeFaceAnimation();
+        InitializePersonality();
         Particles = particles;
         Constraints = constraints;
         AreaConstraints = areaConstraints;
@@ -221,6 +225,13 @@ public sealed class SoftBody
     public bool IsCrumbling { get; private set; }
     public bool IsFrozen { get; private set; }
     public float FrozenCollisionPadding => _frozenCollisionPadding;
+    public bool PersonalityCanHop { get; private set; }
+    public float PersonalityJumpiness { get; private set; }
+    public float PersonalityHopSpeed { get; private set; }
+    public float NextPersonalityHopSeconds => _personalityHopTimer;
+    public int PersonalityHopCount { get; private set; }
+    public float LastPersonalityHopSpeed { get; private set; }
+    public bool LastPersonalityHopWasInTube { get; private set; }
     public bool HasLocalDamage => BrokenLinkCount > 0 || _hasDamageMask;
     public bool IsPickable => !IsDetachedDebris && Mode != SimulationMode.LooseFragment && Particles.Length >= 7;
     public int ActiveParticleCount => _activeParticleCount;
@@ -264,6 +275,84 @@ public sealed class SoftBody
     {
         _blinkSequence = unchecked((uint)(ParentId * 747796405) ^ (uint)(Id * 2891336453L));
         _nextBlinkTime = 1.4f + NextFaceSample() * 3.1f;
+    }
+
+    private void InitializePersonality()
+    {
+        _personalitySequence = MixPersonalitySeed(
+            unchecked((uint)ParentId * 0x9E3779B9u) ^ 0xA511E9B3u);
+        // A meaningful quiet population keeps hopping readable as personality
+        // instead of turning the entire conveyor into a synchronized trampoline.
+        PersonalityCanHop = NextPersonalitySample() < 0.58f;
+        if (!PersonalityCanHop)
+        {
+            PersonalityJumpiness = 0f;
+            PersonalityHopSpeed = 0f;
+            _personalityHopTimer = float.PositiveInfinity;
+            return;
+        }
+
+        PersonalityJumpiness = 0.24f + NextPersonalitySample() * 0.76f;
+        PersonalityHopSpeed = 190f + NextPersonalitySample() * 95f;
+        _personalityHopTimer = 0.75f + NextPersonalitySample() * 4.25f;
+    }
+
+    internal bool TryApplyPersonalityHop(float dt, bool inTube, bool allowed = true)
+    {
+        if (dt <= 0f || !allowed || !PersonalityCanHop ||
+            IsDetachedDebris || IsCrumbling || IsGrabbed || IsFrozen ||
+            PhysicalParticleCount < 7)
+            return false;
+
+        _personalityHopTimer -= dt * (inTube ? 1.16f : 1f);
+        if (_personalityHopTimer > 0f) return false;
+
+        if (!inTube)
+        {
+            var supportedParticles = 0;
+            for (var index = 0; index < Particles.Length; index++)
+            {
+                if (IsPhysicalParticle(index) && Particles[index].Supported)
+                    supportedParticles++;
+            }
+            if (supportedParticles < 2) return false;
+        }
+
+        var eventVariation = 0.78f + NextPersonalitySample() * 0.44f;
+        var hopSpeed = PersonalityHopSpeed * eventVariation * (inTube ? 0.42f : 1f);
+        var horizontal = (NextPersonalitySample() * 2f - 1f) *
+                         (inTube ? 18f : 26f);
+        AddImpulse(new Vector2(horizontal, -hopSpeed), dt);
+        PersonalityHopCount++;
+        LastPersonalityHopSpeed = hopSpeed;
+        LastPersonalityHopWasInTube = inTube;
+
+        var intervalSample = NextPersonalitySample();
+        var minimumInterval = inTube ? 1.65f : 3.4f;
+        var maximumInterval = inTube ? 5.2f : 9.2f;
+        var personalityScale = 1.12f - PersonalityJumpiness * 0.38f;
+        _personalityHopTimer =
+            (minimumInterval + (maximumInterval - minimumInterval) * intervalSample) *
+            personalityScale;
+        return true;
+    }
+
+    private float NextPersonalitySample()
+    {
+        _personalitySequence ^= _personalitySequence << 13;
+        _personalitySequence ^= _personalitySequence >> 17;
+        _personalitySequence ^= _personalitySequence << 5;
+        return (_personalitySequence & 0x00FFFFFFu) / 16777216f;
+    }
+
+    private static uint MixPersonalitySeed(uint seed)
+    {
+        seed ^= seed >> 16;
+        seed *= 0x7FEB352Du;
+        seed ^= seed >> 15;
+        seed *= 0x846CA68Bu;
+        seed ^= seed >> 16;
+        return seed == 0u ? 0x6D2B79F5u : seed;
     }
 
     internal void AdvanceFaceAnimation(float dt)
@@ -1122,7 +1211,12 @@ public sealed class SoftBody
                 _blinkRemaining = _blinkRemaining,
                 _hurtRemaining = _hurtRemaining,
                 _hitFlashRemaining = _hitFlashRemaining,
-                _blinkSequence = _blinkSequence
+                _blinkSequence = _blinkSequence,
+                _personalitySequence = _personalitySequence,
+                _personalityHopTimer = _personalityHopTimer,
+                PersonalityHopCount = PersonalityHopCount,
+                LastPersonalityHopSpeed = LastPersonalityHopSpeed,
+                LastPersonalityHopWasInTube = LastPersonalityHopWasInTube
             };
             foreach (var stain in _bloodStains)
             {

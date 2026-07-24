@@ -131,7 +131,8 @@ public static class SelfTests
             ("active blood trails survive stain-layer churn", ActiveBloodTrailsSurviveStainChurn),
             ("old saturated blood zones can renew runoff", SaturatedBloodZoneRenewsRunoff),
             ("settled blood pools keep staining a saturated floor", SettledBloodPoolKeepsStaining),
-            ("mass damage remains event-budgeted", MassDamageRemainsBudgeted)
+            ("mass damage remains event-budgeted", MassDamageRemainsBudgeted),
+            ("blob personalities produce varied occasional hops", BlobPersonalitiesProduceVariedHops)
         };
 
         var failed = 0;
@@ -2062,7 +2063,12 @@ public static class SelfTests
         var flowWorld = new BlobWorld(flowGrid)
         {
             ProcessingLine = flowLine,
-            TubeFeed = new OverheadTubeFeed(flowLine.DeckY) { MaximumBodiesInFactory = 4 },
+            TubeFeed = new OverheadTubeFeed(flowLine.DeckY)
+            {
+                MaximumBodiesInFactory = 4,
+                EnableBlobPersonalities = true
+            },
+            EnableBlobPersonalities = true,
             Knife = new PhysicalKnife(flowLine.ContinuousToolRackCenter)
         };
         flowWorld.Conveyors.AddRange(flowLine.Belts);
@@ -2293,6 +2299,7 @@ public static class SelfTests
         var world = new BlobWorld(grid)
         {
             ProcessingLine = line,
+            EnableBlobPersonalities = true,
             Knife = new PhysicalKnife(line.ContinuousToolRackCenter)
         };
         world.Conveyors.AddRange(line.Belts);
@@ -7416,6 +7423,110 @@ public static class SelfTests
             $"integrated end drain left matter jammed instead of feeding the basin " +
             $"({granular.Particles.Count} pixels at {string.Join(", ", granular.Particles.Select(p => p.Position))}, " +
             $"{integratedLine.Basin.StoredVolume:0.00} stored)");
+    }
+
+    private static void BlobPersonalitiesProduceVariedHops()
+    {
+        var population = new List<SoftBody>(48);
+        for (var index = 0; index < 48; index++)
+            population.Add(BlobArchetype.ProcessingUnit.Create(new Vector2(320f, 380f)));
+        var playful = population.Where(body => body.PersonalityCanHop).ToArray();
+        var quiet = population.Where(body => !body.PersonalityCanHop).ToArray();
+        Assert(playful.Length >= 12 && quiet.Length >= 8,
+            $"personality distribution did not retain both playful and quiet blobs " +
+            $"({playful.Length} playful / {quiet.Length} quiet)");
+        Assert(playful.Max(body => body.PersonalityHopSpeed) -
+               playful.Min(body => body.PersonalityHopSpeed) > 55f &&
+               playful.Max(body => body.PersonalityJumpiness) -
+               playful.Min(body => body.PersonalityJumpiness) > 0.45f,
+            "playful blobs did not receive meaningful height and cadence variance");
+
+        var jumper = playful[0];
+        var groundWorld = new BlobWorld(FlatGrid())
+        {
+            EnableBlobPersonalities = true
+        };
+        groundWorld.Bodies.Add(jumper);
+        var launchY = float.NaN;
+        var highestY = float.MaxValue;
+        var stepsAfterLaunch = 0;
+        for (var step = 0; step < 1800; step++)
+        {
+            var hopsBefore = jumper.PersonalityHopCount;
+            groundWorld.Step(Dt);
+            if (jumper.PersonalityHopCount > hopsBefore)
+            {
+                launchY = jumper.Center.Y;
+                highestY = launchY;
+                stepsAfterLaunch = 0;
+            }
+            if (float.IsNaN(launchY)) continue;
+            highestY = MathF.Min(highestY, jumper.Center.Y);
+            stepsAfterLaunch++;
+            if (stepsAfterLaunch >= 120) break;
+        }
+        var rise = launchY - highestY;
+        Assert(jumper.PersonalityHopCount > 0 &&
+               jumper.LastPersonalityHopSpeed >= 145f &&
+               rise >= 7f && rise <= 78f,
+            $"supported personality hop was missing or physically unreasonable " +
+            $"(speed {jumper.LastPersonalityHopSpeed:0.0}, rise {rise:0.0})");
+
+        var quietBody = quiet[0];
+        var quietCenter = quietBody.Center;
+        for (var particleIndex = 0;
+             particleIndex < quietBody.Particles.Length;
+             particleIndex++)
+        {
+            ref var particle = ref quietBody.Particles[particleIndex];
+            if (particle.Position.Y < quietCenter.Y) continue;
+            particle.Supported = true;
+            particle.SupportMemory = 10;
+        }
+        for (var step = 0; step < 1800; step++)
+            Assert(!quietBody.TryApplyPersonalityHop(Dt, inTube: false),
+                "quiet personality unexpectedly generated a hop");
+
+        SoftBody? tubePersonality = null;
+        var tubeFeed = new OverheadTubeFeed
+        {
+            SpawnInterval = 30f,
+            MaximumBodiesInFactory = 1,
+            EnableBlobPersonalities = true
+        };
+        var tubeWorld = new BlobWorld(FlatGrid())
+        {
+            Gravity = Vector2.Zero,
+            TubeFeed = tubeFeed,
+            EnableBlobPersonalities = true
+        };
+        SoftBody CreatePlayfulTubeBody(Vector2 position)
+        {
+            SoftBody candidate;
+            do
+            {
+                candidate = BlobArchetype.ProcessingUnit.Create(position);
+            } while (!candidate.PersonalityCanHop);
+            tubePersonality = candidate;
+            return candidate;
+        }
+
+        for (var step = 0;
+             step < 1000 &&
+             (tubePersonality is null || tubePersonality.PersonalityHopCount == 0);
+             step++)
+        {
+            tubeFeed.Update(tubeWorld.Bodies, Dt, CreatePlayfulTubeBody);
+            tubeWorld.Step(Dt);
+        }
+        Assert(tubePersonality is
+               {
+                   PersonalityHopCount: > 0,
+                   LastPersonalityHopWasInTube: true
+               } &&
+               tubePersonality.LastPersonalityHopSpeed >= 60f &&
+               tubePersonality.LastPersonalityHopSpeed <= 150f,
+            "playful personality did not contribute a bounded air-assisted tube hop");
     }
 
     private static DestructibleGrid FlatGrid()

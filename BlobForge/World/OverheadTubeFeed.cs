@@ -26,6 +26,7 @@ public sealed class OverheadTubeFeed
     public float ConveyorReleaseX => 76f;
     public float SpawnInterval { get; set; } = 2.65f;
     public int MaximumBodiesInFactory { get; set; } = 16;
+    public bool EnableBlobPersonalities { get; set; }
     public int BodiesInTube => _entries.Count;
     public int BodiesInVisibleTube => _entries.Count(entry => entry.Stage == FeedStage.Overhead);
 
@@ -90,7 +91,7 @@ public sealed class OverheadTubeFeed
         return spawned;
     }
 
-    private static void ApplyAirflow(Entry entry, float dt)
+    private void ApplyAirflow(Entry entry, float dt)
     {
         var body = entry.Body;
         var average = body.AverageVelocity(dt);
@@ -119,6 +120,8 @@ public sealed class OverheadTubeFeed
                            (5.4f + MathF.Sin(entry.AirPhase * 0.91f + particleIndex * 0.29f) * 2.2f);
             particle.PreviousPosition -= (new Vector2(0f, unevenGust) + tangent * spinGust) * dt;
         }
+        if (EnableBlobPersonalities)
+            body.TryApplyPersonalityHop(dt, inTube: true);
         body.Wake();
     }
 
