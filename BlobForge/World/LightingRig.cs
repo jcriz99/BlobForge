@@ -22,6 +22,7 @@ public sealed class LightingRig
     public float DirectionalStrength { get; private set; }
     public Color DirectionalColor { get; private set; } = Color.FromArgb(112, 145, 166);
     public bool FactoryPowered { get; private set; } = true;
+    public int PoweredLightCount { get; private set; } = MaximumLights;
     public IReadOnlyList<IndustrialLight> Lights => _lights;
     public int Revision { get; private set; }
     public int DynamicRevision { get; private set; }
@@ -101,6 +102,15 @@ public sealed class LightingRig
 
     public void SetFactoryPower(bool powered)
     {
+        SetPoweredLightCount(powered ? _lights.Count : 0);
+    }
+
+    public void SetPoweredLightCount(int count)
+    {
+        count = Math.Clamp(count, 0, _lights.Count);
+        var powered = count > 0;
+        if (PoweredLightCount == count && FactoryPowered == powered) return;
+        PoweredLightCount = count;
         FactoryPowered = powered;
         if (powered)
         {
@@ -119,6 +129,9 @@ public sealed class LightingRig
         Revision++;
         DynamicRevision++;
     }
+
+    public bool IsLightPowered(int index) =>
+        FactoryPowered && index >= 0 && index < PoweredLightCount;
 
     private void AddPresetLantern(
         float x, float lampY, float range, float halfWidth, float strength, Color color)

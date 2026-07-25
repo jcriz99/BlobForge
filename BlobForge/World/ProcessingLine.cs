@@ -73,6 +73,7 @@ public sealed class ProcessingLine
     private readonly HashSet<int> _cartPassengers = new();
     private readonly HashSet<int> _continuousEntryCandidates = new();
     private readonly HashSet<int> _continuousEnteredParents = new();
+    private readonly HashSet<int> _continuousDamagedProcessedParents = new();
     private readonly List<int> _dispatchedParents = new(4);
     private readonly bool[] _spikeContacts = new bool[5];
     private SoftBody? _lockedBody;
@@ -132,6 +133,7 @@ public sealed class ProcessingLine
     private float _cartX;
     private float _cartDeltaX;
     private bool _powerEngaging;
+    private bool _powerDisengaging;
     private bool _breakerLeverDragging;
     private Vector2 _breakerPosition;
     private readonly Vector2[] _receivingTubSurface;
@@ -204,6 +206,8 @@ public sealed class ProcessingLine
     public float DoorOpenness { get; private set; }
     public bool IsCartLoaded { get; private set; }
     public bool Powered { get; private set; }
+    public bool PoweringUp => _powerEngaging;
+    public bool PoweringDown => _powerDisengaging;
     public bool BreakerSelected { get; set; }
     public float BreakerLever { get; private set; }
     public float PowerPhase { get; private set; }
@@ -447,7 +451,7 @@ public sealed class ProcessingLine
     public bool HitBreaker(Vector2 point) => BreakerBounds.Contains(point.X, point.Y);
 
     public bool HitBreakerLever(Vector2 point)
-        => !Powered && !_powerEngaging &&
+        => !_powerEngaging && !_powerDisengaging &&
            Vector2.DistanceSquared(point, BreakerLeverHandle) <= 17f * 17f;
 
     public void SetBreakerPosition(Vector2 position, float worldWidth, float worldHeight)
@@ -470,13 +474,21 @@ public sealed class ProcessingLine
     /// </summary>
     public bool DragBreakerLever(Vector2 point)
     {
-        if (!_breakerLeverDragging || Powered || _powerEngaging) return false;
+        if (!_breakerLeverDragging || _powerEngaging || _powerDisengaging) return false;
         var top = BreakerTrackTop.Y;
         var bottom = BreakerTrackBottom.Y;
         BreakerLever = Math.Clamp((point.Y - top) / MathF.Max(1f, bottom - top), 0f, 1f);
-        if (BreakerLever < 0.82f) return false;
+        if (!Powered)
+        {
+            if (BreakerLever < 0.82f) return false;
+            _breakerLeverDragging = false;
+            _powerEngaging = true;
+            return true;
+        }
+
+        if (BreakerLever > 0.18f) return false;
         _breakerLeverDragging = false;
-        _powerEngaging = true;
+        _powerDisengaging = true;
         return true;
     }
 
@@ -692,10 +704,20 @@ public sealed class ProcessingLine
 
     private void UpdatePower(float dt)
     {
+        if (_powerDisengaging)
+        {
+            BreakerLever = MoveTowards(BreakerLever, 0f, dt * 1.15f);
+            if (BreakerLever > 0.001f) return;
+            BreakerLever = 0f;
+            _powerDisengaging = false;
+            Powered = false;
+            return;
+        }
+
         if (!_powerEngaging)
         {
-            if (!Powered && !_breakerLeverDragging)
-                BreakerLever = MoveTowards(BreakerLever, 0f, dt * 5.5f);
+            if (!_breakerLeverDragging)
+                BreakerLever = MoveTowards(BreakerLever, Powered ? 1f : 0f, dt * 5.5f);
             if (Powered) PowerPhase = (PowerPhase + dt * 2.5f) % 1f;
             return;
         }
@@ -2381,9 +2403,16 @@ public sealed class ProcessingLine
                          _continuousEntryCandidates.Remove(body.ParentId) &&
                          _continuousEnteredParents.Add(body.ParentId))
                 {
-                    ProcessedCount++;
+                    // Eligibility begins at the left doorway, but payout credit is
+                    // withheld until this lineage sustains real material damage.
                 }
             }
+
+            if (!body.IsDetachedDebris &&
+                _continuousEnteredParents.Contains(body.ParentId) &&
+                body.HasLocalDamage &&
+                _continuousDamagedProcessedParents.Add(body.ParentId))
+                ProcessedCount++;
 
             if (center.X <= 1328f && center.Y <= 760f) continue;
             if (!_dispatchedParents.Contains(body.ParentId)) _dispatchedParents.Add(body.ParentId);

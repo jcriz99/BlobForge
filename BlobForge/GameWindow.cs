@@ -30,6 +30,7 @@ public sealed class GameWindow : Form
     private readonly GameRenderer _renderer = new();
     private readonly SoundEffectMixer _audio = new();
     private readonly FixtureLayoutSettings _fixtureLayout = FixtureLayoutSettings.Load();
+    private readonly GameProgression _progression = GameProgression.Load();
     private readonly GameSurface _surface;
     private readonly Button _spawnButton;
     private readonly Button _conveyorButton;
@@ -40,6 +41,17 @@ public sealed class GameWindow : Form
     private readonly CheckBox _settingsFullscreen;
     private readonly CheckBox _settingsDebug;
     private readonly CheckBox _settingsGravity;
+    private readonly Button _settingsVolumeUnit;
+    private readonly Panel _dayResultsPanel;
+    private readonly Panel _betweenDaysPanel;
+    private Label _dayResultsTitle = null!;
+    private Label _dayResultsBlood = null!;
+    private Label _dayResultsProcessed = null!;
+    private Label _dayResultsTotal = null!;
+    private Label _shopCurrency = null!;
+    private FlowLayoutPanel _shopContent = null!;
+    private Button _shopUpgradesTab = null!;
+    private Button _shopWeaponsTab = null!;
     private readonly Bitmap _frameBuffer;
     private readonly Graphics _frameGraphics;
     private BlobWorld _world = null!;
@@ -92,8 +104,12 @@ public sealed class GameWindow : Form
     private IndustrialLight? _selectedLight;
     private LightEditHandle _lightEditHandle;
     private Vector2 _lightEditLast;
-    private bool _observedFactoryPower;
     private float _factoryStartupDelay = -1f;
+    private DayCyclePhase _dayPhase;
+    private float _dayPhaseTimer;
+    private int _lightingSequenceStage;
+    private bool _shopShowingWeapons;
+    private DayPayout _lastDayPayout;
     private FixtureDragTarget _fixtureDragTarget;
     private Vector2 _fixtureDragOffset;
     private Vector2 _fixtureDragStart;
@@ -274,11 +290,14 @@ public sealed class GameWindow : Form
         Controls.Add(_pausePanel);
 
         _settingsPanel = CreateMenuPanel("SETTINGS");
-        _settingsPanel.Size = new Size(500, 430);
+        _settingsPanel.Size = new Size(500, 500);
         _settingsFullscreen = CreateMenuCheckBox("Fullscreen", 78);
         _settingsDebug = CreateMenuCheckBox("Debug overlay", 118);
         _settingsGravity = CreateMenuCheckBox("Gravity simulation", 158);
-        var settingsBackButton = CreateMenuButton("BACK", 378);
+        _settingsVolumeUnit = CreateMenuButton(string.Empty, 198);
+        _settingsVolumeUnit.Bounds = new Rectangle(58, 198, 384, 34);
+        UpdateVolumeUnitButton();
+        var settingsBackButton = CreateMenuButton("BACK", 448);
         settingsBackButton.Left = 134;
         _settingsFullscreen.CheckedChanged += (_, _) =>
         {
@@ -291,12 +310,25 @@ public sealed class GameWindow : Form
             if (_world is not null)
                 foreach (var body in _world.Bodies) body.Wake();
         };
+        _settingsVolumeUnit.Click += (_, _) =>
+        {
+            _progression.ToggleVolumeUnit();
+            _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
+            UpdateVolumeUnitButton();
+            _surface.Invalidate();
+        };
         settingsBackButton.Click += (_, _) => ShowPauseMenu();
         settingsButton.Click += (_, _) => ShowSettingsMenu();
         var audioPanel = CreateAudioSettingsPanel();
         _settingsPanel.Controls.AddRange([
-            _settingsFullscreen, _settingsDebug, _settingsGravity, audioPanel, settingsBackButton]);
+            _settingsFullscreen, _settingsDebug, _settingsGravity, _settingsVolumeUnit,
+            audioPanel, settingsBackButton]);
         Controls.Add(_settingsPanel);
+
+        _dayResultsPanel = CreateDayResultsPanel();
+        Controls.Add(_dayResultsPanel);
+        _betweenDaysPanel = CreateBetweenDaysPanel();
+        Controls.Add(_betweenDaysPanel);
 
         KeyDown += OnKeyDown;
         KeyUp += OnKeyUp;
@@ -315,6 +347,7 @@ public sealed class GameWindow : Form
         FormClosed += (_, _) =>
         {
             SaveFixtureLayout();
+            _progression.Save();
             _audio.Dispose();
             _frameGraphics.Dispose();
             _frameBuffer.Dispose();
@@ -325,6 +358,7 @@ public sealed class GameWindow : Form
             }
         };
         ResetScene();
+        _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
         _settingsGravity.Checked = true;
         LayoutOverlays();
         Shown += (_, _) =>
@@ -550,7 +584,7 @@ public sealed class GameWindow : Form
     {
         var panel = new Panel
         {
-            Bounds = new Rectangle(36, 198, 428, 156),
+            Bounds = new Rectangle(36, 248, 428, 156),
             BackColor = Color.FromArgb(15, 21, 27),
             BorderStyle = BorderStyle.FixedSingle
         };
@@ -604,6 +638,215 @@ public sealed class GameWindow : Form
         TabStop = false
     };
 
+    private void UpdateVolumeUnitButton()
+    {
+        if (_settingsVolumeUnit is null) return;
+        _settingsVolumeUnit.Text = _progression.VolumeUnit == BasinVolumeUnit.Gallons
+            ? "BASIN VOLUME  •  GALLONS   [CHANGE]"
+            : "BASIN VOLUME  •  LITERS   [CHANGE]";
+    }
+
+    private Panel CreateDayResultsPanel()
+    {
+        var panel = CreateFullScreenProgressionPanel();
+        _dayResultsTitle = CreateProgressionLabel(
+            string.Empty, new Rectangle(120, 68, 1040, 64), 26f, Color.FromArgb(101, 230, 223));
+        _dayResultsBlood = CreateProgressionLabel(
+            string.Empty, new Rectangle(250, 180, 780, 92), 15f, Color.FromArgb(225, 233, 239));
+        _dayResultsProcessed = CreateProgressionLabel(
+            string.Empty, new Rectangle(250, 282, 780, 72), 15f, Color.FromArgb(225, 233, 239));
+        _dayResultsTotal = CreateProgressionLabel(
+            string.Empty, new Rectangle(250, 390, 780, 96), 19f, Color.FromArgb(240, 195, 75));
+        var ok = CreateProgressionButton("OK  •  CONTINUE TO SHOP", new Rectangle(470, 548, 340, 48));
+        ok.Click += (_, _) => ShowBetweenDaysShop();
+        panel.Controls.AddRange([
+            _dayResultsTitle, _dayResultsBlood, _dayResultsProcessed, _dayResultsTotal, ok]);
+        return panel;
+    }
+
+    private Panel CreateBetweenDaysPanel()
+    {
+        var panel = CreateFullScreenProgressionPanel();
+        var title = CreateProgressionLabel(
+            "BLOBFORGE PROCUREMENT", new Rectangle(54, 28, 620, 56), 22f,
+            Color.FromArgb(101, 230, 223), ContentAlignment.MiddleLeft);
+        _shopCurrency = CreateProgressionLabel(
+            string.Empty, new Rectangle(760, 32, 460, 48), 16f,
+            Color.FromArgb(240, 195, 75), ContentAlignment.MiddleRight);
+        _shopUpgradesTab = CreateProgressionButton(
+            "WEAPON UPGRADES", new Rectangle(54, 96, 210, 42));
+        _shopWeaponsTab = CreateProgressionButton(
+            "WEAPON LIST", new Rectangle(274, 96, 210, 42));
+        _shopContent = new FlowLayoutPanel
+        {
+            Bounds = new Rectangle(54, 150, 1172, 482),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            BackColor = Color.FromArgb(11, 17, 22),
+            Padding = new Padding(12)
+        };
+        var nextDay = CreateProgressionButton(
+            "CONTINUE TO NEXT DAY", new Rectangle(934, 650, 292, 44));
+        nextDay.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+        _shopUpgradesTab.Click += (_, _) =>
+        {
+            _shopShowingWeapons = false;
+            RefreshShopContent();
+        };
+        _shopWeaponsTab.Click += (_, _) =>
+        {
+            _shopShowingWeapons = true;
+            RefreshShopContent();
+        };
+        nextDay.Click += (_, _) => ContinueToNextDay();
+        panel.Controls.AddRange([
+            title, _shopCurrency, _shopUpgradesTab, _shopWeaponsTab, _shopContent, nextDay]);
+        return panel;
+    }
+
+    private static Panel CreateFullScreenProgressionPanel() => new()
+    {
+        Size = new Size(WorldWidth, WorldHeight),
+        Dock = DockStyle.Fill,
+        BackColor = Color.FromArgb(8, 13, 17),
+        Visible = false
+    };
+
+    private static Label CreateProgressionLabel(
+        string text,
+        Rectangle bounds,
+        float size,
+        Color color,
+        ContentAlignment alignment = ContentAlignment.MiddleCenter) => new()
+    {
+        Text = text,
+        Bounds = bounds,
+        Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        ForeColor = color,
+        BackColor = Color.Transparent,
+        Font = new Font("Consolas", size, FontStyle.Bold),
+        TextAlign = alignment
+    };
+
+    private static Button CreateProgressionButton(string text, Rectangle bounds)
+    {
+        var button = new Button
+        {
+            Text = text,
+            Bounds = bounds,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(43, 57, 66),
+            ForeColor = Color.FromArgb(232, 239, 244),
+            Font = new Font("Consolas", 10f, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            TabStop = false
+        };
+        button.FlatAppearance.BorderColor = Color.FromArgb(101, 230, 223);
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(54, 76, 82);
+        return button;
+    }
+
+    private void RefreshShopContent()
+    {
+        while (_shopContent.Controls.Count > 0)
+        {
+            var control = _shopContent.Controls[0];
+            _shopContent.Controls.RemoveAt(0);
+            control.Dispose();
+        }
+        _shopCurrency.Text = $"AVAILABLE FUNDS  {_progression.Currency:C2}";
+        SetTabAppearance(_shopUpgradesTab, !_shopShowingWeapons);
+        SetTabAppearance(_shopWeaponsTab, _shopShowingWeapons);
+
+        if (_shopShowingWeapons)
+        {
+            foreach (var item in GameProgression.WeaponCatalog)
+                _shopContent.Controls.Add(CreateWeaponShopRow(item));
+            return;
+        }
+
+        foreach (var item in GameProgression.WeaponCatalog)
+        {
+            if (!_progression.IsWeaponUnlocked(item.Code)) continue;
+            _shopContent.Controls.Add(CreateUpgradeShopRow(item));
+        }
+    }
+
+    private Control CreateWeaponShopRow(WeaponCatalogEntry item)
+    {
+        var row = CreateShopRow();
+        var unlocked = _progression.IsWeaponUnlocked(item.Code);
+        var label = CreateProgressionLabel(
+            item.Name,
+            new Rectangle(18, 7, 410, 45),
+            13f,
+            unlocked ? Color.FromArgb(101, 230, 223) : Color.FromArgb(225, 233, 239),
+            ContentAlignment.MiddleLeft);
+        label.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        var status = CreateProgressionLabel(
+            unlocked ? "UNLOCKED" : item.Cost.ToString("C0"),
+            new Rectangle(530, 7, 220, 45),
+            11f,
+            unlocked ? Color.FromArgb(101, 230, 223) : Color.FromArgb(240, 195, 75));
+        status.Anchor = AnchorStyles.Top;
+        row.Controls.Add(label);
+        row.Controls.Add(status);
+        if (!unlocked)
+        {
+            var buy = CreateProgressionButton("UNLOCK", new Rectangle(890, 12, 160, 36));
+            buy.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            buy.Enabled = _progression.Currency >= item.Cost;
+            buy.Click += (_, _) =>
+            {
+                if (_progression.TryUnlockWeapon(item.Code)) RefreshShopContent();
+            };
+            row.Controls.Add(buy);
+        }
+        return row;
+    }
+
+    private Control CreateUpgradeShopRow(WeaponCatalogEntry item)
+    {
+        var row = CreateShopRow();
+        var label = CreateProgressionLabel(
+            item.Name,
+            new Rectangle(18, 7, 410, 45),
+            13f,
+            Color.FromArgb(101, 230, 223),
+            ContentAlignment.MiddleLeft);
+        label.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        var status = CreateProgressionLabel(
+            "UPGRADE SOCKETS AWAITING WEAPON-SPECIFIC DESIGNS",
+            new Rectangle(440, 7, 620, 45),
+            9.5f,
+            Color.FromArgb(158, 174, 181),
+            ContentAlignment.MiddleRight);
+        status.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        row.Controls.AddRange([label, status]);
+        return row;
+    }
+
+    private Panel CreateShopRow() => new()
+    {
+        Width = Math.Max(820, _shopContent.ClientSize.Width - 48),
+        Height = 60,
+        Margin = new Padding(2, 2, 2, 7),
+        BackColor = Color.FromArgb(22, 31, 37),
+        BorderStyle = BorderStyle.FixedSingle
+    };
+
+    private static void SetTabAppearance(Button button, bool selected)
+    {
+        button.BackColor = selected
+            ? Color.FromArgb(52, 82, 84)
+            : Color.FromArgb(30, 40, 47);
+        button.ForeColor = selected
+            ? Color.FromArgb(101, 230, 223)
+            : Color.FromArgb(174, 190, 198);
+    }
+
     private Rectangle WorldViewport => ViewportLayout.Fit(_surface.ClientSize, LogicalViewport);
 
     private void LayoutOverlays()
@@ -616,6 +859,8 @@ public sealed class GameWindow : Form
         _lightButton.BringToFront();
         if (_pausePanel.Visible) _pausePanel.BringToFront();
         if (_settingsPanel.Visible) _settingsPanel.BringToFront();
+        if (_dayResultsPanel.Visible) _dayResultsPanel.BringToFront();
+        if (_betweenDaysPanel.Visible) _betweenDaysPanel.BringToFront();
     }
 
     private Point CenterOverlay(Control control) => new(
@@ -640,6 +885,7 @@ public sealed class GameWindow : Form
 
     private void SetPaused(bool paused)
     {
+        if (_dayPhase is DayCyclePhase.Results or DayCyclePhase.Shop) return;
         _paused = paused;
         _accumulator = 0;
         _lastSimulationStepTime = 0d;
@@ -680,7 +926,7 @@ public sealed class GameWindow : Form
         }
         _settingsPanel.Visible = false;
         _pausePanel.Visible = paused;
-        _spawnButton.Visible = !paused;
+        _spawnButton.Visible = !paused && _world.ProcessingLine?.ContinuousFlowMode != true;
         _conveyorButton.Visible = !paused;
         _lightButton.Visible = !paused;
         _fullscreenButton.Visible = !paused;
@@ -797,8 +1043,15 @@ public sealed class GameWindow : Form
         _pendingSlice.Clear();
         _sliceTarget = null;
         _accumulator = 0;
-        _observedFactoryPower = false;
         _factoryStartupDelay = -1f;
+        _dayPhase = DayCyclePhase.AwaitingStart;
+        _dayPhaseTimer = 0f;
+        _lightingSequenceStage = 0;
+        _renderer.CenterAnnouncement = null;
+        _renderer.CenterAnnouncementOpacity = 1f;
+        _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
+        _dayResultsPanel.Visible = false;
+        _betweenDaysPanel.Visible = false;
         _fixtureDragTarget = FixtureDragTarget.None;
         _fixtureDragMoved = false;
         _toolPrimaryHeld = false;
@@ -810,6 +1063,10 @@ public sealed class GameWindow : Form
         _renderer.ArsenalMenuOpen = false;
         _spawnButton.Enabled = false;
         _spawnButton.Visible = false;
+        _conveyorButton.Visible = true;
+        _lightButton.Visible = true;
+        _fullscreenButton.Visible = true;
+        _paused = false;
     }
 
     private async void BeginLoop()
@@ -828,10 +1085,14 @@ public sealed class GameWindow : Form
             var fixedUpdateAllocationStart = GC.GetAllocatedBytesForCurrentThread();
             var stepsThisPump = 0;
 
-            if (!_paused) _accumulator += frame;
+            var simulationSuspended = _paused ||
+                                      _dayPhase is DayCyclePhase.Results or DayCyclePhase.Shop;
+            if (!simulationSuspended) _accumulator += frame;
             else _accumulator = 0;
 
-            while (!_paused && _accumulator >= FixedDt && stepsThisPump < MaxCatchUpStepsPerPump)
+            while (!simulationSuspended &&
+                   _accumulator >= FixedDt &&
+                   stepsThisPump < MaxCatchUpStepsPerPump)
             {
                 var simulationStepTime = _clock.Elapsed.TotalSeconds;
                 if (_lastSimulationStepTime > 0d)
@@ -907,7 +1168,7 @@ public sealed class GameWindow : Form
         if (MathF.Abs(keyboardRotation) > 0.01f)
             _world.Knife?.RotateBaseBy(keyboardRotation * MathF.PI * 0.82f * dt);
         var line = _world.ProcessingLine;
-        if (line?.Powered == true && _observedFactoryPower)
+        if (line?.Powered == true && _dayPhase == DayCyclePhase.Active)
         {
             if (_factoryStartupDelay > 0f)
             {
@@ -927,19 +1188,182 @@ public sealed class GameWindow : Form
         }
         _world.Step(dt);
         if (_grabbed is { IsGrabbed: false }) _grabbed = null;
-        if (line?.Powered == true && !_observedFactoryPower)
-        {
-            _observedFactoryPower = true;
-            _factoryStartupDelay = 0.82f;
-            _world.Lighting.SetFactoryPower(true);
-            _audio.SetLooping(SoundCue.FactoryHum, true);
-            _audio.SetLooping(SoundCue.Conveyor, true);
-            _spawnButton.Enabled = false;
-        }
+        UpdateDayCycle(dt, line);
         var audioStart = Stopwatch.GetTimestamp();
         UpdateMachineAudio();
         _audioUpdateMsThisFrame += Stopwatch.GetElapsedTime(audioStart).TotalMilliseconds;
     }
+
+    private void UpdateDayCycle(float dt, ProcessingLine? line)
+    {
+        if (line is null) return;
+        switch (_dayPhase)
+        {
+            case DayCyclePhase.AwaitingStart:
+                if (!line.Powered) return;
+                _dayPhase = DayCyclePhase.StartingLights;
+                _dayPhaseTimer = 0f;
+                _lightingSequenceStage = 0;
+                _world.Lighting.SetPoweredLightCount(0);
+                return;
+
+            case DayCyclePhase.StartingLights:
+            {
+                if (!line.Powered)
+                {
+                    CompleteDayShutdown(line);
+                    return;
+                }
+                _dayPhaseTimer += dt;
+                var stage = _dayPhaseTimer switch
+                {
+                    >= 0.72f => _world.Lighting.Lights.Count,
+                    >= 0.46f => Math.Min(2, _world.Lighting.Lights.Count),
+                    >= 0.20f => Math.Min(1, _world.Lighting.Lights.Count),
+                    _ => 0
+                };
+                SetLightingSequenceStage(stage);
+                if (_dayPhaseTimer < 0.86f) return;
+                _dayPhase = DayCyclePhase.StartAnnouncement;
+                _dayPhaseTimer = 1.65f;
+                _renderer.CenterAnnouncement = _progression.DayLabel();
+                _renderer.CenterAnnouncementOpacity = 1f;
+                _audio.SetLooping(SoundCue.FactoryHum, true);
+                _audio.SetLooping(SoundCue.Conveyor, true);
+                return;
+            }
+
+            case DayCyclePhase.StartAnnouncement:
+                if (!line.Powered)
+                {
+                    CompleteDayShutdown(line);
+                    return;
+                }
+                _dayPhaseTimer -= dt;
+                _renderer.CenterAnnouncementOpacity =
+                    Math.Clamp(_dayPhaseTimer / 0.35f, 0f, 1f);
+                if (_dayPhaseTimer > 0f) return;
+                _renderer.CenterAnnouncement = null;
+                _renderer.CenterAnnouncementOpacity = 1f;
+                _dayPhase = DayCyclePhase.Active;
+                _factoryStartupDelay = 0.24f;
+                return;
+
+            case DayCyclePhase.Active:
+            {
+                // Pulling the live handle upward extinguishes the authored lamps
+                // right-to-left. Releasing early restores them as the lever returns.
+                var lightCount = _world.Lighting.Lights.Count;
+                var stage = Math.Clamp(
+                    (int)MathF.Ceiling(line.BreakerLever * lightCount - 0.001f),
+                    0,
+                    lightCount);
+                SetLightingSequenceStage(stage);
+                if (!line.Powered)
+                {
+                    CompleteDayShutdown(line);
+                    return;
+                }
+                if (!line.PoweringDown) return;
+                _dayPhase = DayCyclePhase.EndingLights;
+                _dayPhaseTimer = 0f;
+                _renderer.ArsenalMenuOpen = false;
+                return;
+            }
+
+            case DayCyclePhase.EndingLights:
+                _dayPhaseTimer += dt;
+                SetLightingSequenceStage(0);
+                if (line.Powered) return;
+                CompleteDayShutdown(line);
+                return;
+
+            case DayCyclePhase.EndAnnouncement:
+                _dayPhaseTimer -= dt;
+                _renderer.CenterAnnouncementOpacity =
+                    Math.Clamp(_dayPhaseTimer / 0.35f, 0f, 1f);
+                if (_dayPhaseTimer > 0f) return;
+                _renderer.CenterAnnouncement = null;
+                _renderer.CenterAnnouncementOpacity = 1f;
+                ShowDayResults();
+                return;
+        }
+    }
+
+    private void CompleteDayShutdown(ProcessingLine line)
+    {
+        if (_dayPhase == DayCyclePhase.EndAnnouncement) return;
+        _world.Lighting.SetFactoryPower(false);
+        _audio.StopAll();
+        _lastDayPayout = _progression.CompleteDay(line.Basin, line.ProcessedCount);
+        _dayPhase = DayCyclePhase.EndAnnouncement;
+        _dayPhaseTimer = 1.65f;
+        _renderer.CenterAnnouncement = $"{_progression.DayLabel()} END";
+        _renderer.CenterAnnouncementOpacity = 1f;
+        SetFactoryOverlayControlsVisible(false);
+    }
+
+    private void SetLightingSequenceStage(int stage)
+    {
+        stage = Math.Clamp(stage, 0, _world.Lighting.Lights.Count);
+        if (_lightingSequenceStage == stage) return;
+        _lightingSequenceStage = stage;
+        _world.Lighting.SetPoweredLightCount(stage);
+    }
+
+    private void ShowDayResults()
+    {
+        _dayPhase = DayCyclePhase.Results;
+        var payout = _lastDayPayout;
+        _dayResultsTitle.Text = $"{FormatDay(payout.Year, payout.DayOfYear)} COMPLETE";
+        var unitAmount = _progression.VolumeUnit == BasinVolumeUnit.Gallons
+            ? $"{payout.BloodGallons:0.0} gal"
+            : $"{payout.BloodLiters:0.0} L";
+        var rate = _progression.VolumeUnit == BasinVolumeUnit.Gallons
+            ? $"{payout.BloodRatePerGallon:C2} / gal"
+            : $"{payout.BloodRatePerGallon / (decimal)BloodBasin.LitersPerUsGallon:C2} / L";
+        _dayResultsBlood.Text =
+            $"BLOOD SOLD\n{unitAmount}  ×  {rate}  =  {payout.BloodPayout:C2}";
+        _dayResultsProcessed.Text =
+            $"DAMAGED BLOBS PROCESSED\n{payout.ProcessedBlobs}  ×  " +
+            $"{payout.ProcessedRate:C2}  =  {payout.ProcessedPayout:C2}";
+        _dayResultsTotal.Text =
+            $"DAY PAYOUT  {payout.TotalPayout:C2}\nTOTAL FUNDS  {payout.CurrencyAfterSale:C2}";
+        SetFactoryOverlayControlsVisible(false);
+        _dayResultsPanel.Visible = true;
+        _dayResultsPanel.BringToFront();
+    }
+
+    private void ShowBetweenDaysShop()
+    {
+        _dayPhase = DayCyclePhase.Shop;
+        _dayResultsPanel.Visible = false;
+        _betweenDaysPanel.Visible = true;
+        _shopShowingWeapons = false;
+        RefreshShopContent();
+        _betweenDaysPanel.BringToFront();
+    }
+
+    private void ContinueToNextDay()
+    {
+        _progression.AdvanceDay();
+        _betweenDaysPanel.Visible = false;
+        ResetScene();
+        SetFactoryOverlayControlsVisible(true);
+        LayoutOverlays();
+        _surface.Focus();
+    }
+
+    private void SetFactoryOverlayControlsVisible(bool visible)
+    {
+        _spawnButton.Visible = false;
+        _conveyorButton.Visible = visible;
+        _lightButton.Visible = visible;
+        _fullscreenButton.Visible = visible;
+    }
+
+    private static string FormatDay(int year, int day) =>
+        year > 1 ? $"YEAR {year}  •  DAY {day}" : $"DAY {day}";
 
     private void UpdateMachineAudio()
     {
@@ -1099,6 +1523,16 @@ public sealed class GameWindow : Form
                 _surface.Focus();
                 return;
             }
+            if (_world.ProcessingLine is { } breakerLine &&
+                breakerLine.BeginBreakerLeverDrag(_input.MousePosition))
+            {
+                _draggingBreakerLever = true;
+                _grabbed = null;
+                _conveyorEditHandle = ConveyorEditHandle.None;
+                _surface.Cursor = Cursors.Hand;
+                _surface.Focus();
+                return;
+            }
             if (_world.ProcessingLine?.Powered == true &&
                 _world.Knife is { IsDeployed: true, ArsenalVisualVariant: 8 } deployedSling &&
                 deployedSling.CanBeginSlingshotPull(_input.MousePosition))
@@ -1119,16 +1553,6 @@ public sealed class GameWindow : Form
                     return;
                 }
                 _toolPrimaryHeld = _world.Knife.BeginPrimaryAction();
-                _surface.Cursor = Cursors.Hand;
-                _surface.Focus();
-                return;
-            }
-            if (_world.ProcessingLine is { } breakerLine &&
-                breakerLine.BeginBreakerLeverDrag(_input.MousePosition))
-            {
-                _draggingBreakerLever = true;
-                _grabbed = null;
-                _conveyorEditHandle = ConveyorEditHandle.None;
                 _surface.Cursor = Cursors.Hand;
                 _surface.Focus();
                 return;
@@ -1516,6 +1940,18 @@ public sealed class GameWindow : Form
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode == Keys.F4 && e.Alt)
+        {
+            Close();
+            return;
+        }
+        if (_dayPhase is DayCyclePhase.Results or DayCyclePhase.Shop)
+        {
+            if (e.KeyCode == Keys.F11 || e.KeyCode == Keys.Enter && e.Alt)
+                ToggleFullscreen();
+            e.SuppressKeyPress = true;
+            return;
+        }
         if (_renderer.ArsenalMenuOpen && e.KeyCode == Keys.Escape)
         {
             CloseArsenalMenu();
@@ -1904,5 +2340,17 @@ public sealed class GameWindow : Form
         None,
         BlobCounter,
         BreakerBox
+    }
+
+    private enum DayCyclePhase : byte
+    {
+        AwaitingStart,
+        StartingLights,
+        StartAnnouncement,
+        Active,
+        EndingLights,
+        EndAnnouncement,
+        Results,
+        Shop
     }
 }

@@ -7,6 +7,15 @@ namespace BlobForge.World;
 /// </summary>
 public sealed class BloodBasin
 {
+    // The current factory artwork uses 64 logical pixels per meter (one 32 px
+    // wall tile is 0.5 m). The side-view tank is authored as a one-meter-deep
+    // industrial basin. These dimensions turn the conserved 2D fill fraction
+    // into an explicit estimated real-world quantity instead of relabeling
+    // arbitrary simulation area as gallons.
+    public const float WorldUnitsPerMeter = 64f;
+    public const float EstimatedTankDepthMeters = 1f;
+    public const float LitersPerCubicMeter = 1000f;
+    public const float LitersPerUsGallon = 3.7854118f;
     // Retained as the compatibility projection used by diagnostics and the volume gauge.
     public const int ColumnCount = 80;
     public const int FluidGridWidth = 289;
@@ -81,6 +90,14 @@ public sealed class BloodBasin
     public float TotalOverflowed { get; private set; }
     public float FluidCapacity => Width * (Height - 12f);
     public float StoredVolume => Math.Clamp(CurrentFluidVolume + PendingFluidVolume, 0f, FluidCapacity);
+    public float EstimatedCapacityLiters =>
+        Width / WorldUnitsPerMeter *
+        ((Height - 12f) / WorldUnitsPerMeter) *
+        EstimatedTankDepthMeters *
+        LitersPerCubicMeter;
+    public float EstimatedStoredLiters => EstimatedCapacityLiters *
+        Math.Clamp(StoredVolume / MathF.Max(0.001f, FluidCapacity), 0f, 1f);
+    public float EstimatedStoredGallons => EstimatedStoredLiters / LitersPerUsGallon;
     public float SpendableBlood => CurrentFluidVolume;
     public float RemainingCapacity => MathF.Max(0f, FluidCapacity - StoredVolume);
     public bool IsFull => RemainingCapacity <= MathF.Max(0.01f, FluidCapacity * 0.000001f);
@@ -272,6 +289,23 @@ public sealed class BloodBasin
         _availableDrinkVolume = MathF.Min(_availableDrinkVolume, CurrentFluidVolume);
         SynchronizeCellsToVolume(Left + Width * 0.5f);
         return true;
+    }
+
+    public float SellAllStoredBlood()
+    {
+        var sold = StoredVolume;
+        if (sold <= 0f) return 0f;
+        CurrentFluidVolume = 0f;
+        PendingFluidVolume = 0f;
+        TotalSpent += sold;
+        _availableFood = 0f;
+        _availableDrinkVolume = 0f;
+        _suspendedDrops.Clear();
+        _surfaceSplashes.Clear();
+        _surfaceRipples.Clear();
+        _sloshAmplitude = 0f;
+        SynchronizeCellsToVolume(Left + Width * 0.5f);
+        return sold;
     }
 
     public void Step(float dt)

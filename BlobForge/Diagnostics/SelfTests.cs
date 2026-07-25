@@ -24,6 +24,7 @@ public static class SelfTests
             ("holding chamber contains releases and feeds one at a time", HoldingChamberFeedsOneAtATime),
             ("lever holds the hatch and pixel lighting stays cached", LeverAndLightingAreDeterministic),
             ("main breaker requires a downward handle pull", BreakerRequiresDownwardHandlePull),
+            ("powered breaker reverses upward to end the day", BreakerReversesUpwardToPowerOff),
             ("holding chamber receives and releases a full soft body", HoldingChamberReceivesAndReleasesBody),
             ("powered receiving tub replaces the chamber support tower", ReceivingTubReplacesTerrainTower),
             ("released blobs cannot re-enter the holding chamber", ReleasedBlobCannotReenterChamber),
@@ -57,6 +58,7 @@ public static class SelfTests
             ("full basin keeps its physical drain open and spills excess", FullBasinKeepsDrainOpenAndSpillsExcess),
             ("purchased blood worker forms routes and operates real machinery", BloodWorkerAutomatesMachinery),
             ("basin blood uses conserved sleeping cellular fluid", BasinFluidIsCellularAndConserved),
+            ("basin gallons liters and day payout share one calibrated volume", BasinVolumeAndPayoutAreCalibrated),
             ("later machine bays produce progressively richer basin blood", LaterBaysIncreaseBloodYield),
             ("Diego is dormant and basin bubbles wait for 35% fill", DiegoIsDormantAndBubblesWaitForFill),
             ("machine platforms stay narrow between transfer belts", NarrowTablesEjectToNextTransfer),
@@ -192,6 +194,31 @@ public static class SelfTests
         Assert(MathF.Abs(line.BreakerBounds.Left - 360f) < 0.01f &&
                MathF.Abs(line.BreakerBounds.Top - 90f) < 0.01f,
             "breaker housing could no longer be repositioned independently of its handle");
+    }
+
+    private static void BreakerReversesUpwardToPowerOff()
+    {
+        var line = new ProcessingLine(480f, powered: true);
+        var world = new BlobWorld(FlatGrid()) { ProcessingLine = line };
+        Assert(line.BeginBreakerLeverDrag(line.BreakerLeverHandle),
+            "powered breaker handle could not be grabbed");
+        var partial = Vector2.Lerp(line.BreakerTrackTop, line.BreakerTrackBottom, 0.55f);
+        Assert(!line.DragBreakerLever(partial),
+            "partial upward breaker pull ended the day too early");
+        line.EndBreakerLeverDrag();
+        for (var step = 0; step < 30; step++) world.Step(Dt);
+        Assert(line.Powered && line.BreakerLever > 0.98f,
+            "released partial shutdown did not restore the live breaker");
+
+        Assert(line.BeginBreakerLeverDrag(line.BreakerLeverHandle),
+            "live breaker could not begin a full upward pull");
+        Assert(line.DragBreakerLever(line.BreakerTrackTop - new Vector2(0f, 8f)) &&
+               line.PoweringDown,
+            "full upward pull did not begin the shutdown sequence");
+        line.EndBreakerLeverDrag();
+        for (var step = 0; step < 90 && line.Powered; step++) world.Step(Dt);
+        Assert(!line.Powered && !line.PoweringDown && line.BreakerLever < 0.01f,
+            "shutdown sequence did not finish with power and lever fully off");
     }
 
     private static void FixedViewportFitsAndMapsWorld()
@@ -1235,6 +1262,54 @@ public static class SelfTests
             "dormant Diego removed volume from the cellular basin");
         Assert(MathF.Abs(RepresentedVolume() - basin.CurrentFluidVolume) < 0.02f,
             "cell raster diverged from authoritative volume during dormant-creature simulation");
+    }
+
+    private static void BasinVolumeAndPayoutAreCalibrated()
+    {
+        var basin = new BloodBasin(250f, 571f, 866f, 101f);
+        var expectedCapacityLiters =
+            866f / BloodBasin.WorldUnitsPerMeter *
+            (101f - 12f) / BloodBasin.WorldUnitsPerMeter *
+            BloodBasin.EstimatedTankDepthMeters *
+            BloodBasin.LitersPerCubicMeter;
+        Assert(MathF.Abs(basin.EstimatedCapacityLiters - expectedCapacityLiters) < 0.1f,
+            "basin capacity did not follow its authored physical dimensions");
+        basin.AddMaterial(
+            basin.Left + basin.Width * 0.5f,
+            basin.FluidCapacity * 0.5f,
+            0f,
+            0f);
+        Assert(MathF.Abs(basin.EstimatedStoredLiters - expectedCapacityLiters * 0.5f) < 0.1f &&
+               MathF.Abs(
+                   basin.EstimatedStoredGallons * BloodBasin.LitersPerUsGallon -
+                   basin.EstimatedStoredLiters) < 0.1f,
+            "gallons and liters did not describe the same conserved blood");
+
+        var progression = GameProgression.CreateTransient();
+        progression.ToggleVolumeUnit();
+        Assert(progression.VolumeUnit == BasinVolumeUnit.Liters,
+            "volume preference did not toggle to liters");
+        var expectedBloodPayout = decimal.Round(
+            (decimal)basin.EstimatedStoredGallons * GameProgression.BaseBloodRatePerGallon,
+            2,
+            MidpointRounding.AwayFromZero);
+        var payout = progression.CompleteDay(basin, processedBlobs: 3);
+        Assert(payout.BloodPayout == expectedBloodPayout &&
+               payout.ProcessedPayout == 3m * GameProgression.BaseProcessedBlobRate &&
+               payout.TotalPayout == payout.BloodPayout + payout.ProcessedPayout &&
+               payout.CurrencyAfterSale == progression.Currency,
+            "day payout did not itemize blood and damage-qualified processing correctly");
+        Assert(basin.StoredVolume <= 0.001f && basin.FluidCellCount == 0,
+            "selling the day did not empty the authoritative basin");
+        Assert(progression.TryUnlockWeapon("NAIL_GUN") &&
+               progression.IsWeaponUnlocked("NAIL_GUN"),
+            "earned currency could not unlock a weapon");
+
+        for (var day = 0; day < GameProgression.DaysPerYear; day++)
+            progression.AdvanceDay();
+        Assert(progression.Year == 2 && progression.DayOfYear == 1 &&
+               progression.DayLabel().Contains("YEAR 2", StringComparison.Ordinal),
+            "absolute day progression did not roll into year two");
     }
 
     private static void LaterBaysIncreaseBloodYield()
@@ -5581,7 +5656,13 @@ public static class SelfTests
         entering.ApplyTranslation(new Vector2(32f + entering.Radius, entryY) - entering.Center,
             preserveVelocity: false);
         line.PreStep(bodies, granular, Dt);
-        Assert(line.ProcessedCount == 1, "left-portal entry did not increment the processed counter");
+        Assert(line.ProcessedCount == 0,
+            "untouched left-portal entry incorrectly earned processed credit");
+        DamageGestureProfile.Bite(entering, entering.Center);
+        line.PreStep(bodies, granular, Dt);
+        Assert(line.ProcessedCount == 1,
+            "an entered blob's first real damage did not increment the processed counter");
+        DamageGestureProfile.Bite(entering, entering.Center + Vector2.UnitX * 2f);
         line.PreStep(bodies, granular, Dt);
         Assert(line.ProcessedCount == 1, "one entering lineage incremented the processed counter twice");
 

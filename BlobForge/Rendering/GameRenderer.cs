@@ -340,6 +340,8 @@ public sealed class GameRenderer
     private readonly SolidBrush _tissuePixelMintBrush = new(Color.FromArgb(255, 118, 203, 180));
     private readonly SolidBrush _tissuePixelTealBrush = new(Color.FromArgb(255, 47, 125, 115));
     private readonly Font _basinMeterFont = new("Consolas", 7f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _dayAnnouncementFont =
+        new("Consolas", 34f, FontStyle.Bold, GraphicsUnit.Point);
     private readonly SolidBrush _basinRimDarkBrush = new(Color.FromArgb(255, 20, 29, 35));
     private readonly SolidBrush _basinRimBrush = new(Color.FromArgb(255, 95, 119, 128));
     private readonly SolidBrush _basinHighlightBrush = new(Color.FromArgb(255, 156, 182, 188));
@@ -383,6 +385,9 @@ public sealed class GameRenderer
     private readonly PointF[] _shopPanelPolygon = new PointF[7];
 
     public bool DebugDraw { get; set; }
+    public BasinVolumeUnit DisplayVolumeUnit { get; set; } = BasinVolumeUnit.Gallons;
+    public string? CenterAnnouncement { get; set; }
+    public float CenterAnnouncementOpacity { get; set; } = 1f;
     public bool DebugShowFps { get; private set; } = true;
     public bool DebugShowBlobPoints { get; private set; } = true;
     public bool DebugShowBonds { get; private set; }
@@ -643,8 +648,32 @@ public sealed class GameRenderer
             if (DebugDraw) DrawDebug(g, world);
         }
         DrawArsenalMenu(g, viewport);
+        DrawCenterAnnouncement(g, viewport);
         if (ProfileStages)
             UiStageMs = Stopwatch.GetElapsedTime(stageStart).TotalMilliseconds;
+    }
+
+    private void DrawCenterAnnouncement(Graphics g, Size viewport)
+    {
+        if (string.IsNullOrWhiteSpace(CenterAnnouncement) ||
+            CenterAnnouncementOpacity <= 0.001f)
+            return;
+        var opacity = Math.Clamp((int)MathF.Round(CenterAnnouncementOpacity * 255f), 0, 255);
+        var measured = g.MeasureString(CenterAnnouncement, _dayAnnouncementFont);
+        var left = MathF.Round((viewport.Width - measured.Width) * 0.5f);
+        var top = MathF.Round((viewport.Height - measured.Height) * 0.42f);
+        var panel = new RectangleF(
+            left - 30f,
+            top - 16f,
+            measured.Width + 60f,
+            measured.Height + 32f);
+        using var background = new SolidBrush(Color.FromArgb(opacity * 190 / 255, 5, 10, 14));
+        using var border = new Pen(Color.FromArgb(opacity, 101, 230, 223), 2f);
+        using var text = new SolidBrush(Color.FromArgb(opacity, 232, 239, 244));
+        g.FillRectangle(background, panel);
+        g.DrawRectangle(border, panel.X + 0.5f, panel.Y + 0.5f,
+            panel.Width - 1f, panel.Height - 1f);
+        g.DrawString(CenterAnnouncement, _dayAnnouncementFont, text, left, top);
     }
 
     private void DrawArsenalMenu(Graphics g, Size viewport)
@@ -771,7 +800,8 @@ public sealed class GameRenderer
             DynamicLightingBuildCount++;
         }
         g.DrawImageUnscaled(_dynamicLightingCache, 0, 0);
-        foreach (var light in rig.Lights) DrawIndustrialLantern(g, light, rig.FactoryPowered);
+        for (var index = 0; index < rig.Lights.Count; index++)
+            DrawIndustrialLantern(g, rig.Lights[index], rig.IsLightPowered(index));
     }
 
     private static void DrawPowerOffBlackout(Graphics g, Size viewport, ProcessingLine? line)
@@ -874,8 +904,9 @@ public sealed class GameRenderer
         lightGraphics.PixelOffsetMode = PixelOffsetMode.Half;
         if (!world.Lighting.FactoryPowered) return;
         PrepareLightBodyOccluders(world.Bodies);
-        foreach (var light in world.Lighting.Lights)
-            DrawOccludedPixelLight(lightGraphics, world, light);
+        for (var index = 0; index < world.Lighting.Lights.Count; index++)
+            if (world.Lighting.IsLightPowered(index))
+                DrawOccludedPixelLight(lightGraphics, world, world.Lighting.Lights[index]);
     }
 
     private void PrepareLightBodyOccluders(IReadOnlyList<SoftBody> bodies)
@@ -2754,8 +2785,12 @@ public sealed class GameRenderer
             g.FillRectangle(_basinLevelBrightBrush, monitorBounds.Left + 9f,
                 monitorBounds.Top + 45f - fillHeight, 14f, 1f);
         var percent = Math.Clamp((int)MathF.Round(basin.FluidLevel01 * 100f), 0, 100);
-        g.FillRectangle(_basinMeterBackBrush, monitorBounds.Right + 2f, monitorBounds.Top + 21f, 39f, 25f);
-        g.DrawString($"{percent:00}%\n{basin.CurrentFluidVolume:0000}",
+        var quantity = DisplayVolumeUnit == BasinVolumeUnit.Gallons
+            ? basin.EstimatedStoredGallons
+            : basin.EstimatedStoredLiters;
+        var suffix = DisplayVolumeUnit == BasinVolumeUnit.Gallons ? "GAL" : "L";
+        g.FillRectangle(_basinMeterBackBrush, monitorBounds.Right + 2f, monitorBounds.Top + 21f, 68f, 25f);
+        g.DrawString($"{percent:00}%\n{quantity:0.0} {suffix}",
             _basinMeterFont, _basinMeterTextBrush,
             monitorBounds.Right + 4f, monitorBounds.Top + 21f);
         // Basin-front overflow trails are intentionally disabled. Full-basin
