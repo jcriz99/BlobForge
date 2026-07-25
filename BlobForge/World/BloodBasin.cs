@@ -308,6 +308,53 @@ public sealed class BloodBasin
         return sold;
     }
 
+    /// <summary>
+    /// Resolves basin-local suspended drops into the authoritative pool before
+    /// the end-of-day shipment begins. No blood is created or destroyed; this
+    /// only removes the distinction between pending visual drops and settled
+    /// liquid so every shipped pixel can drain the same conserved volume.
+    /// </summary>
+    public float PrepareForShipment()
+    {
+        var stored = StoredVolume;
+        if (stored <= 0f)
+        {
+            _suspendedDrops.Clear();
+            PendingFluidVolume = 0f;
+            return 0f;
+        }
+
+        CurrentFluidVolume = stored;
+        PendingFluidVolume = 0f;
+        _availableDrinkVolume = MathF.Min(_availableDrinkVolume, CurrentFluidVolume);
+        _suspendedDrops.Clear();
+        _surfaceSplashes.Clear();
+        _surfaceRipples.Clear();
+        _sloshAmplitude = 0f;
+        SynchronizeCellsToVolume(Left + Width * 0.5f);
+        return CurrentFluidVolume;
+    }
+
+    /// <summary>
+    /// Converts settled basin liquid into an external, volume-carrying shipment
+    /// packet. The caller owns that exact returned volume until it reaches a
+    /// truck, so the sale animation remains conservative rather than spawning
+    /// decorative blood alongside an unchanged tank.
+    /// </summary>
+    public float ExtractForShipment(float requestedVolume)
+    {
+        if (!float.IsFinite(requestedVolume) || requestedVolume <= 0f ||
+            CurrentFluidVolume <= 0f)
+            return 0f;
+
+        var extracted = MathF.Min(requestedVolume, CurrentFluidVolume);
+        CurrentFluidVolume = MathF.Max(0f, CurrentFluidVolume - extracted);
+        TotalSpent += extracted;
+        _availableDrinkVolume = MathF.Min(_availableDrinkVolume, CurrentFluidVolume);
+        SynchronizeCellsToVolume(Left + Width * 0.5f);
+        return extracted;
+    }
+
     public void Step(float dt)
     {
         BubblePhase = (BubblePhase + dt) % 4096f;

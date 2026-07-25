@@ -74,6 +74,15 @@ internal static class Program
                 : Path.Combine(AppContext.BaseDirectory, "basin-overflow-preview.png");
             return SelfTests.WriteBasinOverflowSnapshot(output);
         }
+        var bloodShipmentSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--blood-shipment-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (bloodShipmentSnapshotArgument >= 0)
+        {
+            var output = bloodShipmentSnapshotArgument + 1 < args.Length
+                ? args[bloodShipmentSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "blood-shipment-preview.png");
+            return SelfTests.WriteBloodShipmentSnapshot(output);
+        }
         var granularOverflowSnapshotArgument = Array.FindIndex(args,
             argument => argument.Equals("--granular-overflow-snapshot", StringComparison.OrdinalIgnoreCase));
         if (granularOverflowSnapshotArgument >= 0)

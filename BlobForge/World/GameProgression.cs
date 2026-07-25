@@ -152,6 +152,15 @@ public sealed class GameProgression
     {
         var gallons = basin.EstimatedStoredGallons;
         var liters = basin.EstimatedStoredLiters;
+        var payout = CompleteDay(gallons, liters, processedBlobs);
+        basin.SellAllStoredBlood();
+        return payout;
+    }
+
+    public DayPayout CompleteDay(float gallons, float liters, int processedBlobs)
+    {
+        gallons = MathF.Max(0f, gallons);
+        liters = MathF.Max(0f, liters);
         var bloodPayout = decimal.Round(
             (decimal)gallons * BloodRatePerGallon,
             2,
@@ -173,7 +182,6 @@ public sealed class GameProgression
             processedPayout,
             total,
             Currency);
-        basin.SellAllStoredBlood();
         Save();
         return payout;
     }

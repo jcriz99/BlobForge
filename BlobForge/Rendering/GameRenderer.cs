@@ -77,6 +77,10 @@ public sealed class GameRenderer
     private static readonly Lazy<Bitmap?> VacuumHolsterSprite = new(() => LoadAsset("VacuumHolster.png"));
     private static readonly Lazy<Bitmap?> MachineStatusSprite = new(() => LoadAsset("MachineStatus.png"));
     private static readonly Lazy<Bitmap?> BasinMonitorSprite = new(() => LoadAsset("BasinMonitor.png"));
+    private static readonly Lazy<Bitmap?> BloodSupplyTruckSprite =
+        new(() => LoadAsset("BloodSupplyTruck.png"));
+    private static readonly Lazy<Bitmap?> BloodSaleFunnelSprite =
+        new(() => LoadAsset("BloodSaleFunnel.png"));
     private static readonly Lazy<Bitmap?> DiegoSpriteSheet = new(() => LoadAsset("Diego.png"));
     private static readonly Lazy<Bitmap?> FilterKnobSprite = new(() => LoadAsset("FilterKnob.png"));
     private static readonly Lazy<Bitmap?> BreakerBoxSprite = new(() => LoadAsset("BreakerBox.png"));
@@ -350,6 +354,9 @@ public sealed class GameRenderer
     private readonly SolidBrush _basinLevelBrightBrush = new(Color.FromArgb(225, 235, 18, 24));
     private readonly SolidBrush _basinMeterTextBrush = new(Color.FromArgb(245, 197, 231, 229));
     private readonly SolidBrush _basinMeterBackBrush = new(Color.FromArgb(220, 12, 18, 22));
+    private readonly SolidBrush _shipmentBloodBrush = new(Color.FromArgb(255, 183, 4, 18));
+    private readonly SolidBrush _shipmentBloodDarkBrush = new(Color.FromArgb(255, 104, 3, 16));
+    private readonly SolidBrush _shipmentBloodHighlightBrush = new(Color.FromArgb(255, 248, 25, 24));
     private readonly ConditionalWeakTable<SoftBody, BlobRenderScratch> _blobRenderScratch = new();
     private readonly PointF[] _fragmentPolygonPoints = new PointF[7];
     private readonly PointF[] _detachedFragmentPoints = new PointF[7];
@@ -386,6 +393,7 @@ public sealed class GameRenderer
 
     public bool DebugDraw { get; set; }
     public BasinVolumeUnit DisplayVolumeUnit { get; set; } = BasinVolumeUnit.Gallons;
+    public BloodShipmentSequence? BloodShipment { get; set; }
     public string? CenterAnnouncement { get; set; }
     public float CenterAnnouncementOpacity { get; set; } = 1f;
     public bool DebugShowFps { get; private set; } = true;
@@ -549,6 +557,13 @@ public sealed class GameRenderer
     public void Draw(Graphics g, Size viewport, BlobWorld world, SoftBody? grabbed,
         IReadOnlyList<Vector2>? pendingSlice = null, Vector2? toolPromptPosition = null)
     {
+        if (BloodShipment is { Active: true } shipment &&
+            world.ProcessingLine is { } shipmentLine)
+        {
+            DrawBloodShipmentScene(g, viewport, shipmentLine, shipment);
+            return;
+        }
+
         var stageStart = ProfileStages ? Stopwatch.GetTimestamp() : 0L;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         DrawEnvironment(g, viewport, world.Grid, world.ProcessingLine);
@@ -651,6 +666,99 @@ public sealed class GameRenderer
         DrawCenterAnnouncement(g, viewport);
         if (ProfileStages)
             UiStageMs = Stopwatch.GetElapsedTime(stageStart).TotalMilliseconds;
+    }
+
+    private void DrawBloodShipmentScene(
+        Graphics g,
+        Size viewport,
+        ProcessingLine line,
+        BloodShipmentSequence shipment)
+    {
+        g.Clear(Color.Black);
+        g.SmoothingMode = SmoothingMode.None;
+        g.CompositingQuality = CompositingQuality.HighSpeed;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+
+        var basinState = g.Save();
+        g.TranslateTransform(0f, MathF.Round(shipment.BasinOffsetY));
+        DrawBasinStaticBack(g, line);
+        DrawBasinBack(g, line);
+        DrawBasinForeground(g, line);
+        g.Restore(basinState);
+
+        if (shipment.Stage >= BloodShipmentStage.TruckArriving)
+            DrawBloodSupplyTruck(g, shipment);
+        if (shipment.Stage >= BloodShipmentStage.DeployingFunnel)
+            DrawBloodSaleFunnel(g, shipment);
+        DrawShipmentBloodPixels(g, shipment);
+    }
+
+    private void DrawBloodSupplyTruck(Graphics g, BloodShipmentSequence shipment)
+    {
+        const int frameWidth = 128;
+        const int frameHeight = 64;
+        var sheet = BloodSupplyTruckSprite.Value;
+        var position = shipment.TruckPosition;
+        var destination = new RectangleF(
+            MathF.Round(position.X),
+            MathF.Round(position.Y),
+            frameWidth * BloodShipmentSequence.SpriteScale,
+            frameHeight * BloodShipmentSequence.SpriteScale);
+        if (sheet is not null && sheet.Width >= frameWidth * 2 && sheet.Height >= frameHeight)
+        {
+            var frame = Math.Clamp(shipment.TruckFrame, 0, 1);
+            g.DrawImage(sheet, destination,
+                new RectangleF(frame * frameWidth, 0f, frameWidth, frameHeight),
+                GraphicsUnit.Pixel);
+        }
+
+        var inner = new RectangleF(
+            destination.X + 44f,
+            destination.Y + 52f,
+            92f,
+            16f);
+        var fillHeight = MathF.Round(inner.Height * shipment.CurrentTruckFill01);
+        if (fillHeight <= 0f) return;
+        g.FillRectangle(_shipmentBloodDarkBrush,
+            inner.X, inner.Bottom - fillHeight, inner.Width, fillHeight);
+        g.FillRectangle(_shipmentBloodBrush,
+            inner.X + 2f, inner.Bottom - fillHeight, inner.Width - 4f, fillHeight);
+        g.FillRectangle(_shipmentBloodHighlightBrush,
+            inner.X + 2f, inner.Bottom - fillHeight, inner.Width - 4f, 2f);
+    }
+
+    private static void DrawBloodSaleFunnel(Graphics g, BloodShipmentSequence shipment)
+    {
+        const int frameWidth = 96;
+        const int frameHeight = 176;
+        var sheet = BloodSaleFunnelSprite.Value;
+        if (sheet is null || sheet.Width < frameWidth * 3 || sheet.Height < frameHeight) return;
+        var origin = shipment.FunnelOrigin;
+        var destination = new RectangleF(
+            MathF.Round(origin.X),
+            MathF.Round(origin.Y),
+            frameWidth * BloodShipmentSequence.SpriteScale,
+            frameHeight * BloodShipmentSequence.SpriteScale);
+        var frame = Math.Clamp(shipment.FunnelFrame, 0, 2);
+        g.DrawImage(sheet, destination,
+            new RectangleF(frame * frameWidth, 0f, frameWidth, frameHeight),
+            GraphicsUnit.Pixel);
+    }
+
+    private void DrawShipmentBloodPixels(Graphics g, BloodShipmentSequence shipment)
+    {
+        for (var i = 0; i < shipment.Pixels.Count; i++)
+        {
+            var pixel = shipment.Pixels[i];
+            var size = MathF.Max(3f, MathF.Round(pixel.Radius));
+            var x = MathF.Round(pixel.Position.X - size * 0.5f);
+            var y = MathF.Round(pixel.Position.Y - size * 0.5f);
+            g.FillRectangle(_shipmentBloodDarkBrush, x + 1f, y + 1f, size + 1f, size + 1f);
+            g.FillRectangle(_shipmentBloodBrush, x, y, size, size);
+            if ((pixel.Variation & 3) == 0)
+                g.FillRectangle(_shipmentBloodHighlightBrush, x, y, 1f, 1f);
+        }
     }
 
     private void DrawCenterAnnouncement(Graphics g, Size viewport)

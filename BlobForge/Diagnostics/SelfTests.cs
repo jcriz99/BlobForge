@@ -59,6 +59,7 @@ public static class SelfTests
             ("purchased blood worker forms routes and operates real machinery", BloodWorkerAutomatesMachinery),
             ("basin blood uses conserved sleeping cellular fluid", BasinFluidIsCellularAndConserved),
             ("basin gallons liters and day payout share one calibrated volume", BasinVolumeAndPayoutAreCalibrated),
+            ("day-end trucks drain conserved basin blood as physical pixels", DayEndShipmentConservesBlood),
             ("later machine bays produce progressively richer basin blood", LaterBaysIncreaseBloodYield),
             ("Diego is dormant and basin bubbles wait for 35% fill", DiegoIsDormantAndBubblesWaitForFill),
             ("machine platforms stay narrow between transfer belts", NarrowTablesEjectToNextTransfer),
@@ -1310,6 +1311,49 @@ public static class SelfTests
         Assert(progression.Year == 2 && progression.DayOfYear == 1 &&
                progression.DayLabel().Contains("YEAR 2", StringComparison.Ordinal),
             "absolute day progression did not roll into year two");
+    }
+
+    private static void DayEndShipmentConservesBlood()
+    {
+        var basin = new BloodBasin(250f, 507f, 866f, 101f);
+        basin.AddMaterial(
+            basin.Left + basin.Width * 0.5f,
+            basin.FluidCapacity * 0.64f,
+            0f,
+            0f);
+        var initial = basin.StoredVolume;
+        var sequence = new BloodShipmentSequence(basin);
+        var maximumConservationError = 0f;
+
+        for (var step = 0; step < 60 * 120 && !sequence.Complete; step++)
+        {
+            sequence.Update(Dt);
+            var inFlight = 0f;
+            for (var i = 0; i < sequence.Pixels.Count; i++)
+                inFlight += sequence.Pixels[i].Volume;
+            var represented = basin.StoredVolume + inFlight + sequence.ShippedVolume;
+            maximumConservationError = MathF.Max(
+                maximumConservationError,
+                MathF.Abs(initial - represented));
+            Assert(sequence.InFlightParticleCount <= BloodShipmentSequence.MaximumParticles,
+                "day-end transfer escaped its bounded physical-pixel budget");
+        }
+
+        Assert(sequence.Complete,
+            "day-end blood shipment did not finish within its bounded sequence time " +
+            $"(stage {sequence.Stage}, basin {basin.StoredVolume:0.00}, " +
+            $"shipped {sequence.ShippedVolume:0.00}/{initial:0.00}, " +
+            $"pixels {sequence.InFlightParticleCount}, trucks " +
+            $"{sequence.DepartedTruckCount}/{sequence.PlannedTruckCount})");
+        Assert(basin.StoredVolume <= 0.001f &&
+               MathF.Abs(sequence.ShippedVolume - initial) <= 0.02f,
+            "day-end trucks did not empty and receive the authoritative basin volume");
+        Assert(sequence.DepartedTruckCount == sequence.PlannedTruckCount &&
+               sequence.DepartedTruckCount is >= 1 and <= BloodShipmentSequence.MaximumTrucks,
+            "day-end shipment did not dispatch the planned bounded truck batches");
+        Assert(maximumConservationError <= MathF.Max(0.1f, initial * 0.00001f),
+            $"day-end transfer created or lost blood while pixels were in flight " +
+            $"({maximumConservationError:0.000} volume error)");
     }
 
     private static void LaterBaysIncreaseBloodYield()
@@ -2651,6 +2695,55 @@ public static class SelfTests
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
         Console.WriteLine($"Station snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteBloodShipmentSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            powered: false,
+            continuousFlow: true);
+        var world = new BlobWorld(grid) { ProcessingLine = line };
+        world.Conveyors.AddRange(line.Belts);
+        line.Basin.AddMaterial(
+            line.Basin.Left + line.Basin.Width * 0.5f,
+            line.Basin.FluidCapacity * 0.76f,
+            0f,
+            0f);
+        var shipment = new BloodShipmentSequence(line.Basin);
+        var renderer = new GameRenderer { BloodShipment = shipment };
+
+        using var comparison = new Bitmap(3840, 720);
+        using var graphics = Graphics.FromImage(comparison);
+
+        void DrawPanel(int panel)
+        {
+            var state = graphics.Save();
+            graphics.TranslateTransform(panel * 1280f, 0f);
+            graphics.SetClip(new Rectangle(0, 0, 1280, 720));
+            renderer.Draw(graphics, new Size(1280, 720), world, null);
+            graphics.Restore(state);
+        }
+
+        for (var i = 0; i < 54; i++) shipment.Update(Dt);
+        DrawPanel(0);
+        for (var i = 0; i < 2400 &&
+             (shipment.Stage != BloodShipmentStage.LoadingTruck ||
+              shipment.CurrentTruckFill01 < 0.42f); i++)
+            shipment.Update(Dt);
+        DrawPanel(1);
+        for (var i = 0; i < 2400 &&
+             shipment.Stage != BloodShipmentStage.TruckDeparting; i++)
+            shipment.Update(Dt);
+        DrawPanel(2);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Blood shipment snapshot: {Path.GetFullPath(outputPath)}");
         return 0;
     }
 

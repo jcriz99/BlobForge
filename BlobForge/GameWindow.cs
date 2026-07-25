@@ -112,6 +112,8 @@ public sealed class GameWindow : Form
     private int _lightingSequenceStage;
     private bool _shopShowingWeapons;
     private DayPayout _lastDayPayout;
+    private BloodShipmentSequence? _bloodShipment;
+    private int _daySaleProcessedCount;
     private FixtureDragTarget _fixtureDragTarget;
     private Vector2 _fixtureDragOffset;
     private Vector2 _fixtureDragStart;
@@ -1092,6 +1094,9 @@ public sealed class GameWindow : Form
         _lightingSequenceStage = 0;
         _renderer.CenterAnnouncement = null;
         _renderer.CenterAnnouncementOpacity = 1f;
+        _renderer.BloodShipment = null;
+        _bloodShipment = null;
+        _daySaleProcessedCount = 0;
         _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
         _dayResultsPanel.Visible = false;
         _betweenDaysPanel.Visible = false;
@@ -1328,6 +1333,25 @@ public sealed class GameWindow : Form
                 if (_dayPhaseTimer > 0f) return;
                 _renderer.CenterAnnouncement = null;
                 _renderer.CenterAnnouncementOpacity = 1f;
+                _bloodShipment = new BloodShipmentSequence(line.Basin);
+                _renderer.BloodShipment = _bloodShipment;
+                _dayPhase = DayCyclePhase.BloodShipment;
+                return;
+
+            case DayCyclePhase.BloodShipment:
+                if (_bloodShipment is null)
+                {
+                    _bloodShipment = new BloodShipmentSequence(line.Basin);
+                    _renderer.BloodShipment = _bloodShipment;
+                }
+                _bloodShipment.Update(dt);
+                if (!_bloodShipment.Complete) return;
+                _lastDayPayout = _progression.CompleteDay(
+                    _bloodShipment.InitialGallons,
+                    _bloodShipment.InitialLiters,
+                    _daySaleProcessedCount);
+                _renderer.BloodShipment = null;
+                _bloodShipment = null;
                 ShowDayResults();
                 return;
         }
@@ -1338,7 +1362,7 @@ public sealed class GameWindow : Form
         if (_dayPhase == DayCyclePhase.EndAnnouncement) return;
         _world.Lighting.SetFactoryPower(false);
         _audio.StopAll();
-        _lastDayPayout = _progression.CompleteDay(line.Basin, line.ProcessedCount);
+        _daySaleProcessedCount = line.ProcessedCount;
         _dayPhase = DayCyclePhase.EndAnnouncement;
         _dayPhaseTimer = 1.65f;
         _renderer.CenterAnnouncement = $"{_progression.DayLabel()} END";
@@ -2424,6 +2448,7 @@ public sealed class GameWindow : Form
         Active,
         EndingLights,
         EndAnnouncement,
+        BloodShipment,
         Results,
         Shop
     }
