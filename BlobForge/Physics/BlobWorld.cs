@@ -70,6 +70,10 @@ public sealed class BlobWorld
         ProcessingLine?.PreStep(Bodies, Granular.Particles, dt);
         Knife?.Step(dt, Gravity, Conveyors, Bodies, Grid.Columns * Grid.CellSize,
             Grid.Rows * Grid.CellSize, TubeFeed, Grid, Granular);
+        // Weapons act after ProcessingLine.PreStep. Observe their damage before topology
+        // splitting can convert a one-hit kill into detached pieces and erase the only
+        // intact-body sampling opportunity.
+        ProcessingLine?.ObserveProcessedDamage(Bodies);
         if (ProcessingLine is not null)
         {
             _dispatchedParentBuffer.Clear();

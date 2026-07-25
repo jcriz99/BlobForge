@@ -5666,10 +5666,30 @@ public static class SelfTests
         line.PreStep(bodies, granular, Dt);
         Assert(line.ProcessedCount == 1, "one entering lineage incremented the processed counter twice");
 
+        var oneHit = BlobArchetype.ProcessingUnit.Create(Vector2.Zero);
+        oneHit.ApplyTranslation(new Vector2(-oneHit.Radius - 8f, entryY) - oneHit.Center,
+            preserveVelocity: false);
+        bodies.Add(oneHit);
+        line.PreStep(bodies, granular, Dt);
+        oneHit.ApplyTranslation(new Vector2(32f + oneHit.Radius, entryY) - oneHit.Center,
+            preserveVelocity: false);
+        line.PreStep(bodies, granular, Dt);
+        var oneHitCenter = oneHit.Center;
+        oneHit.DamageLine(
+            oneHitCenter - Vector2.UnitX * oneHit.Radius,
+            oneHitCenter + Vector2.UnitX * oneHit.Radius,
+            oneHit.Radius * 2f,
+            100f,
+            maximumBreaks: int.MaxValue);
+        line.ObserveProcessedDamage(bodies);
+        bodies.Remove(oneHit); // Emulate lethal topology cleanup in the same fixed tick.
+        Assert(line.ProcessedCount == 2,
+            "a lethal one-hit weapon did not credit its entered lineage before body removal");
+
         var exiting = BlobArchetype.ProcessingUnit.Create(new Vector2(1340f, line.DeckY - 28f));
         bodies.Add(exiting);
         line.PreStep(bodies, granular, Dt);
-        Assert(line.ProcessedCount == 1,
+        Assert(line.ProcessedCount == 2,
             "a blob leaving through the right portal incorrectly incremented the processed counter");
     }
 

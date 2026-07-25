@@ -2408,19 +2408,33 @@ public sealed class ProcessingLine
                 }
             }
 
-            if (!body.IsDetachedDebris &&
-                _continuousEnteredParents.Contains(body.ParentId) &&
-                body.HasLocalDamage &&
-                _continuousDamagedProcessedParents.Add(body.ParentId))
-                ProcessedCount++;
-
             if (center.X <= 1328f && center.Y <= 760f) continue;
             if (!_dispatchedParents.Contains(body.ParentId)) _dispatchedParents.Add(body.ParentId);
             _continuousEntryCandidates.Remove(body.ParentId);
         }
+        ObserveProcessedDamage(bodies);
         for (var i = granular.Count - 1; i >= 0; i--)
             if (granular[i].Position.X > 1340f || granular[i].Position.Y > 780f)
                 granular.RemoveAt(i);
+    }
+
+    /// <summary>
+    /// Credits an eligible conveyor lineage on the first authoritative material-damage
+    /// observation. This is also called immediately after weapon simulation so a lethal
+    /// one-tick hit is counted before topology conversion can leave only detached debris.
+    /// </summary>
+    public void ObserveProcessedDamage(IReadOnlyList<SoftBody> bodies)
+    {
+        if (!ContinuousFlowMode || _continuousEnteredParents.Count == 0) return;
+        for (var i = 0; i < bodies.Count; i++)
+        {
+            var body = bodies[i];
+            if (!body.HasLocalDamage ||
+                !_continuousEnteredParents.Contains(body.ParentId) ||
+                !_continuousDamagedProcessedParents.Add(body.ParentId))
+                continue;
+            ProcessedCount++;
+        }
     }
 
     private void UpdateAutomaticMachineControls(float dt)
