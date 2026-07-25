@@ -49,7 +49,9 @@ public sealed class GameWindow : Form
     private Label _dayResultsProcessed = null!;
     private Label _dayResultsTotal = null!;
     private Label _shopCurrency = null!;
-    private FlowLayoutPanel _shopContent = null!;
+    private Panel _shopContentHost = null!;
+    private ShopFlowPanel _shopUpgradesContent = null!;
+    private ShopFlowPanel _shopWeaponsContent = null!;
     private Button _shopUpgradesTab = null!;
     private Button _shopWeaponsTab = null!;
     private readonly Bitmap _frameBuffer;
@@ -677,34 +679,37 @@ public sealed class GameWindow : Form
             "WEAPON UPGRADES", new Rectangle(54, 96, 210, 42));
         _shopWeaponsTab = CreateProgressionButton(
             "WEAPON LIST", new Rectangle(274, 96, 210, 42));
-        _shopContent = new FlowLayoutPanel
+        _shopContentHost = new Panel
         {
             Bounds = new Rectangle(54, 150, 1172, 482),
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-            AutoScroll = true,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            BackColor = Color.FromArgb(11, 17, 22),
-            Padding = new Padding(12)
+            BackColor = Color.FromArgb(11, 17, 22)
         };
+        _shopUpgradesContent = CreateShopContentPanel();
+        _shopWeaponsContent = CreateShopContentPanel();
+        _shopContentHost.Controls.AddRange([_shopUpgradesContent, _shopWeaponsContent]);
         var nextDay = CreateProgressionButton(
             "CONTINUE TO NEXT DAY", new Rectangle(934, 650, 292, 44));
         nextDay.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-        _shopUpgradesTab.Click += (_, _) =>
-        {
-            _shopShowingWeapons = false;
-            RefreshShopContent();
-        };
-        _shopWeaponsTab.Click += (_, _) =>
-        {
-            _shopShowingWeapons = true;
-            RefreshShopContent();
-        };
+        _shopUpgradesTab.Click += (_, _) => SwitchShopTab(showWeapons: false);
+        _shopWeaponsTab.Click += (_, _) => SwitchShopTab(showWeapons: true);
         nextDay.Click += (_, _) => ContinueToNextDay();
         panel.Controls.AddRange([
-            title, _shopCurrency, _shopUpgradesTab, _shopWeaponsTab, _shopContent, nextDay]);
+            title, _shopCurrency, _shopUpgradesTab, _shopWeaponsTab, _shopContentHost, nextDay]);
         return panel;
     }
+
+    private static ShopFlowPanel CreateShopContentPanel() => new()
+    {
+        Dock = DockStyle.Fill,
+        AutoScroll = true,
+        FlowDirection = FlowDirection.TopDown,
+        WrapContents = false,
+        BackColor = Color.FromArgb(11, 17, 22),
+        Padding = new Padding(12),
+        Visible = false,
+        TabStop = false
+    };
 
     private static Panel CreateFullScreenProgressionPanel() => new()
     {
@@ -750,27 +755,65 @@ public sealed class GameWindow : Form
 
     private void RefreshShopContent()
     {
-        while (_shopContent.Controls.Count > 0)
-        {
-            var control = _shopContent.Controls[0];
-            _shopContent.Controls.RemoveAt(0);
-            control.Dispose();
-        }
         _shopCurrency.Text = $"AVAILABLE FUNDS  {_progression.Currency:C2}";
-        SetTabAppearance(_shopUpgradesTab, !_shopShowingWeapons);
-        SetTabAppearance(_shopWeaponsTab, _shopShowingWeapons);
-
-        if (_shopShowingWeapons)
+        RebuildShopPanel(_shopWeaponsContent, () =>
         {
             foreach (var item in GameProgression.WeaponCatalog)
-                _shopContent.Controls.Add(CreateWeaponShopRow(item));
-            return;
-        }
-
-        foreach (var item in GameProgression.WeaponCatalog)
+                _shopWeaponsContent.Controls.Add(CreateWeaponShopRow(item));
+        });
+        RebuildShopPanel(_shopUpgradesContent, () =>
         {
-            if (!_progression.IsWeaponUnlocked(item.Code)) continue;
-            _shopContent.Controls.Add(CreateUpgradeShopRow(item));
+            foreach (var item in GameProgression.WeaponCatalog)
+            {
+                if (!_progression.IsWeaponUnlocked(item.Code)) continue;
+                _shopUpgradesContent.Controls.Add(CreateUpgradeShopRow(item));
+            }
+        });
+        SwitchShopTab(_shopShowingWeapons, force: true);
+    }
+
+    private static void RebuildShopPanel(ShopFlowPanel panel, Action populate)
+    {
+        panel.SuspendDrawing();
+        panel.SuspendLayout();
+        try
+        {
+            while (panel.Controls.Count > 0)
+            {
+                var control = panel.Controls[0];
+                panel.Controls.RemoveAt(0);
+                control.Dispose();
+            }
+            populate();
+        }
+        finally
+        {
+            panel.ResumeLayout(performLayout: true);
+            panel.ResumeDrawing();
+        }
+    }
+
+    private void SwitchShopTab(bool showWeapons, bool force = false)
+    {
+        if (!force && _shopShowingWeapons == showWeapons &&
+            _shopWeaponsContent.Visible == showWeapons)
+            return;
+
+        _shopContentHost.SuspendLayout();
+        try
+        {
+            _shopShowingWeapons = showWeapons;
+            SetTabAppearance(_shopUpgradesTab, !showWeapons);
+            SetTabAppearance(_shopWeaponsTab, showWeapons);
+            _shopUpgradesContent.Visible = !showWeapons;
+            _shopWeaponsContent.Visible = showWeapons;
+            var activePanel = showWeapons ? _shopWeaponsContent : _shopUpgradesContent;
+            activePanel.Bounds = _shopContentHost.ClientRectangle;
+            activePanel.BringToFront();
+        }
+        finally
+        {
+            _shopContentHost.ResumeLayout(performLayout: true);
         }
     }
 
@@ -830,7 +873,7 @@ public sealed class GameWindow : Form
 
     private Panel CreateShopRow() => new()
     {
-        Width = Math.Max(820, _shopContent.ClientSize.Width - 48),
+        Width = Math.Max(820, _shopContentHost.ClientSize.Width - 48),
         Height = 60,
         Margin = new Padding(2, 2, 2, 7),
         BackColor = Color.FromArgb(22, 31, 37),
@@ -2333,6 +2376,37 @@ public sealed class GameWindow : Form
                      ControlStyles.StandardDoubleClick |
                      ControlStyles.ResizeRedraw, true);
         }
+    }
+
+    private sealed class ShopFlowPanel : FlowLayoutPanel
+    {
+        private const int WmSetRedraw = 0x000B;
+
+        public ShopFlowPanel()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.ResizeRedraw, true);
+        }
+
+        public void SuspendDrawing()
+        {
+            if (IsHandleCreated) SendMessage(Handle, WmSetRedraw, nint.Zero, nint.Zero);
+        }
+
+        public void ResumeDrawing()
+        {
+            if (!IsHandleCreated) return;
+            SendMessage(Handle, WmSetRedraw, new nint(1), nint.Zero);
+            Invalidate(invalidateChildren: true);
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern nint SendMessage(
+            nint windowHandle,
+            int message,
+            nint wParam,
+            nint lParam);
     }
 
     private enum FixtureDragTarget : byte
