@@ -36,6 +36,7 @@ public sealed class GameWindow : Form
     private readonly Button _spawnButton;
     private readonly Button _conveyorButton;
     private readonly Button _lightButton;
+    private readonly Button _tokenButton;
     private readonly Button _fullscreenButton;
     private readonly Panel _pausePanel;
     private readonly Panel _settingsPanel;
@@ -270,6 +271,25 @@ public sealed class GameWindow : Form
         _lightButton.Click += (_, _) => SpawnLantern();
         Controls.Add(_lightButton);
         _lightButton.BringToFront();
+
+        _tokenButton = new Button
+        {
+            Text = "+  SPAWN TOKEN   [T]",
+            Size = new Size(190, 34),
+            Location = new Point(ClientSize.Width - 214, 200),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(70, 67, 32),
+            ForeColor = Color.FromArgb(255, 238, 175),
+            Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            TabStop = false
+        };
+        _tokenButton.FlatAppearance.BorderColor = Color.FromArgb(255, 203, 76);
+        _tokenButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(104, 96, 40);
+        _tokenButton.Click += (_, _) => SpawnDumbwaiterToken();
+        Controls.Add(_tokenButton);
+        _tokenButton.BringToFront();
 
         _fullscreenButton = new Button
         {
@@ -918,6 +938,7 @@ public sealed class GameWindow : Form
         _spawnButton.BringToFront();
         _conveyorButton.BringToFront();
         _lightButton.BringToFront();
+        _tokenButton.BringToFront();
         if (_pausePanel.Visible) _pausePanel.BringToFront();
         if (_settingsPanel.Visible) _settingsPanel.BringToFront();
         if (_dayResultsPanel.ClientSize.Width > 0)
@@ -1002,6 +1023,7 @@ public sealed class GameWindow : Form
         _spawnButton.Visible = !paused && _world.ProcessingLine?.ContinuousFlowMode != true;
         _conveyorButton.Visible = !paused;
         _lightButton.Visible = !paused;
+        _tokenButton.Visible = !paused;
         _fullscreenButton.Visible = !paused;
         LayoutOverlays();
         if (!paused) _surface.Focus();
@@ -1103,6 +1125,8 @@ public sealed class GameWindow : Form
             GameProgression.WeaponVariantForCode(_currentDayWeaponCode));
         _world.WeaponDumbwaiter = new WeaponDumbwaiter(
             _world.ProcessingLine.ContinuousToolRackCenter);
+        _world.WeaponDumbwaiter.PrepareInitialDelivery(
+            GameProgression.WeaponVariantForCode(_currentDayWeaponCode), _world.Knife);
         _world.ProcessingLine.SetBreakerPosition(
             new Vector2(_world.ProcessingLine.BreakerBounds.X, _world.ProcessingLine.BreakerBounds.Y),
             WorldWidth, WorldHeight);
@@ -1151,6 +1175,7 @@ public sealed class GameWindow : Form
         _spawnButton.Visible = false;
         _conveyorButton.Visible = true;
         _lightButton.Visible = true;
+        _tokenButton.Visible = true;
         _fullscreenButton.Visible = true;
         _paused = false;
     }
@@ -1570,6 +1595,7 @@ public sealed class GameWindow : Form
         _spawnButton.Visible = false;
         _conveyorButton.Visible = visible;
         _lightButton.Visible = visible;
+        _tokenButton.Visible = visible;
         _fullscreenButton.Visible = visible;
     }
 
@@ -1821,6 +1847,7 @@ public sealed class GameWindow : Form
             }
             if (_world.Knife?.BeginGrab(_input.MousePosition) == true)
             {
+                _world.WeaponDumbwaiter?.NotifyWeaponTaken();
                 _grabbed = null;
                 _conveyorEditHandle = ConveyorEditHandle.None;
                 _surface.Cursor = Cursors.Hand;
@@ -2309,6 +2336,9 @@ public sealed class GameWindow : Form
             case Keys.B:
                 SpawnBlob();
                 break;
+            case Keys.T:
+                SpawnDumbwaiterToken();
+                break;
             case Keys.C:
                 SpawnConveyor();
                 break;
@@ -2396,6 +2426,7 @@ public sealed class GameWindow : Form
         }
         if (tool.IsGrabbed || !tool.HitTest(_input.MousePosition)) return;
         if (!tool.Equip(_input.MousePosition, _input.MousePosition)) return;
+        _world.WeaponDumbwaiter?.NotifyWeaponTaken();
         _grabbed = null;
         _conveyorEditHandle = ConveyorEditHandle.None;
         _surface.Cursor = Cursors.Hand;
@@ -2541,6 +2572,15 @@ public sealed class GameWindow : Form
         if (_world.ProcessingLine?.Powered != true) return;
         if (_world.Bodies.Count >= 24) return;
         _chamberFeed?.RequestNext();
+        _surface.Focus();
+    }
+
+    private void SpawnDumbwaiterToken()
+    {
+        var line = _world.ProcessingLine;
+        if (line is null) return;
+        _world.WeaponDumbwaiter?.TrySpawnDebugToken(
+            new Vector2(360f, line.DeckY - 58f));
         _surface.Focus();
     }
 

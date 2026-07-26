@@ -65,6 +65,15 @@ internal static class Program
                 : Path.Combine(AppContext.BaseDirectory, "arsenal-menu-preview.png");
             return SelfTests.WriteArsenalMenuSnapshot(output);
         }
+        var dumbwaiterSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--dumbwaiter-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (dumbwaiterSnapshotArgument >= 0)
+        {
+            var output = dumbwaiterSnapshotArgument + 1 < args.Length
+                ? args[dumbwaiterSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "dumbwaiter-preview.png");
+            return SelfTests.WriteDumbwaiterSnapshot(output);
+        }
         var basinOverflowSnapshotArgument = Array.FindIndex(args,
             argument => argument.Equals("--basin-overflow-snapshot", StringComparison.OrdinalIgnoreCase));
         if (basinOverflowSnapshotArgument >= 0)

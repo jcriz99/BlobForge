@@ -2688,6 +2688,7 @@ public static class SelfTests
             Knife = new PhysicalKnife(line.ContinuousToolRackCenter),
             WeaponDumbwaiter = new WeaponDumbwaiter(line.ContinuousToolRackCenter)
         };
+        world.WeaponDumbwaiter.PrepareInitialDelivery(-1, world.Knife);
         world.Lighting.ConfigureProcessingStation();
         world.Lighting.SetFactoryPower(true);
         world.Conveyors.AddRange(line.Belts);
@@ -2728,6 +2729,66 @@ public static class SelfTests
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
         Console.WriteLine($"Station snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteDumbwaiterSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            powered: true,
+            continuousFlow: true);
+        var tool = new PhysicalKnife(line.ContinuousToolRackCenter);
+        var dumbwaiter = new WeaponDumbwaiter(line.ContinuousToolRackCenter);
+        var world = new BlobWorld(grid)
+        {
+            ProcessingLine = line,
+            Knife = tool,
+            WeaponDumbwaiter = dumbwaiter
+        };
+        world.Conveyors.AddRange(line.Belts);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        dumbwaiter.PrepareInitialDelivery(-1, tool);
+
+        using var comparison = new Bitmap(1280 * 6, 720);
+        using var frame = new Bitmap(1280, 720);
+        using var comparisonGraphics = Graphics.FromImage(comparison);
+        var renderer = new GameRenderer();
+
+        void Capture(int panel)
+        {
+            using (var frameGraphics = Graphics.FromImage(frame))
+            {
+                frameGraphics.Clear(Color.Black);
+                renderer.Draw(frameGraphics, frame.Size, world, null, null,
+                    line.ContinuousToolRackCenter);
+            }
+            comparisonGraphics.DrawImageUnscaled(frame, panel * 1280, 0);
+        }
+
+        Capture(0); // fully closed, initial weapon hidden
+        for (var step = 0; step < 30; step++) world.Step(Dt);
+        Capture(1); // opening
+        for (var step = 0; step < 40; step++) world.Step(Dt);
+        Capture(2); // open, weapon available
+        Assert(tool.BeginGrab(tool.Position), "snapshot could not take the presented weapon");
+        dumbwaiter.NotifyWeaponTaken();
+        tool.SetGrabTarget(tool.Position - new Vector2(150f, 0f));
+        for (var step = 0; step < 26; step++) world.Step(Dt);
+        Capture(3); // weapon taken, closing
+        for (var step = 0; step < 50; step++) world.Step(Dt);
+        Capture(4); // closed while weapon remains in play
+        dumbwaiter.TrySpawnDebugToken(new Vector2(360f, line.DeckY - 58f));
+        for (var step = 0; step < 26; step++) world.Step(Dt);
+        Capture(5); // physical token on the conveyor
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Dumbwaiter state snapshot: {Path.GetFullPath(outputPath)}");
         return 0;
     }
 
@@ -6560,6 +6621,35 @@ public static class SelfTests
         var socket = new Vector2(640f, 300f);
         var tool = new PhysicalKnife(socket);
         var dumbwaiter = new WeaponDumbwaiter(socket);
+        var grid = new DestructibleGrid(40, 22, 32);
+        dumbwaiter.PrepareInitialDelivery(-1, tool);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed &&
+               dumbwaiter.DoorFrame == 3 && !tool.Visible,
+            "new day did not begin with the shutter closed over the hidden weapon");
+        for (var step = 0; step < 90; step++)
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: false);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed && !tool.Visible,
+            "unpowered dumbwaiter opened before the day began");
+        for (var step = 0; step < 65; step++)
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Open &&
+               dumbwaiter.DoorFrame == 0 && tool.Visible && tool.IsHolstered,
+            "powered day start did not animate open and present the first weapon");
+        Assert(tool.BeginGrab(socket), "presented dumbwaiter weapon could not be taken");
+        dumbwaiter.NotifyWeaponTaken();
+        dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closing,
+            "taking the presented weapon did not start closing the shutter");
+        for (var step = 0; step < 65; step++)
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed &&
+               dumbwaiter.DoorFrame == 3 && tool.Visible,
+            "shutter did not remain closed after the player took the weapon");
+
         dumbwaiter.SpawnToken(new Vector2(420f, 300f));
         var firstToken = dumbwaiter.Token;
         dumbwaiter.SpawnToken(new Vector2(460f, 300f));
@@ -6569,7 +6659,7 @@ public static class SelfTests
             "physical reroll coin could not be picked up");
         dumbwaiter.SetTokenGrabTarget(dumbwaiter.CoinSlotCenter);
         dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
-            new DestructibleGrid(40, 22, 32), 1280f, 720f, tool);
+            grid, 1280f, 720f, tool, powered: true);
         Assert(dumbwaiter.ReleaseToken(dumbwaiter.CoinSlotCenter, Vector2.Zero) &&
                dumbwaiter.TokenDeposited &&
                dumbwaiter.ButtonArmed,
@@ -6578,8 +6668,8 @@ public static class SelfTests
             "armed dumbwaiter did not explode and hide the current weapon");
         for (var step = 0; step < 180; step++)
             dumbwaiter.Step(Dt, new Vector2(0f, 980f), Array.Empty<ConveyorBelt>(),
-                new DestructibleGrid(40, 22, 32), 1280f, 720f, tool);
-        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Idle && tool.Visible &&
+                grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Open && tool.Visible &&
                tool.IsHolstered && tool.ArsenalVisualVariant == 1,
             "dumbwaiter shutter did not finish by delivering the selected replacement");
 

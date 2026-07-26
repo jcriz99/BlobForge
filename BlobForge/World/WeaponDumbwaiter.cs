@@ -5,10 +5,11 @@ namespace BlobForge.World;
 
 public enum WeaponDumbwaiterPhase : byte
 {
-    Idle,
+    Closed,
+    Opening,
+    Open,
     Closing,
-    ClosedHold,
-    Opening
+    ClosedHold
 }
 
 public readonly record struct DumbwaiterDebris(
@@ -36,20 +37,22 @@ public sealed class WeaponDumbwaiter
     private uint _randomState = 0xA341316Cu;
     private float _phaseTime;
     private float _buttonFlashRemaining;
-    private int _pendingVariant = -1;
+    private int _pendingVariant = int.MinValue;
 
     public WeaponDumbwaiter(Vector2 toolSocket)
     {
         ToolSocket = toolSocket;
+        Phase = WeaponDumbwaiterPhase.Closed;
     }
 
     public Vector2 ToolSocket { get; }
     public WeaponDumbwaiterPhase Phase { get; private set; }
     public WeaponRerollToken? Token { get; private set; }
     public bool TokenDeposited { get; private set; }
-    public bool ButtonArmed => TokenDeposited && Phase == WeaponDumbwaiterPhase.Idle;
-    public bool HasTokenInSystem => Token is not null || TokenDeposited ||
-                                    Phase != WeaponDumbwaiterPhase.Idle;
+    public bool ButtonArmed => TokenDeposited &&
+                               Phase is WeaponDumbwaiterPhase.Closed or WeaponDumbwaiterPhase.Open;
+    public bool HasTokenInSystem => Token is not null || TokenDeposited;
+    public bool CanSpawnToken => !HasTokenInSystem;
     public IReadOnlyList<DumbwaiterDebris> Debris => _debris;
 
     public RectangleF DisplayBounds => new(ToolSocket.X - 72f, ToolSocket.Y - 108f, 144f, 192f);
@@ -64,9 +67,11 @@ public sealed class WeaponDumbwaiter
             var progress = Phase switch
             {
                 WeaponDumbwaiterPhase.Closing => Math.Clamp(_phaseTime / DoorCloseSeconds, 0f, 1f),
+                WeaponDumbwaiterPhase.Closed => 1f,
                 WeaponDumbwaiterPhase.ClosedHold => 1f,
                 WeaponDumbwaiterPhase.Opening => 1f - Math.Clamp(_phaseTime / DoorOpenSeconds, 0f, 1f),
-                _ => 0f
+                WeaponDumbwaiterPhase.Open => 0f,
+                _ => 1f
             };
             return progress switch
             {
@@ -125,9 +130,27 @@ public sealed class WeaponDumbwaiter
         _pendingVariant = Math.Clamp(replacementVariant, -1, PhysicalKnife.ArsenalVariantCount - 1);
         SpawnWeaponDebris(knife.Position);
         knife.BeginDumbwaiterExchange();
-        Phase = WeaponDumbwaiterPhase.Closing;
+        Phase = Phase == WeaponDumbwaiterPhase.Open
+            ? WeaponDumbwaiterPhase.Closing
+            : WeaponDumbwaiterPhase.ClosedHold;
         _phaseTime = 0f;
         return true;
+    }
+
+    public void PrepareInitialDelivery(int weaponVariant, PhysicalKnife knife)
+    {
+        _pendingVariant = Math.Clamp(
+            weaponVariant, -1, PhysicalKnife.ArsenalVariantCount - 1);
+        knife.BeginDumbwaiterExchange();
+        Phase = WeaponDumbwaiterPhase.Closed;
+        _phaseTime = 0f;
+    }
+
+    public void NotifyWeaponTaken()
+    {
+        if (Phase != WeaponDumbwaiterPhase.Open) return;
+        Phase = WeaponDumbwaiterPhase.Closing;
+        _phaseTime = 0f;
     }
 
     public void ObserveDamage(IReadOnlyList<SoftBody> bodies, bool allowDrop)
@@ -148,7 +171,11 @@ public sealed class WeaponDumbwaiter
             _observedBrokenLinks.TryGetValue(pair.Key, out var previous);
             var current = pair.Value.Broken;
             _observedBrokenLinks[pair.Key] = Math.Max(previous, current);
-            if (!allowDrop || HasTokenInSystem || current <= previous) continue;
+            if (!allowDrop || HasTokenInSystem ||
+                Phase is WeaponDumbwaiterPhase.Opening or
+                    WeaponDumbwaiterPhase.Closing or
+                    WeaponDumbwaiterPhase.ClosedHold ||
+                current <= previous) continue;
             var newBreaks = Math.Min(64, current - previous);
             for (var broken = 0; broken < newBreaks; broken++)
             {
@@ -173,6 +200,13 @@ public sealed class WeaponDumbwaiter
             new Vector2((Next01() - 0.5f) * 70f, -55f - Next01() * 35f));
     }
 
+    public bool TrySpawnDebugToken(Vector2 position)
+    {
+        if (!CanSpawnToken) return false;
+        SpawnToken(position);
+        return Token is not null;
+    }
+
     public void Step(
         float dt,
         Vector2 gravity,
@@ -180,7 +214,8 @@ public sealed class WeaponDumbwaiter
         DestructibleGrid grid,
         float worldWidth,
         float worldHeight,
-        PhysicalKnife? knife)
+        PhysicalKnife? knife,
+        bool powered)
     {
         _buttonFlashRemaining = MathF.Max(0f, _buttonFlashRemaining - dt);
         StepDebris(dt, gravity, conveyors, grid);
@@ -192,12 +227,27 @@ public sealed class WeaponDumbwaiter
                 Token = null;
         }
 
-        if (Phase == WeaponDumbwaiterPhase.Idle || knife is null) return;
+        if (knife is null) return;
+        if (Phase == WeaponDumbwaiterPhase.Closed)
+        {
+            if (!powered || _pendingVariant == int.MinValue) return;
+            Phase = WeaponDumbwaiterPhase.Opening;
+            _phaseTime = 0f;
+            return;
+        }
+        if (Phase == WeaponDumbwaiterPhase.Open)
+        {
+            if (!knife.IsGrabbed && !knife.IsDeployed) return;
+            NotifyWeaponTaken();
+            return;
+        }
         _phaseTime += dt;
         switch (Phase)
         {
             case WeaponDumbwaiterPhase.Closing when _phaseTime >= DoorCloseSeconds:
-                Phase = WeaponDumbwaiterPhase.ClosedHold;
+                Phase = _pendingVariant == int.MinValue
+                    ? WeaponDumbwaiterPhase.Closed
+                    : WeaponDumbwaiterPhase.ClosedHold;
                 _phaseTime = 0f;
                 break;
             case WeaponDumbwaiterPhase.ClosedHold when _phaseTime >= ClosedHoldSeconds:
@@ -206,8 +256,8 @@ public sealed class WeaponDumbwaiter
                 break;
             case WeaponDumbwaiterPhase.Opening when _phaseTime >= DoorOpenSeconds:
                 knife.CompleteDumbwaiterExchange(_pendingVariant);
-                _pendingVariant = -1;
-                Phase = WeaponDumbwaiterPhase.Idle;
+                _pendingVariant = int.MinValue;
+                Phase = WeaponDumbwaiterPhase.Open;
                 _phaseTime = 0f;
                 break;
         }
