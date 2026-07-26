@@ -1322,8 +1322,13 @@ public static class SelfTests
             0f,
             0f);
         var initial = basin.StoredVolume;
-        var sequence = new BloodShipmentSequence(basin);
+        var sequence = new BloodShipmentSequence(
+            basin,
+            GameProgression.BaseBloodRatePerGallon,
+            processedBlobs: 4,
+            processedRate: GameProgression.BaseProcessedBlobRate);
         var maximumConservationError = 0f;
+        var previousDisplayedBlood = 0m;
 
         for (var step = 0; step < 60 * 120 && !sequence.Complete; step++)
         {
@@ -1337,6 +1342,14 @@ public static class SelfTests
                 MathF.Abs(initial - represented));
             Assert(sequence.InFlightParticleCount <= BloodShipmentSequence.MaximumParticles,
                 "day-end transfer escaped its bounded physical-pixel budget");
+            if (sequence.Stage is not BloodShipmentStage.FinalizingPayout and
+                not BloodShipmentStage.Complete)
+            {
+                Assert(sequence.DisplayedBloodEarnings + 0.02m >= previousDisplayedBlood &&
+                       sequence.DisplayedBloodEarnings <= sequence.LoadedBloodPayout + 0.02m,
+                    "live earnings stopped being a smooth function of blood received by trucks");
+                previousDisplayedBlood = sequence.DisplayedBloodEarnings;
+            }
         }
 
         Assert(sequence.Complete,
@@ -1354,6 +1367,10 @@ public static class SelfTests
         Assert(maximumConservationError <= MathF.Max(0.1f, initial * 0.00001f),
             $"day-end transfer created or lost blood while pixels were in flight " +
             $"({maximumConservationError:0.000} volume error)");
+        Assert(sequence.DisplayedTotalEarnings == sequence.ProjectedTotalPayout &&
+               sequence.ProjectedTotalPayout ==
+               sequence.ProjectedBloodPayout + sequence.ProcessedBonus,
+            "shipment earnings did not finish at the exact itemized day payout");
     }
 
     private static void LaterBaysIncreaseBloodYield()
@@ -2714,7 +2731,11 @@ public static class SelfTests
             line.Basin.FluidCapacity * 0.76f,
             0f,
             0f);
-        var shipment = new BloodShipmentSequence(line.Basin);
+        var shipment = new BloodShipmentSequence(
+            line.Basin,
+            GameProgression.BaseBloodRatePerGallon,
+            processedBlobs: 7,
+            processedRate: GameProgression.BaseProcessedBlobRate);
         var renderer = new GameRenderer { BloodShipment = shipment };
 
         using var comparison = new Bitmap(3840, 720);

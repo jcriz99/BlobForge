@@ -48,6 +48,8 @@ public sealed class GameWindow : Form
     private Label _dayResultsBlood = null!;
     private Label _dayResultsProcessed = null!;
     private Label _dayResultsTotal = null!;
+    private Label _dayPayoutTransferLabel = null!;
+    private Button _dayResultsOk = null!;
     private Label _shopCurrency = null!;
     private Panel _shopContentHost = null!;
     private ShopFlowPanel _shopUpgradesContent = null!;
@@ -114,6 +116,9 @@ public sealed class GameWindow : Form
     private DayPayout _lastDayPayout;
     private BloodShipmentSequence? _bloodShipment;
     private int _daySaleProcessedCount;
+    private float _dayResultsTransferTime;
+    private Rectangle _dayResultsTransferStart;
+    private Rectangle _dayResultsTransferTarget;
     private FixtureDragTarget _fixtureDragTarget;
     private Vector2 _fixtureDragOffset;
     private Vector2 _fixtureDragStart;
@@ -661,10 +666,18 @@ public sealed class GameWindow : Form
             string.Empty, new Rectangle(250, 282, 780, 72), 15f, Color.FromArgb(225, 233, 239));
         _dayResultsTotal = CreateProgressionLabel(
             string.Empty, new Rectangle(250, 390, 780, 96), 19f, Color.FromArgb(240, 195, 75));
-        var ok = CreateProgressionButton("OK  •  CONTINUE TO SHOP", new Rectangle(470, 548, 340, 48));
-        ok.Click += (_, _) => ShowBetweenDaysShop();
+        _dayPayoutTransferLabel = CreateProgressionLabel(
+            string.Empty, GameRenderer.ShipmentEarningsPopupBounds, 19f,
+            Color.FromArgb(240, 195, 75));
+        _dayPayoutTransferLabel.BackColor = Color.FromArgb(8, 13, 17);
+        _dayPayoutTransferLabel.BorderStyle = BorderStyle.FixedSingle;
+        _dayPayoutTransferLabel.Visible = false;
+        _dayResultsOk = CreateProgressionButton(
+            "OK  •  CONTINUE TO SHOP", new Rectangle(470, 548, 340, 48));
+        _dayResultsOk.Click += (_, _) => ShowBetweenDaysShop();
         panel.Controls.AddRange([
-            _dayResultsTitle, _dayResultsBlood, _dayResultsProcessed, _dayResultsTotal, ok]);
+            _dayResultsTitle, _dayResultsBlood, _dayResultsProcessed, _dayResultsTotal,
+            _dayResultsOk, _dayPayoutTransferLabel]);
         return panel;
     }
 
@@ -930,7 +943,8 @@ public sealed class GameWindow : Form
 
     private void SetPaused(bool paused)
     {
-        if (_dayPhase is DayCyclePhase.Results or DayCyclePhase.Shop) return;
+        if (_dayPhase is DayCyclePhase.DayResultsTransfer or
+            DayCyclePhase.Results or DayCyclePhase.Shop) return;
         _paused = paused;
         _accumulator = 0;
         _lastSimulationStepTime = 0d;
@@ -1097,6 +1111,10 @@ public sealed class GameWindow : Form
         _renderer.BloodShipment = null;
         _bloodShipment = null;
         _daySaleProcessedCount = 0;
+        _dayResultsTransferTime = 0f;
+        _dayPayoutTransferLabel.Visible = false;
+        _dayResultsTotal.Visible = true;
+        _dayResultsOk.Visible = true;
         _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
         _dayResultsPanel.Visible = false;
         _betweenDaysPanel.Visible = false;
@@ -1333,7 +1351,11 @@ public sealed class GameWindow : Form
                 if (_dayPhaseTimer > 0f) return;
                 _renderer.CenterAnnouncement = null;
                 _renderer.CenterAnnouncementOpacity = 1f;
-                _bloodShipment = new BloodShipmentSequence(line.Basin);
+                _bloodShipment = new BloodShipmentSequence(
+                    line.Basin,
+                    _progression.BloodRatePerGallon,
+                    _daySaleProcessedCount,
+                    _progression.ProcessedBlobRate);
                 _renderer.BloodShipment = _bloodShipment;
                 _dayPhase = DayCyclePhase.BloodShipment;
                 return;
@@ -1341,7 +1363,11 @@ public sealed class GameWindow : Form
             case DayCyclePhase.BloodShipment:
                 if (_bloodShipment is null)
                 {
-                    _bloodShipment = new BloodShipmentSequence(line.Basin);
+                    _bloodShipment = new BloodShipmentSequence(
+                        line.Basin,
+                        _progression.BloodRatePerGallon,
+                        _daySaleProcessedCount,
+                        _progression.ProcessedBlobRate);
                     _renderer.BloodShipment = _bloodShipment;
                 }
                 _bloodShipment.Update(dt);
@@ -1353,6 +1379,10 @@ public sealed class GameWindow : Form
                 _renderer.BloodShipment = null;
                 _bloodShipment = null;
                 ShowDayResults();
+                return;
+
+            case DayCyclePhase.DayResultsTransfer:
+                UpdateDayResultsTransfer(dt);
                 return;
         }
     }
@@ -1380,7 +1410,7 @@ public sealed class GameWindow : Form
 
     private void ShowDayResults()
     {
-        _dayPhase = DayCyclePhase.Results;
+        _dayPhase = DayCyclePhase.DayResultsTransfer;
         var payout = _lastDayPayout;
         _dayResultsTitle.Text = $"{FormatDay(payout.Year, payout.DayOfYear)} COMPLETE";
         var unitAmount = _progression.VolumeUnit == BasinVolumeUnit.Gallons
@@ -1396,15 +1426,96 @@ public sealed class GameWindow : Form
             $"{payout.ProcessedRate:C2}  =  {payout.ProcessedPayout:C2}";
         _dayResultsTotal.Text =
             $"DAY PAYOUT  {payout.TotalPayout:C2}\nTOTAL FUNDS  {payout.CurrencyAfterSale:C2}";
+        _dayResultsTotal.Visible = false;
+        _dayResultsOk.Visible = false;
+        _dayResultsTransferTime = 0f;
+        _dayResultsTransferStart = GameRenderer.ShipmentEarningsPopupBounds;
+        _dayResultsTransferTarget = _dayResultsTotal.Bounds;
+        _dayPayoutTransferLabel.Bounds = _dayResultsTransferStart;
+        _dayPayoutTransferLabel.Text = $"DAY PAYOUT  {payout.TotalPayout:C2}";
+        _dayPayoutTransferLabel.Visible = true;
         SetFactoryOverlayControlsVisible(false);
         _dayResultsPanel.Visible = true;
         _dayResultsPanel.BringToFront();
+        _dayPayoutTransferLabel.BringToFront();
+    }
+
+    private void UpdateDayResultsTransfer(float dt)
+    {
+        const float duration = 0.86f;
+        _dayResultsTransferTime += dt;
+        var linear = Math.Clamp(_dayResultsTransferTime / duration, 0f, 1f);
+        var eased = linear * linear * (3f - 2f * linear);
+        _dayPayoutTransferLabel.Bounds = new Rectangle(
+            LerpInt(_dayResultsTransferStart.X, _dayResultsTransferTarget.X, eased),
+            LerpInt(_dayResultsTransferStart.Y, _dayResultsTransferTarget.Y, eased),
+            LerpInt(_dayResultsTransferStart.Width, _dayResultsTransferTarget.Width, eased),
+            LerpInt(_dayResultsTransferStart.Height, _dayResultsTransferTarget.Height, eased));
+        if (linear < 1f) return;
+
+        _dayPayoutTransferLabel.Visible = false;
+        _dayResultsTotal.Visible = true;
+        _dayResultsOk.Visible = true;
+        _dayPhase = DayCyclePhase.Results;
+    }
+
+    private static int LerpInt(int from, int to, float amount) =>
+        (int)MathF.Round(from + (to - from) * amount);
+
+    internal int WritePayoutHandoffSnapshot(string outputPath)
+    {
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(-32000, -32000);
+        _paused = true;
+        Show();
+        Application.DoEvents();
+        _lastDayPayout = new DayPayout(
+            1, 1, 1,
+            1884.6f,
+            7133.2f,
+            GameProgression.BaseBloodRatePerGallon,
+            5182.65m,
+            7,
+            GameProgression.BaseProcessedBlobRate,
+            126m,
+            5308.65m,
+            8754.31m);
+        ShowDayResults();
+        PerformLayout();
+        _dayResultsPanel.PerformLayout();
+        Application.DoEvents();
+
+        using var comparison = new Bitmap(WorldWidth * 3, WorldHeight);
+        using var frame = new Bitmap(WorldWidth, WorldHeight);
+        using var graphics = Graphics.FromImage(comparison);
+
+        void Capture(int panel)
+        {
+            frame.SetResolution(comparison.HorizontalResolution, comparison.VerticalResolution);
+            using (var clear = Graphics.FromImage(frame)) clear.Clear(_dayResultsPanel.BackColor);
+            _dayResultsPanel.DrawToBitmap(frame, new Rectangle(0, 0, WorldWidth, WorldHeight));
+            graphics.DrawImageUnscaled(frame, panel * WorldWidth, 0);
+        }
+
+        Capture(0);
+        UpdateDayResultsTransfer(0.43f);
+        Capture(1);
+        UpdateDayResultsTransfer(0.43f);
+        Capture(2);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, ImageFormat.Png);
+        Hide();
+        Console.WriteLine($"Payout handoff snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
     }
 
     private void ShowBetweenDaysShop()
     {
         _dayPhase = DayCyclePhase.Shop;
         _dayResultsPanel.Visible = false;
+        _dayPayoutTransferLabel.Visible = false;
         _betweenDaysPanel.Visible = true;
         _shopShowingWeapons = false;
         RefreshShopContent();
@@ -2012,7 +2123,8 @@ public sealed class GameWindow : Form
             Close();
             return;
         }
-        if (_dayPhase is DayCyclePhase.Results or DayCyclePhase.Shop)
+        if (_dayPhase is DayCyclePhase.DayResultsTransfer or
+            DayCyclePhase.Results or DayCyclePhase.Shop)
         {
             if (e.KeyCode == Keys.F11 || e.KeyCode == Keys.Enter && e.Alt)
                 ToggleFullscreen();
@@ -2449,6 +2561,7 @@ public sealed class GameWindow : Form
         EndingLights,
         EndAnnouncement,
         BloodShipment,
+        DayResultsTransfer,
         Results,
         Shop
     }

@@ -346,6 +346,12 @@ public sealed class GameRenderer
     private readonly Font _basinMeterFont = new("Consolas", 7f, FontStyle.Bold, GraphicsUnit.Point);
     private readonly Font _dayAnnouncementFont =
         new("Consolas", 34f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _shipmentEarningsLabelFont =
+        new("Consolas", 10f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _shipmentEarningsAmountFont =
+        new("Consolas", 24f, FontStyle.Bold, GraphicsUnit.Point);
+    private readonly Font _shipmentEarningsDetailFont =
+        new("Consolas", 8f, FontStyle.Bold, GraphicsUnit.Point);
     private readonly SolidBrush _basinRimDarkBrush = new(Color.FromArgb(255, 20, 29, 35));
     private readonly SolidBrush _basinRimBrush = new(Color.FromArgb(255, 95, 119, 128));
     private readonly SolidBrush _basinHighlightBrush = new(Color.FromArgb(255, 156, 182, 188));
@@ -357,6 +363,11 @@ public sealed class GameRenderer
     private readonly SolidBrush _shipmentBloodBrush = new(Color.FromArgb(255, 183, 4, 18));
     private readonly SolidBrush _shipmentBloodDarkBrush = new(Color.FromArgb(255, 104, 3, 16));
     private readonly SolidBrush _shipmentBloodHighlightBrush = new(Color.FromArgb(255, 248, 25, 24));
+    private readonly SolidBrush _shipmentPopupBackBrush = new(Color.FromArgb(242, 8, 13, 17));
+    private readonly SolidBrush _shipmentPopupLabelBrush = new(Color.FromArgb(255, 101, 230, 223));
+    private readonly SolidBrush _shipmentPopupAmountBrush = new(Color.FromArgb(255, 240, 195, 75));
+    private readonly SolidBrush _shipmentPopupDetailBrush = new(Color.FromArgb(255, 197, 215, 218));
+    private readonly Pen _shipmentPopupBorderPen = new(Color.FromArgb(255, 85, 113, 123), 2f);
     private readonly ConditionalWeakTable<SoftBody, BlobRenderScratch> _blobRenderScratch = new();
     private readonly PointF[] _fragmentPolygonPoints = new PointF[7];
     private readonly PointF[] _detachedFragmentPoints = new PointF[7];
@@ -459,6 +470,8 @@ public sealed class GameRenderer
     public double StainStageMs { get; private set; }
     public double GranularStageMs { get; private set; }
     public double BlobStageMs { get; private set; }
+
+    public static Rectangle ShipmentEarningsPopupBounds => new(914, 10, 320, 112);
 
     public bool TryHandleDebugOverlayClick(Vector2 point)
     {
@@ -692,6 +705,7 @@ public sealed class GameRenderer
         if (shipment.Stage >= BloodShipmentStage.DeployingFunnel)
             DrawBloodSaleFunnel(g, shipment);
         DrawShipmentBloodPixels(g, shipment);
+        DrawShipmentEarningsPopup(g, shipment);
     }
 
     private void DrawBloodSupplyTruck(Graphics g, BloodShipmentSequence shipment)
@@ -759,6 +773,31 @@ public sealed class GameRenderer
             if ((pixel.Variation & 3) == 0)
                 g.FillRectangle(_shipmentBloodHighlightBrush, x, y, 1f, 1f);
         }
+    }
+
+    private void DrawShipmentEarningsPopup(Graphics g, BloodShipmentSequence shipment)
+    {
+        var bounds = ShipmentEarningsPopupBounds;
+        g.FillRectangle(_shipmentPopupBackBrush, bounds);
+        g.DrawRectangle(_shipmentPopupBorderPen,
+            bounds.X + 0.5f,
+            bounds.Y + 0.5f,
+            bounds.Width - 1f,
+            bounds.Height - 1f);
+        g.DrawString("LIVE DAY EARNINGS", _shipmentEarningsLabelFont,
+            _shipmentPopupLabelBrush, bounds.X + 14f, bounds.Y + 10f);
+        g.DrawString($"{shipment.DisplayedTotalEarnings:C2}",
+            _shipmentEarningsAmountFont,
+            _shipmentPopupAmountBrush,
+            bounds.X + 12f,
+            bounds.Y + 34f);
+
+        var detail = shipment.Stage == BloodShipmentStage.FinalizingPayout
+            ? $"PROCESSING BONUS  +{shipment.ProcessedBonus:C2}"
+            : $"{shipment.InitialGallons * shipment.LoadedFraction:0.0} GAL LOADED" +
+              $"  •  BLOOD {shipment.LoadedBloodPayout:C2}";
+        g.DrawString(detail, _shipmentEarningsDetailFont,
+            _shipmentPopupDetailBrush, bounds.X + 14f, bounds.Bottom - 25f);
     }
 
     private void DrawCenterAnnouncement(Graphics g, Size viewport)

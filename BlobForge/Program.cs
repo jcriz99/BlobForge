@@ -83,6 +83,17 @@ internal static class Program
                 : Path.Combine(AppContext.BaseDirectory, "blood-shipment-preview.png");
             return SelfTests.WriteBloodShipmentSnapshot(output);
         }
+        var payoutHandoffSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--payout-handoff-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (payoutHandoffSnapshotArgument >= 0)
+        {
+            var output = payoutHandoffSnapshotArgument + 1 < args.Length
+                ? args[payoutHandoffSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "payout-handoff-preview.png");
+            ApplicationConfiguration.Initialize();
+            using var window = new GameWindow();
+            return window.WritePayoutHandoffSnapshot(output);
+        }
         var granularOverflowSnapshotArgument = Array.FindIndex(args,
             argument => argument.Equals("--granular-overflow-snapshot", StringComparison.OrdinalIgnoreCase));
         if (granularOverflowSnapshotArgument >= 0)

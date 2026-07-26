@@ -9,6 +9,7 @@ public enum BloodShipmentStage : byte
     TruckArriving,
     LoadingTruck,
     TruckDeparting,
+    FinalizingPayout,
     Complete
 }
 
@@ -35,6 +36,8 @@ public sealed class BloodShipmentSequence
     private const float TruckSpeed = 1500f;
     private const float ParticleSpeed = 520f;
     private const float ParticleSpawnRate = 80f;
+    private const float EarningsResponse = 28f;
+    private const float PayoutFinalizeDuration = 0.62f;
     private const float TruckSpriteWidth = 128f * SpriteScale;
 
     private readonly BloodBasin _basin;
@@ -52,14 +55,27 @@ public sealed class BloodShipmentSequence
     private float _currentTruckLoaded;
     private float _currentTruckCapacity;
     private float _truckX;
+    private float _displayedBloodEarnings;
+    private float _displayedTotalEarnings;
     private int _serial;
 
-    public BloodShipmentSequence(BloodBasin basin)
+    public BloodShipmentSequence(
+        BloodBasin basin,
+        decimal bloodRatePerGallon = 0m,
+        int processedBlobs = 0,
+        decimal processedRate = 0m)
     {
         _basin = basin;
         InitialVolume = basin.PrepareForShipment();
         InitialGallons = basin.EstimatedStoredGallons;
         InitialLiters = basin.EstimatedStoredLiters;
+        BloodRatePerGallon = Math.Max(0m, bloodRatePerGallon);
+        ProcessedBonus = Math.Max(0, processedBlobs) * Math.Max(0m, processedRate);
+        ProjectedBloodPayout = decimal.Round(
+            (decimal)InitialGallons * BloodRatePerGallon,
+            2,
+            MidpointRounding.AwayFromZero);
+        ProjectedTotalPayout = ProjectedBloodPayout + ProcessedBonus;
 
         var fill = InitialVolume / MathF.Max(0.001f, basin.FluidCapacity);
         var particleCount = InitialVolume <= 0f
@@ -83,6 +99,25 @@ public sealed class BloodShipmentSequence
     public float InitialVolume { get; }
     public float InitialGallons { get; }
     public float InitialLiters { get; }
+    public decimal BloodRatePerGallon { get; }
+    public decimal ProjectedBloodPayout { get; }
+    public decimal ProcessedBonus { get; }
+    public decimal ProjectedTotalPayout { get; }
+    public decimal LoadedBloodPayout => decimal.Round(
+        ProjectedBloodPayout * (decimal)LoadedFraction,
+        2,
+        MidpointRounding.AwayFromZero);
+    public decimal DisplayedBloodEarnings => decimal.Round(
+        (decimal)_displayedBloodEarnings,
+        2,
+        MidpointRounding.AwayFromZero);
+    public decimal DisplayedTotalEarnings => decimal.Round(
+        (decimal)_displayedTotalEarnings,
+        2,
+        MidpointRounding.AwayFromZero);
+    public float LoadedFraction => InitialVolume <= 0f
+        ? 1f
+        : Math.Clamp(_loadedVolume / InitialVolume, 0f, 1f);
     public float ShippedVolume => _loadedVolume;
     public int PlannedTruckCount => _plannedTruckCount;
     public int DepartedTruckCount { get; private set; }
@@ -136,9 +171,12 @@ public sealed class BloodShipmentSequence
 
             case BloodShipmentStage.DeployingFunnel:
                 if (_stageTime >= FunnelDeployDuration)
-                    EnterStage(InitialVolume > 0f
-                        ? BloodShipmentStage.TruckArriving
-                        : BloodShipmentStage.Complete);
+                {
+                    if (InitialVolume > 0f)
+                        EnterStage(BloodShipmentStage.TruckArriving);
+                    else
+                        Finish();
+                }
                 break;
 
             case BloodShipmentStage.TruckArriving:
@@ -177,8 +215,27 @@ public sealed class BloodShipmentSequence
                 _truckX = -TruckSpriteWidth - 24f;
                 EnterStage(BloodShipmentStage.TruckArriving);
                 break;
+
+            case BloodShipmentStage.FinalizingPayout:
+            {
+                _displayedBloodEarnings = (float)ProjectedBloodPayout;
+                var progress = SmoothStep(Math.Clamp(
+                    _stageTime / PayoutFinalizeDuration,
+                    0f,
+                    1f));
+                var bloodPayout = (float)ProjectedBloodPayout;
+                _displayedTotalEarnings = bloodPayout +
+                    ((float)ProjectedTotalPayout - bloodPayout) * progress;
+                if (_stageTime >= PayoutFinalizeDuration)
+                {
+                    _displayedTotalEarnings = (float)ProjectedTotalPayout;
+                    EnterStage(BloodShipmentStage.Complete);
+                }
+                break;
+            }
         }
 
+        UpdateDisplayedEarnings(dt);
         RebuildRenderPixels();
     }
 
@@ -329,8 +386,22 @@ public sealed class BloodShipmentSequence
     {
         _loadedVolume = InitialVolume;
         _currentTruckLoaded = _currentTruckCapacity;
-        EnterStage(BloodShipmentStage.Complete);
+        _displayedBloodEarnings = (float)ProjectedBloodPayout;
+        _displayedTotalEarnings = _displayedBloodEarnings;
+        EnterStage(BloodShipmentStage.FinalizingPayout);
         RebuildRenderPixels();
+    }
+
+    private void UpdateDisplayedEarnings(float dt)
+    {
+        if (Stage is BloodShipmentStage.FinalizingPayout or BloodShipmentStage.Complete)
+            return;
+        var target = (float)ProjectedBloodPayout * LoadedFraction;
+        var response = 1f - MathF.Exp(-EarningsResponse * dt);
+        _displayedBloodEarnings += (target - _displayedBloodEarnings) * response;
+        if (MathF.Abs(target - _displayedBloodEarnings) < 0.005f)
+            _displayedBloodEarnings = target;
+        _displayedTotalEarnings = _displayedBloodEarnings;
     }
 
     private static float SmoothStep(float value) => value * value * (3f - 2f * value);
