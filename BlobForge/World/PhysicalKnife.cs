@@ -302,6 +302,7 @@ public sealed class PhysicalKnife
     private float _flameTrailCooldown;
     private float _smokeSpawnCooldown;
     private bool _baseballInPlay;
+    private bool _dumbwaiterSuppressed;
     private uint _arsenalRandom = 0x9E3779B9u;
     private const float MagneticReturnRadius = 112f;
     private const float MaximumGripDistance = 96f;
@@ -355,7 +356,7 @@ public sealed class PhysicalKnife
     public bool IsReturningToHolster { get; private set; }
     public bool IsRespawning => RespawnRemaining > 0f;
     public float RespawnRemaining { get; private set; }
-    public bool Visible => !IsRespawning;
+    public bool Visible => !IsRespawning && !_dumbwaiterSuppressed;
     public int BlobContactsThisStep { get; private set; }
     public bool PuncturedThisStep { get; private set; }
     public CleaverControlState ControlState { get; private set; }
@@ -546,6 +547,34 @@ public sealed class PhysicalKnife
         _baseballInPlay = false;
         ResetArsenalPrimary();
         ReturnToHolster();
+    }
+
+    public void BeginDumbwaiterExchange()
+    {
+        _dumbwaiterSuppressed = true;
+        IsGrabbed = false;
+        IsDeployed = false;
+        HoldMode = ToolHoldMode.None;
+        IsHolstered = false;
+        IsReturningToHolster = false;
+        _rotationAdjusting = false;
+        _sledgeToggleGesture = false;
+        _placementPreviewShown = false;
+        _grenadeTrajectory.Clear();
+        _heavyBloodBridges.Clear();
+        ResetArsenalPrimary();
+        Position = HolsterPosition;
+        _previousPosition = Position;
+        _grabTarget = Position;
+        _lastGrabTarget = Position;
+        _gripVelocity = Vector2.Zero;
+        _angularVelocity = 0f;
+    }
+
+    public void CompleteDumbwaiterExchange(int variant)
+    {
+        SelectArsenalVisual(variant);
+        _dumbwaiterSuppressed = false;
     }
 
     private bool BeginHold(Vector2 point, Vector2 target, ToolHoldMode mode)
@@ -1018,6 +1047,11 @@ public sealed class PhysicalKnife
         UpdateSlingshotImpact(dt, bodies, tubeFeed);
         UpdateArsenalProjectiles(dt, gravity, conveyors, bodies, worldWidth, worldHeight,
             tubeFeed, grid, granular);
+        if (_dumbwaiterSuppressed)
+        {
+            _grenadeTrajectory.Clear();
+            return;
+        }
         if (ArsenalVisualVariant >= 0 && (IsGrabbed || IsDeployed))
         {
             UpdateArsenalPrimary(dt, bodies, tubeFeed);

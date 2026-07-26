@@ -49,7 +49,6 @@ public sealed class GameRenderer
     private static readonly Lazy<Bitmap?> OverheadTubeSprite = new(() => LoadAsset("OverheadTube.png"));
     private static readonly Lazy<Bitmap?> ContinuousEndDrainSprite = new(() => LoadAsset("ContinuousEndDrain.png"));
     private static readonly Lazy<Bitmap?> KnifeSprite = new(() => LoadAsset("ButcherCleaver.png"));
-    private static readonly Lazy<Bitmap?> KnifeHolsterSprite = new(() => LoadAsset("ButcherCleaverRack.png"));
     private static readonly Lazy<Bitmap?> CleaverHeavyImpactSprite = new(() => LoadAsset("CleaverHeavyImpact.png"));
     private static readonly Lazy<Bitmap?[]> ArsenalToolFrames = new(() =>
         LoadHorizontalFrames("TestArsenalTools.png", 96, 64, PhysicalKnife.ArsenalVariantCount));
@@ -81,6 +80,18 @@ public sealed class GameRenderer
         new(() => LoadAsset("BloodSupplyTruck.png"));
     private static readonly Lazy<Bitmap?> BloodSaleFunnelSprite =
         new(() => LoadAsset("BloodSaleFunnel.png"));
+    private static readonly Lazy<Bitmap?[]> WeaponDumbwaiterFrames = new(() =>
+        LoadHorizontalFrames("WeaponDumbwaiter.png", 72, 96, 4));
+    private static readonly Lazy<Bitmap?[]> WeaponDumbwaiterControlFrames = new(() =>
+        LoadHorizontalFrames("WeaponDumbwaiterControls.png", 32, 64, 3));
+    private static readonly Lazy<Bitmap?[]> WeaponRerollTokenFrames = new(() =>
+        LoadHorizontalFrames("WeaponRerollToken.png", 16, 16, 4));
+    private static readonly SolidBrush DumbwaiterDebrisCyanBrush =
+        new(Color.FromArgb(255, 101, 230, 223));
+    private static readonly SolidBrush DumbwaiterDebrisAmberBrush =
+        new(Color.FromArgb(255, 230, 181, 58));
+    private static readonly SolidBrush DumbwaiterDebrisSteelBrush =
+        new(Color.FromArgb(255, 91, 111, 121));
     private static readonly Lazy<Bitmap?> DiegoSpriteSheet = new(() => LoadAsset("Diego.png"));
     private static readonly Lazy<Bitmap?> FilterKnobSprite = new(() => LoadAsset("FilterKnob.png"));
     private static readonly Lazy<Bitmap?> BreakerBoxSprite = new(() => LoadAsset("BreakerBox.png"));
@@ -471,7 +482,7 @@ public sealed class GameRenderer
     public double GranularStageMs { get; private set; }
     public double BlobStageMs { get; private set; }
 
-    public static Rectangle ShipmentEarningsPopupBounds => new(914, 10, 320, 112);
+    public static Rectangle ShipmentEarningsPopupBounds => new(600, 560, 320, 58);
 
     public bool TryHandleDebugOverlayClick(Vector2 point)
     {
@@ -593,6 +604,7 @@ public sealed class GameRenderer
             detailStart = Stopwatch.GetTimestamp();
         }
         DrawProcessingLineBack(g, world.ProcessingLine);
+        DrawWeaponDumbwaiter(g, world.WeaponDumbwaiter);
         if (ProfileStages)
             BasinBackStageMs = Stopwatch.GetElapsedTime(detailStart).TotalMilliseconds;
         if (ProfileStages)
@@ -639,6 +651,7 @@ public sealed class GameRenderer
         DrawDrumLoadingForeground(g, world.ProcessingLine);
         DrawKnifeHeavyImpact(g, world.Knife);
         DrawKnife(g, world.Knife);
+        DrawWeaponRerollToken(g, world.WeaponDumbwaiter);
         DrawBreakerBox(g, world.ProcessingLine);
         if (ProfileStages)
         {
@@ -778,26 +791,11 @@ public sealed class GameRenderer
     private void DrawShipmentEarningsPopup(Graphics g, BloodShipmentSequence shipment)
     {
         var bounds = ShipmentEarningsPopupBounds;
-        g.FillRectangle(_shipmentPopupBackBrush, bounds);
-        g.DrawRectangle(_shipmentPopupBorderPen,
-            bounds.X + 0.5f,
-            bounds.Y + 0.5f,
-            bounds.Width - 1f,
-            bounds.Height - 1f);
-        g.DrawString("LIVE DAY EARNINGS", _shipmentEarningsLabelFont,
-            _shipmentPopupLabelBrush, bounds.X + 14f, bounds.Y + 10f);
-        g.DrawString($"{shipment.DisplayedTotalEarnings:C2}",
-            _shipmentEarningsAmountFont,
-            _shipmentPopupAmountBrush,
-            bounds.X + 12f,
-            bounds.Y + 34f);
-
-        var detail = shipment.Stage == BloodShipmentStage.FinalizingPayout
-            ? $"PROCESSING BONUS  +{shipment.ProcessedBonus:C2}"
-            : $"{shipment.InitialGallons * shipment.LoadedFraction:0.0} GAL LOADED" +
-              $"  •  BLOOD {shipment.LoadedBloodPayout:C2}";
-        g.DrawString(detail, _shipmentEarningsDetailFont,
-            _shipmentPopupDetailBrush, bounds.X + 14f, bounds.Bottom - 25f);
+        var text = $"{shipment.DisplayedTotalEarnings:C2}";
+        var size = g.MeasureString(text, _shipmentEarningsAmountFont);
+        g.DrawString(text, _shipmentEarningsAmountFont, _shipmentPopupAmountBrush,
+            MathF.Round(bounds.X + (bounds.Width - size.Width) * 0.5f),
+            MathF.Round(bounds.Y + (bounds.Height - size.Height) * 0.5f));
     }
 
     private void DrawCenterAnnouncement(Graphics g, Size viewport)
@@ -1864,7 +1862,6 @@ public sealed class GameRenderer
             DrawContinuousWallPortals(g, line, foreground: false);
             DrawOverheadTube(g, line, foreground: false);
             DrawContinuousEndDrain(g, line, foreground: false);
-            DrawKnifeHolster(g, line);
         }
         else
         {
@@ -1953,13 +1950,41 @@ public sealed class GameRenderer
             new RectangleF(rightFrame * 64f, 0f, 64f, 160f), GraphicsUnit.Pixel);
     }
 
-    private static void DrawKnifeHolster(Graphics g, ProcessingLine line)
+    private static void DrawWeaponDumbwaiter(Graphics g, WeaponDumbwaiter? dumbwaiter)
     {
-        var sprite = KnifeHolsterSprite.Value;
-        if (sprite is null) return;
-        var center = line.ContinuousToolRackCenter;
-        g.DrawImage(sprite, new RectangleF(center.X - 36f, center.Y - 28f, 72f, 56f),
-            new RectangleF(0f, 0f, sprite.Width, sprite.Height), GraphicsUnit.Pixel);
+        if (dumbwaiter is null) return;
+        var doorFrames = WeaponDumbwaiterFrames.Value;
+        var door = doorFrames[Math.Clamp(dumbwaiter.DoorFrame, 0, doorFrames.Length - 1)];
+        if (door is not null)
+            g.DrawImage(door, dumbwaiter.DisplayBounds,
+                new RectangleF(0f, 0f, door.Width, door.Height), GraphicsUnit.Pixel);
+        var controlFrames = WeaponDumbwaiterControlFrames.Value;
+        var controls = controlFrames[Math.Clamp(dumbwaiter.ControlsFrame, 0, controlFrames.Length - 1)];
+        if (controls is not null)
+            g.DrawImage(controls, dumbwaiter.ControlsBounds,
+                new RectangleF(0f, 0f, controls.Width, controls.Height), GraphicsUnit.Pixel);
+        foreach (var debris in dumbwaiter.Debris)
+        {
+            var brush = (debris.Variation & 3) switch
+            {
+                0 => DumbwaiterDebrisCyanBrush,
+                1 => DumbwaiterDebrisAmberBrush,
+                _ => DumbwaiterDebrisSteelBrush
+            };
+            g.FillRectangle(brush, MathF.Round(debris.Position.X - debris.Size * 0.5f),
+                MathF.Round(debris.Position.Y - debris.Size * 0.5f), debris.Size, debris.Size);
+        }
+    }
+
+    private static void DrawWeaponRerollToken(Graphics g, WeaponDumbwaiter? dumbwaiter)
+    {
+        if (dumbwaiter?.Token is not { } token) return;
+        var frames = WeaponRerollTokenFrames.Value;
+        var frame = frames[Math.Clamp(token.SpinFrame, 0, frames.Length - 1)];
+        if (frame is null) return;
+        var destination = new RectangleF(token.Position.X - 8f, token.Position.Y - 8f, 16f, 16f);
+        g.DrawImage(frame, destination, new RectangleF(0f, 0f, frame.Width, frame.Height),
+            GraphicsUnit.Pixel);
     }
 
     private void DrawKnife(Graphics g, PhysicalKnife? knife)
@@ -4984,6 +5009,18 @@ public sealed class GameRenderer
 
     private void DrawCollisionDebug(Graphics g, BlobWorld world)
     {
+        if (world.WeaponDumbwaiter is { } dumbwaiter)
+        {
+            if (dumbwaiter.Token is { } token)
+                g.DrawEllipse(_debugProjectileColliderPen,
+                    token.Position.X - WeaponDumbwaiter.TokenRadius,
+                    token.Position.Y - WeaponDumbwaiter.TokenRadius,
+                    WeaponDumbwaiter.TokenRadius * 2f, WeaponDumbwaiter.TokenRadius * 2f);
+            g.DrawEllipse(_debugToolColliderPen,
+                dumbwaiter.CoinSlotCenter.X - 21f, dumbwaiter.CoinSlotCenter.Y - 21f, 42f, 42f);
+            g.DrawEllipse(_debugToolColliderPen,
+                dumbwaiter.ButtonCenter.X - 23f, dumbwaiter.ButtonCenter.Y - 23f, 46f, 46f);
+        }
         var knife = world.Knife;
         if (knife is not { Visible: true }) return;
 

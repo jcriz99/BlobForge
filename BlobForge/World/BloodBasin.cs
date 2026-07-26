@@ -351,7 +351,7 @@ public sealed class BloodBasin
         CurrentFluidVolume = MathF.Max(0f, CurrentFluidVolume - extracted);
         TotalSpent += extracted;
         _availableDrinkVolume = MathF.Min(_availableDrinkVolume, CurrentFluidVolume);
-        SynchronizeCellsToVolume(Left + Width * 0.5f);
+        SynchronizeCellsForShipmentDrain();
         return extracted;
     }
 
@@ -876,6 +876,31 @@ public sealed class BloodBasin
         _settledTicks = 0;
         FluidVisualRevision++;
         RebuildSurfaceAndProjection(focusX);
+    }
+
+    /// <summary>
+    /// Shipment extraction drains the basin as one connected pool. Rebuilding the
+    /// conservative cell representation from the floor upward prevents the old
+    /// center-first removal from leaving artificial walls at both endcaps.
+    /// </summary>
+    private void SynchronizeCellsForShipmentDrain()
+    {
+        var totalCells = FluidGridWidth * FluidGridHeight;
+        var targetCells = CurrentFluidVolume >= FluidCapacity - 0.001f
+            ? totalCells
+            : Math.Clamp((int)MathF.Floor(CurrentFluidVolume / FluidCellVolume), 0, totalCells);
+        Array.Clear(_cells);
+        _fluidCellCount = targetCells;
+        BuildHydrostaticTarget();
+        for (var column = 0; column < FluidGridWidth; column++)
+        {
+            var mass = _targetColumnMass[column];
+            for (var row = FluidGridHeight - mass; row < FluidGridHeight; row++)
+                _cells[Index(column, row)] = true;
+        }
+        _fluidActive = targetCells > 0;
+        _settledTicks = 0;
+        RebuildSurfaceAndProjection(Left + Width * 0.5f);
     }
 
     private bool AddCellNear(float x, int ordinal)

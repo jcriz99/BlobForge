@@ -31,6 +31,7 @@ public sealed class GameWindow : Form
     private readonly SoundEffectMixer _audio = new();
     private readonly FixtureLayoutSettings _fixtureLayout = FixtureLayoutSettings.Load();
     private readonly GameProgression _progression = GameProgression.Load();
+    private readonly Random _weaponRandom = new();
     private readonly GameSurface _surface;
     private readonly Button _spawnButton;
     private readonly Button _conveyorButton;
@@ -119,6 +120,7 @@ public sealed class GameWindow : Form
     private float _dayResultsTransferTime;
     private Rectangle _dayResultsTransferStart;
     private Rectangle _dayResultsTransferTarget;
+    private string? _currentDayWeaponCode;
     private FixtureDragTarget _fixtureDragTarget;
     private Vector2 _fixtureDragOffset;
     private Vector2 _fixtureDragStart;
@@ -366,7 +368,7 @@ public sealed class GameWindow : Form
                 _highResolutionTimerActive = false;
             }
         };
-        ResetScene();
+        ResetScene(rollDailyWeapon: true);
         _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
         _settingsGravity.Checked = true;
         LayoutOverlays();
@@ -671,9 +673,10 @@ public sealed class GameWindow : Form
             Color.FromArgb(240, 195, 75));
         _dayPayoutTransferLabel.BackColor = Color.FromArgb(8, 13, 17);
         _dayPayoutTransferLabel.BorderStyle = BorderStyle.FixedSingle;
+        _dayPayoutTransferLabel.Anchor = AnchorStyles.None;
         _dayPayoutTransferLabel.Visible = false;
         _dayResultsOk = CreateProgressionButton(
-            "OK  •  CONTINUE TO SHOP", new Rectangle(470, 548, 340, 48));
+            "CONTINUE TO SHOP", new Rectangle(470, 610, 340, 48));
         _dayResultsOk.Click += (_, _) => ShowBetweenDaysShop();
         panel.Controls.AddRange([
             _dayResultsTitle, _dayResultsBlood, _dayResultsProcessed, _dayResultsTotal,
@@ -917,6 +920,14 @@ public sealed class GameWindow : Form
         _lightButton.BringToFront();
         if (_pausePanel.Visible) _pausePanel.BringToFront();
         if (_settingsPanel.Visible) _settingsPanel.BringToFront();
+        if (_dayResultsPanel.ClientSize.Width > 0)
+        {
+            _dayResultsOk.Left = Math.Max(0,
+                (_dayResultsPanel.ClientSize.Width - _dayResultsOk.Width) / 2);
+            _dayResultsOk.Top = Math.Min(
+                _dayResultsPanel.ClientSize.Height - _dayResultsOk.Height - 24,
+                _dayResultsTotal.Bottom + 56);
+        }
         if (_dayResultsPanel.Visible) _dayResultsPanel.BringToFront();
         if (_betweenDaysPanel.Visible) _betweenDaysPanel.BringToFront();
     }
@@ -955,6 +966,9 @@ public sealed class GameWindow : Form
             _fixtureDragMoved = false;
             _input.SetLeft(false);
             _input.SetRight(false);
+            if (_world.WeaponDumbwaiter?.Token?.IsGrabbed == true)
+                _world.WeaponDumbwaiter.ReleaseToken(
+                    _world.WeaponDumbwaiter.Token.Position, Vector2.Zero);
             _grabbed?.EndGrab(Vector2.Zero, FixedDt);
             _grabbed = null;
             if (_world.Knife?.IsGrabbed == true)
@@ -1058,7 +1072,7 @@ public sealed class GameWindow : Form
         _renderer.FullscreenToggleCount = _fullscreenToggleCount;
     }
 
-    private void ResetScene()
+    private void ResetScene(bool rollDailyWeapon = false)
     {
         _audio.StopAll();
         var cellSize = 32;
@@ -1083,6 +1097,12 @@ public sealed class GameWindow : Form
         };
         grid.OpenContinuousConveyorPortals();
         _world.Knife = new PhysicalKnife(_world.ProcessingLine.ContinuousToolRackCenter);
+        if (rollDailyWeapon || string.IsNullOrWhiteSpace(_currentDayWeaponCode))
+            _currentDayWeaponCode = _progression.RollDailyWeapon(_weaponRandom);
+        _world.Knife.SelectArsenalVisual(
+            GameProgression.WeaponVariantForCode(_currentDayWeaponCode));
+        _world.WeaponDumbwaiter = new WeaponDumbwaiter(
+            _world.ProcessingLine.ContinuousToolRackCenter);
         _world.ProcessingLine.SetBreakerPosition(
             new Vector2(_world.ProcessingLine.BreakerBounds.X, _world.ProcessingLine.BreakerBounds.Y),
             WorldWidth, WorldHeight);
@@ -1429,13 +1449,15 @@ public sealed class GameWindow : Form
         _dayResultsTotal.Visible = false;
         _dayResultsOk.Visible = false;
         _dayResultsTransferTime = 0f;
-        _dayResultsTransferStart = GameRenderer.ShipmentEarningsPopupBounds;
+        _dayResultsTransferStart = ScaleLogicalBoundsToDayPanel(
+            GameRenderer.ShipmentEarningsPopupBounds);
         _dayResultsTransferTarget = _dayResultsTotal.Bounds;
         _dayPayoutTransferLabel.Bounds = _dayResultsTransferStart;
-        _dayPayoutTransferLabel.Text = $"DAY PAYOUT  {payout.TotalPayout:C2}";
+        _dayPayoutTransferLabel.Text = $"{payout.TotalPayout:C2}";
         _dayPayoutTransferLabel.Visible = true;
         SetFactoryOverlayControlsVisible(false);
         _dayResultsPanel.Visible = true;
+        LayoutOverlays();
         _dayResultsPanel.BringToFront();
         _dayPayoutTransferLabel.BringToFront();
     }
@@ -1461,6 +1483,17 @@ public sealed class GameWindow : Form
 
     private static int LerpInt(int from, int to, float amount) =>
         (int)MathF.Round(from + (to - from) * amount);
+
+    private Rectangle ScaleLogicalBoundsToDayPanel(Rectangle logical)
+    {
+        var scaleX = _dayResultsPanel.ClientSize.Width / (float)WorldWidth;
+        var scaleY = _dayResultsPanel.ClientSize.Height / (float)WorldHeight;
+        return new Rectangle(
+            (int)MathF.Round(logical.X * scaleX),
+            (int)MathF.Round(logical.Y * scaleY),
+            Math.Max(1, (int)MathF.Round(logical.Width * scaleX)),
+            Math.Max(1, (int)MathF.Round(logical.Height * scaleY)));
+    }
 
     internal int WritePayoutHandoffSnapshot(string outputPath)
     {
@@ -1526,7 +1559,7 @@ public sealed class GameWindow : Form
     {
         _progression.AdvanceDay();
         _betweenDaysPanel.Visible = false;
-        ResetScene();
+        ResetScene(rollDailyWeapon: true);
         SetFactoryOverlayControlsVisible(true);
         LayoutOverlays();
         _surface.Focus();
@@ -1572,6 +1605,12 @@ public sealed class GameWindow : Form
             _surface.Cursor = hovered >= 0 ? Cursors.Hand : Cursors.Default;
             return;
         }
+        if (_world.WeaponDumbwaiter?.Token?.IsGrabbed == true)
+        {
+            _world.WeaponDumbwaiter.SetTokenGrabTarget(point);
+            _surface.Cursor = Cursors.Hand;
+            return;
+        }
         if (_toolRotationHeld && _world.Knife is { } rotatingTool)
         {
             rotatingTool.UpdateRotationAdjust(point);
@@ -1607,10 +1646,12 @@ public sealed class GameWindow : Form
             _surface.Cursor = Cursors.SizeAll;
             return;
         }
+        var dumbwaiter = _world.WeaponDumbwaiter;
         _surface.Cursor = _world.ProcessingLine?.HitBreakerLever(point) == true ||
                           _world.ProcessingLine?.HitDrumWheel(point) == true ||
                           _world.ProcessingLine?.HitBloodShop(point) == true ||
-                          _world.Knife?.HitTest(point) == true
+                          _world.Knife?.HitTest(point) == true ||
+                          dumbwaiter?.BeginHover(point) == true
             ? Cursors.Hand
             : _world.ProcessingLine?.HitBreaker(point) == true ||
               _world.HoldingChamber?.HitCounter(point) == true
@@ -1710,6 +1751,33 @@ public sealed class GameWindow : Form
                 _surface.Cursor = Cursors.Hand;
                 _surface.Focus();
                 return;
+            }
+            if (_world.ProcessingLine?.Powered == true &&
+                _world.WeaponDumbwaiter is { } dumbwaiter)
+            {
+                if (dumbwaiter.ButtonArmed && dumbwaiter.HitButton(_input.MousePosition) &&
+                    _world.Knife is { } exchangingTool)
+                {
+                    var replacementCode = _progression.RollRerollWeapon(
+                        _weaponRandom, _currentDayWeaponCode ?? "CLEAVER");
+                    if (dumbwaiter.Activate(
+                            GameProgression.WeaponVariantForCode(replacementCode), exchangingTool))
+                    {
+                        _currentDayWeaponCode = replacementCode;
+                        _toolPrimaryHeld = false;
+                        _toolRotationHeld = false;
+                        _input.SetRight(false);
+                    }
+                    _surface.Focus();
+                    return;
+                }
+                if (dumbwaiter.BeginTokenGrab(_input.MousePosition))
+                {
+                    _grabbed = null;
+                    _surface.Cursor = Cursors.Hand;
+                    _surface.Focus();
+                    return;
+                }
             }
             if (_world.ProcessingLine?.Powered == true &&
                 _world.Knife is { IsDeployed: true, ArsenalVisualVariant: 8 } deployedSling &&
@@ -1906,6 +1974,13 @@ public sealed class GameWindow : Form
         if (e.Button == MouseButtons.Left)
         {
             _input.SetLeft(false);
+            if (_world.WeaponDumbwaiter?.Token?.IsGrabbed == true)
+            {
+                _world.WeaponDumbwaiter.ReleaseToken(
+                    _input.MousePosition, _input.GetMouseVelocity());
+                _surface.Cursor = Cursors.Default;
+                return;
+            }
             if (_toolPrimaryHeld && _world.Knife is { } activeTool)
             {
                 activeTool.EndPrimaryAction();
@@ -2158,7 +2233,7 @@ public sealed class GameWindow : Form
         }
         if (_paused) return;
 
-        if (e.KeyCode == Keys.I)
+        if (e.KeyCode == Keys.I && _renderer.DebugDraw)
         {
             if (_renderer.ArsenalMenuOpen) CloseArsenalMenu();
             else OpenArsenalMenu();

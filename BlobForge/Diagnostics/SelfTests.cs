@@ -45,6 +45,7 @@ public static class SelfTests
             ("dropped cleaver settles and rides without belt-driven rolling", DroppedCleaverRidesWithoutRolling),
             ("nearby cleaver flies back to its centered wall rack", KnifeReturnsToHolster),
             ("arsenal selection swaps the grabbable tool in the centered rack", ArsenalSelectionSwapsCenteredTool),
+            ("physical dumbwaiter token deposits and rerolls one unlocked weapon", WeaponDumbwaiterRerollsOneWeapon),
             ("arsenal primary actions dispatch weapon-specific behavior", ArsenalPrimaryActionsAreDistinct),
             ("slingshot impacts damage launched and struck blobs", SlingshotImpactsDamageBothBodies),
             ("expanded arsenal entities keep their promised distinct mechanics", ExpandedArsenalMechanicsAreDistinct),
@@ -1328,11 +1329,22 @@ public static class SelfTests
             processedBlobs: 4,
             processedRate: GameProgression.BaseProcessedBlobRate);
         var maximumConservationError = 0f;
+        var maximumDrainShelf = 0f;
         var previousDisplayedBlood = 0m;
 
         for (var step = 0; step < 60 * 120 && !sequence.Complete; step++)
         {
             sequence.Update(Dt);
+            if (step % 20 == 0 && basin.StoredVolume < initial - 0.01f &&
+                basin.FluidCellCount >= BloodBasin.FluidGridWidth)
+            {
+                var columnFills = Enumerable.Range(0, BloodBasin.FluidGridWidth)
+                    .Select(x => Enumerable.Range(0, BloodBasin.FluidGridHeight)
+                        .Sum(y => basin.FluidFillAt(x, y)))
+                    .ToArray();
+                maximumDrainShelf = MathF.Max(maximumDrainShelf,
+                    columnFills.Max() - columnFills.Min());
+            }
             var inFlight = 0f;
             for (var i = 0; i < sequence.Pixels.Count; i++)
                 inFlight += sequence.Pixels[i].Volume;
@@ -1367,6 +1379,9 @@ public static class SelfTests
         Assert(maximumConservationError <= MathF.Max(0.1f, initial * 0.00001f),
             $"day-end transfer created or lost blood while pixels were in flight " +
             $"({maximumConservationError:0.000} volume error)");
+        Assert(maximumDrainShelf <= 1.001f,
+            $"shipment extraction left end walls instead of draining as one pool " +
+            $"({maximumDrainShelf:0.###} cell height spread)");
         Assert(sequence.DisplayedTotalEarnings == sequence.ProjectedTotalPayout &&
                sequence.ProjectedTotalPayout ==
                sequence.ProjectedBloodPayout + sequence.ProcessedBonus,
@@ -2670,7 +2685,8 @@ public static class SelfTests
         {
             ProcessingLine = line,
             TubeFeed = new OverheadTubeFeed(line.DeckY) { MaximumBodiesInFactory = 5 },
-            Knife = new PhysicalKnife(line.ContinuousToolRackCenter)
+            Knife = new PhysicalKnife(line.ContinuousToolRackCenter),
+            WeaponDumbwaiter = new WeaponDumbwaiter(line.ContinuousToolRackCenter)
         };
         world.Lighting.ConfigureProcessingStation();
         world.Lighting.SetFactoryPower(true);
@@ -6537,6 +6553,44 @@ public static class SelfTests
         tool.SelectArsenalVisual(-1);
         Assert(tool.ArsenalVisualVariant == -1 && tool.IsHolstered && tool.HitTest(holster),
             "cleaver inventory entry did not restore the original centered tool");
+    }
+
+    private static void WeaponDumbwaiterRerollsOneWeapon()
+    {
+        var socket = new Vector2(640f, 300f);
+        var tool = new PhysicalKnife(socket);
+        var dumbwaiter = new WeaponDumbwaiter(socket);
+        dumbwaiter.SpawnToken(new Vector2(420f, 300f));
+        var firstToken = dumbwaiter.Token;
+        dumbwaiter.SpawnToken(new Vector2(460f, 300f));
+        Assert(ReferenceEquals(firstToken, dumbwaiter.Token),
+            "a second reroll token spawned while one was already in the system");
+        Assert(dumbwaiter.BeginTokenGrab(firstToken!.Position),
+            "physical reroll coin could not be picked up");
+        dumbwaiter.SetTokenGrabTarget(dumbwaiter.CoinSlotCenter);
+        dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            new DestructibleGrid(40, 22, 32), 1280f, 720f, tool);
+        Assert(dumbwaiter.ReleaseToken(dumbwaiter.CoinSlotCenter, Vector2.Zero) &&
+               dumbwaiter.TokenDeposited &&
+               dumbwaiter.ButtonArmed,
+            "releasing the physical coin over the authored slot did not arm the button");
+        Assert(dumbwaiter.Activate(1, tool) && !tool.Visible,
+            "armed dumbwaiter did not explode and hide the current weapon");
+        for (var step = 0; step < 180; step++)
+            dumbwaiter.Step(Dt, new Vector2(0f, 980f), Array.Empty<ConveyorBelt>(),
+                new DestructibleGrid(40, 22, 32), 1280f, 720f, tool);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Idle && tool.Visible &&
+               tool.IsHolstered && tool.ArsenalVisualVariant == 1,
+            "dumbwaiter shutter did not finish by delivering the selected replacement");
+
+        var assetRoot = Path.Combine(AppContext.BaseDirectory, "Assets");
+        using var housing = new Bitmap(Path.Combine(assetRoot, "WeaponDumbwaiter.png"));
+        using var controls = new Bitmap(Path.Combine(assetRoot, "WeaponDumbwaiterControls.png"));
+        using var coin = new Bitmap(Path.Combine(assetRoot, "WeaponRerollToken.png"));
+        Assert(housing.Size == new Size(72 * 4, 96) &&
+               controls.Size == new Size(32 * 3, 64) &&
+               coin.Size == new Size(16 * 4, 16),
+            "Pixel Forge dumbwaiter exports do not match the runtime frame contracts");
     }
 
     private static void SlingshotImpactsDamageBothBodies()

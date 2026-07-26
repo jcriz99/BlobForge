@@ -70,6 +70,8 @@ public sealed class GameProgression
     private readonly string? _path;
     private readonly HashSet<string> _unlockedWeapons =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _recentlyUnlockedWeapons =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private GameProgression(string? path)
     {
@@ -115,6 +117,10 @@ public sealed class GameProgression
                     if (WeaponCatalog.Any(item =>
                             item.Code.Equals(code, StringComparison.OrdinalIgnoreCase)))
                         progression._unlockedWeapons.Add(code);
+            if (data.RecentlyUnlockedWeapons is not null)
+                foreach (var code in data.RecentlyUnlockedWeapons)
+                    if (progression._unlockedWeapons.Contains(code))
+                        progression._recentlyUnlockedWeapons.Add(code);
         }
         catch
         {
@@ -136,8 +142,47 @@ public sealed class GameProgression
             return false;
         Currency -= item.Cost;
         _unlockedWeapons.Add(item.Code);
+        _recentlyUnlockedWeapons.Add(item.Code);
         Save();
         return true;
+    }
+
+    public string RollDailyWeapon(Random random)
+    {
+        ArgumentNullException.ThrowIfNull(random);
+        var unlocked = WeaponCatalog.Where(item => _unlockedWeapons.Contains(item.Code)).ToArray();
+        if (unlocked.Length == 0) return "CLEAVER";
+        var recent = unlocked.Where(item => _recentlyUnlockedWeapons.Contains(item.Code)).ToArray();
+        var pool = recent.Length > 0 && random.NextDouble() < 0.72d ? recent : unlocked;
+        var selected = pool[random.Next(pool.Length)].Code;
+        _recentlyUnlockedWeapons.Clear();
+        Save();
+        return selected;
+    }
+
+    public string RollRerollWeapon(Random random, string currentCode)
+    {
+        ArgumentNullException.ThrowIfNull(random);
+        var unlocked = WeaponCatalog.Where(item => _unlockedWeapons.Contains(item.Code)).ToArray();
+        if (unlocked.Length == 0) return "CLEAVER";
+        var alternatives = unlocked.Where(item =>
+            !item.Code.Equals(currentCode, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var pool = alternatives.Length > 0 ? alternatives : unlocked;
+        return pool[random.Next(pool.Length)].Code;
+    }
+
+    public static int WeaponVariantForCode(string code)
+    {
+        for (var index = 0; index < WeaponCatalog.Count; index++)
+            if (WeaponCatalog[index].Code.Equals(code, StringComparison.OrdinalIgnoreCase))
+                return index - 1;
+        return -1;
+    }
+
+    public static string WeaponCodeForVariant(int variant)
+    {
+        var index = Math.Clamp(variant + 1, 0, WeaponCatalog.Count - 1);
+        return WeaponCatalog[index].Code;
     }
 
     public void ToggleVolumeUnit()
@@ -210,7 +255,8 @@ public sealed class GameProgression
                 VolumeUnit = VolumeUnit,
                 BloodRatePerGallon = BloodRatePerGallon,
                 ProcessedBlobRate = ProcessedBlobRate,
-                UnlockedWeapons = _unlockedWeapons.OrderBy(code => code).ToArray()
+                UnlockedWeapons = _unlockedWeapons.OrderBy(code => code).ToArray(),
+                RecentlyUnlockedWeapons = _recentlyUnlockedWeapons.OrderBy(code => code).ToArray()
             };
             File.WriteAllText(_path,
                 JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
@@ -229,5 +275,6 @@ public sealed class GameProgression
         public decimal BloodRatePerGallon { get; set; } = BaseBloodRatePerGallon;
         public decimal ProcessedBlobRate { get; set; } = BaseProcessedBlobRate;
         public string[]? UnlockedWeapons { get; set; }
+        public string[]? RecentlyUnlockedWeapons { get; set; }
     }
 }

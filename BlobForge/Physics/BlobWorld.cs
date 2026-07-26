@@ -33,6 +33,7 @@ public sealed class BlobWorld
     public ProcessingLine? ProcessingLine { get; set; }
     public OverheadTubeFeed? TubeFeed { get; set; }
     public PhysicalKnife? Knife { get; set; }
+    public WeaponDumbwaiter? WeaponDumbwaiter { get; set; }
     public DestructibleGrid Grid { get; }
     public Vector2 Gravity { get; set; } = new(0f, 980f);
     public bool EnableBlobPersonalities { get; set; }
@@ -68,12 +69,10 @@ public sealed class BlobWorld
         Lighting.Step(dt);
         HoldingChamber?.Step(dt);
         ProcessingLine?.PreStep(Bodies, Granular.Particles, dt);
+        WeaponDumbwaiter?.Step(dt, Gravity, Conveyors, Grid,
+            Grid.Columns * Grid.CellSize, Grid.Rows * Grid.CellSize, Knife);
         Knife?.Step(dt, Gravity, Conveyors, Bodies, Grid.Columns * Grid.CellSize,
             Grid.Rows * Grid.CellSize, TubeFeed, Grid, Granular);
-        // Weapons act after ProcessingLine.PreStep. Observe their damage before topology
-        // splitting can convert a one-hit kill into detached pieces and erase the only
-        // intact-body sampling opportunity.
-        ProcessingLine?.ObserveProcessedDamage(Bodies);
         if (ProcessingLine is not null)
         {
             _dispatchedParentBuffer.Clear();
@@ -199,6 +198,12 @@ public sealed class BlobWorld
             body.TryApplyPersonalityHop(dt, inTube: false, allowed: personalityAllowed);
         }
         foreach (var body in Bodies) body.UpdateSleep(dt);
+        // Sample once after weapons, machinery, impacts and the full contact solve,
+        // but before topology can turn a lethal one-step break into detached pieces.
+        // This catches both weapon cuts and high-speed wall/blob impacts without a
+        // second per-step body scan.
+        WeaponDumbwaiter?.ObserveDamage(Bodies, ProcessingLine?.Powered == true);
+        ProcessingLine?.ObserveProcessedDamage(Bodies);
         ProcessTopology(TopologyBodiesPerStep, dt);
         RegisterPendingWounds(dt);
         UpdateDetachedChunks(dt);
