@@ -71,7 +71,7 @@ public sealed class BlobWorld
         ProcessingLine?.PreStep(Bodies, Granular.Particles, dt);
         WeaponDumbwaiter?.Step(dt, Gravity, Conveyors, Grid,
             Grid.Columns * Grid.CellSize, Grid.Rows * Grid.CellSize, Knife,
-            ProcessingLine?.Powered == true);
+            ProcessingLine is { } line && (line.Powered || line.PoweringUp));
         Knife?.Step(dt, Gravity, Conveyors, Bodies, Grid.Columns * Grid.CellSize,
             Grid.Rows * Grid.CellSize, TubeFeed, Grid, Granular);
         if (ProcessingLine is not null)

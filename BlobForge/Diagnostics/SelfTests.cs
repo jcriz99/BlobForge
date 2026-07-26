@@ -6631,9 +6631,22 @@ public static class SelfTests
                 grid, 1280f, 720f, tool, powered: false);
         Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed && !tool.Visible,
             "unpowered dumbwaiter opened before the day began");
-        for (var step = 0; step < 65; step++)
+        Assert(dumbwaiter.BeginInitialOpening(),
+            "breaker latch could not immediately start the initial dumbwaiter opening");
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Opening,
+            "powered dumbwaiter did not begin opening on the first simulation tick");
+        var displayRateDoorPositions = new HashSet<int>();
+        for (var displayFrame = 0; displayFrame < 30; displayFrame++)
+        {
+            // Two 120 Hz simulation steps represent one ~60 Hz paint interval.
             dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
                 grid, 1280f, 720f, tool, powered: true);
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+            displayRateDoorPositions.Add((int)MathF.Round(dumbwaiter.DoorClosure * 1000f));
+        }
+        Assert(displayRateDoorPositions.Count >= 24,
+            $"dumbwaiter opening exposed only {displayRateDoorPositions.Count} display-rate positions");
         Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Open &&
                dumbwaiter.DoorFrame == 0 && tool.Visible && tool.IsHolstered,
             "powered day start did not animate open and present the first weapon");
@@ -6652,6 +6665,8 @@ public static class SelfTests
 
         dumbwaiter.SpawnToken(new Vector2(420f, 300f));
         var firstToken = dumbwaiter.Token;
+        Assert(WeaponDumbwaiter.TokenRadius == 16f,
+            "reroll coin physical body did not match its 32-pixel presentation");
         dumbwaiter.SpawnToken(new Vector2(460f, 300f));
         Assert(ReferenceEquals(firstToken, dumbwaiter.Token),
             "a second reroll token spawned while one was already in the system");

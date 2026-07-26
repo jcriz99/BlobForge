@@ -1657,7 +1657,11 @@ public sealed class GameWindow : Form
         }
         if (_draggingBreakerLever && _world.ProcessingLine is { } breakerLine)
         {
-            if (breakerLine.DragBreakerLever(point)) _audio.Play(SoundCue.Breaker);
+            if (breakerLine.DragBreakerLever(point))
+            {
+                _audio.Play(SoundCue.Breaker);
+                _world.WeaponDumbwaiter?.BeginInitialOpening();
+            }
             _surface.Cursor = Cursors.Hand;
             return;
         }
@@ -2030,7 +2034,10 @@ public sealed class GameWindow : Form
             if (_draggingBreakerLever)
             {
                 if (_world.ProcessingLine?.DragBreakerLever(_input.MousePosition) == true)
+                {
                     _audio.Play(SoundCue.Breaker);
+                    _world.WeaponDumbwaiter?.BeginInitialOpening();
+                }
                 _world.ProcessingLine?.EndBreakerLeverDrag();
                 _draggingBreakerLever = false;
                 _surface.Cursor = Cursors.Default;

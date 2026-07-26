@@ -26,7 +26,7 @@ public readonly record struct DumbwaiterDebris(
 /// </summary>
 public sealed class WeaponDumbwaiter
 {
-    public const float TokenRadius = 7f;
+    public const float TokenRadius = 16f;
     public const float BreakDropChance = 0.0045f;
     private const float DoorCloseSeconds = 0.49f;
     private const float ClosedHoldSeconds = 0.18f;
@@ -80,6 +80,30 @@ public sealed class WeaponDumbwaiter
                 < 0.82f => 2,
                 _ => 3
             };
+        }
+    }
+
+    /// <summary>
+    /// Continuous shutter position used by the renderer. Zero is fully open and
+    /// one is fully closed; fixed simulation advances it at 120 Hz while the
+    /// display samples it at its normal ~60 Hz paint cadence.
+    /// </summary>
+    public float DoorClosure
+    {
+        get
+        {
+            var linear = Phase switch
+            {
+                WeaponDumbwaiterPhase.Closing =>
+                    Math.Clamp(_phaseTime / DoorCloseSeconds, 0f, 1f),
+                WeaponDumbwaiterPhase.Closed => 1f,
+                WeaponDumbwaiterPhase.ClosedHold => 1f,
+                WeaponDumbwaiterPhase.Opening =>
+                    1f - Math.Clamp(_phaseTime / DoorOpenSeconds, 0f, 1f),
+                WeaponDumbwaiterPhase.Open => 0f,
+                _ => 1f
+            };
+            return linear * linear * (3f - 2f * linear);
         }
     }
 
@@ -151,6 +175,15 @@ public sealed class WeaponDumbwaiter
         if (Phase != WeaponDumbwaiterPhase.Open) return;
         Phase = WeaponDumbwaiterPhase.Closing;
         _phaseTime = 0f;
+    }
+
+    public bool BeginInitialOpening()
+    {
+        if (Phase != WeaponDumbwaiterPhase.Closed ||
+            _pendingVariant == int.MinValue) return false;
+        Phase = WeaponDumbwaiterPhase.Opening;
+        _phaseTime = 0f;
+        return true;
     }
 
     public void ObserveDamage(IReadOnlyList<SoftBody> bodies, bool allowDrop)
@@ -231,8 +264,7 @@ public sealed class WeaponDumbwaiter
         if (Phase == WeaponDumbwaiterPhase.Closed)
         {
             if (!powered || _pendingVariant == int.MinValue) return;
-            Phase = WeaponDumbwaiterPhase.Opening;
-            _phaseTime = 0f;
+            BeginInitialOpening();
             return;
         }
         if (Phase == WeaponDumbwaiterPhase.Open)

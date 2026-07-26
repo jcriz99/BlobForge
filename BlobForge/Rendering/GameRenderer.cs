@@ -1954,10 +1954,48 @@ public sealed class GameRenderer
     {
         if (dumbwaiter is null) return;
         var doorFrames = WeaponDumbwaiterFrames.Value;
-        var door = doorFrames[Math.Clamp(dumbwaiter.DoorFrame, 0, doorFrames.Length - 1)];
-        if (door is not null)
-            g.DrawImage(door, dumbwaiter.DisplayBounds,
-                new RectangleF(0f, 0f, door.Width, door.Height), GraphicsUnit.Pixel);
+        var openDoor = doorFrames[0];
+        var closedDoor = doorFrames[^1];
+        var closure = dumbwaiter.DoorClosure;
+        if (openDoor is not null && closedDoor is not null && closure > 0.001f && closure < 0.999f)
+        {
+            // Housing is frame-invariant in Pixel Forge. Start with the authored
+            // open pose, then reveal the closed shutter body continuously. The
+            // final two authored rows travel as its leading edge, keeping the
+            // corrugated door crisp without cross-fading or filtered pixels.
+            var bounds = dumbwaiter.DisplayBounds;
+            g.DrawImage(openDoor, bounds,
+                new RectangleF(0f, 0f, openDoor.Width, openDoor.Height), GraphicsUnit.Pixel);
+            const float sourceLeft = 14f;
+            const float sourceWidth = 44f;
+            const float sourceTop = 15f;
+            const float openEdge = 21f;
+            const float closedEdge = 80f;
+            var edge = openEdge + (closedEdge - openEdge) * closure;
+            var scaleX = bounds.Width / openDoor.Width;
+            var scaleY = bounds.Height / openDoor.Height;
+            var bodyHeight = MathF.Max(0f, edge - sourceTop - 1f);
+            if (bodyHeight > 0f)
+                g.DrawImage(closedDoor,
+                    new RectangleF(bounds.Left + sourceLeft * scaleX,
+                        bounds.Top + sourceTop * scaleY,
+                        sourceWidth * scaleX, bodyHeight * scaleY),
+                    new RectangleF(sourceLeft, sourceTop, sourceWidth, bodyHeight),
+                    GraphicsUnit.Pixel);
+            g.DrawImage(openDoor,
+                new RectangleF(bounds.Left + sourceLeft * scaleX,
+                    bounds.Top + (edge - 1f) * scaleY,
+                    sourceWidth * scaleX, 2f * scaleY),
+                new RectangleF(sourceLeft, 20f, sourceWidth, 2f),
+                GraphicsUnit.Pixel);
+        }
+        else
+        {
+            var door = closure >= 0.999f ? closedDoor : openDoor;
+            if (door is not null)
+                g.DrawImage(door, dumbwaiter.DisplayBounds,
+                    new RectangleF(0f, 0f, door.Width, door.Height), GraphicsUnit.Pixel);
+        }
         var controlFrames = WeaponDumbwaiterControlFrames.Value;
         var controls = controlFrames[Math.Clamp(dumbwaiter.ControlsFrame, 0, controlFrames.Length - 1)];
         if (controls is not null)
@@ -1982,7 +2020,11 @@ public sealed class GameRenderer
         var frames = WeaponRerollTokenFrames.Value;
         var frame = frames[Math.Clamp(token.SpinFrame, 0, frames.Length - 1)];
         if (frame is null) return;
-        var destination = new RectangleF(token.Position.X - 8f, token.Position.Y - 8f, 16f, 16f);
+        var diameter = WeaponDumbwaiter.TokenRadius * 2f;
+        var destination = new RectangleF(
+            token.Position.X - WeaponDumbwaiter.TokenRadius,
+            token.Position.Y - WeaponDumbwaiter.TokenRadius,
+            diameter, diameter);
         g.DrawImage(frame, destination, new RectangleF(0f, 0f, frame.Width, frame.Height),
             GraphicsUnit.Pixel);
     }
