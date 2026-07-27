@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using BlobForge.Audio;
 using BlobForge.Physics;
 using BlobForge.Rendering;
@@ -12,7 +13,14 @@ namespace BlobForge;
 public sealed class GameWindow : Form
 {
     private const float FixedDt = 1f / 120f;
-    private const int MaxStepsPerFrame = 4;
+    private const int MaxCatchUpStepsPerPump = 4;
+    private const double TargetRenderSeconds = 1d / 60d;
+    private const uint TimerResolutionMs = 1;
+    private const int VerticalRefreshDeviceCapability = 116;
+    private const int ColorOnColorStretchMode = 3;
+    private const uint UncompressedRgbBitmap = 0;
+    private const uint RgbColorTable = 0;
+    private const uint SourceCopyRasterOperation = 0x00CC0020;
     private const int WorldWidth = 1280;
     private const int WorldHeight = 720;
     private static readonly Size LogicalViewport = new(WorldWidth, WorldHeight);
@@ -22,16 +30,34 @@ public sealed class GameWindow : Form
     private readonly GameRenderer _renderer = new();
     private readonly SoundEffectMixer _audio = new();
     private readonly FixtureLayoutSettings _fixtureLayout = FixtureLayoutSettings.Load();
+    private readonly GameProgression _progression = GameProgression.Load();
+    private readonly Random _weaponRandom = new();
     private readonly GameSurface _surface;
     private readonly Button _spawnButton;
     private readonly Button _conveyorButton;
     private readonly Button _lightButton;
+    private readonly Button _tokenButton;
     private readonly Button _fullscreenButton;
     private readonly Panel _pausePanel;
     private readonly Panel _settingsPanel;
     private readonly CheckBox _settingsFullscreen;
     private readonly CheckBox _settingsDebug;
     private readonly CheckBox _settingsGravity;
+    private readonly Button _settingsVolumeUnit;
+    private readonly Panel _dayResultsPanel;
+    private readonly Panel _betweenDaysPanel;
+    private Label _dayResultsTitle = null!;
+    private Label _dayResultsBlood = null!;
+    private Label _dayResultsProcessed = null!;
+    private Label _dayResultsTotal = null!;
+    private Label _dayPayoutTransferLabel = null!;
+    private Button _dayResultsOk = null!;
+    private Label _shopCurrency = null!;
+    private Panel _shopContentHost = null!;
+    private ShopFlowPanel _shopUpgradesContent = null!;
+    private ShopFlowPanel _shopWeaponsContent = null!;
+    private Button _shopUpgradesTab = null!;
+    private Button _shopWeaponsTab = null!;
     private readonly Bitmap _frameBuffer;
     private readonly Graphics _frameGraphics;
     private BlobWorld _world = null!;
@@ -44,6 +70,26 @@ public sealed class GameWindow : Form
     private float _sliceInsideDistance;
     private double _accumulator;
     private double _lastTime;
+    private double _nextRenderTime;
+    private double _lastPumpTime;
+    private double _lastPaintTime;
+    private double _lastSimulationStepTime;
+    private double _maximumPumpGapSincePaint;
+    private double _maximumSimulationGapSincePaint;
+    private double _maximumRenderLatenessSincePaint;
+    private double _fixedUpdateMsSinceRender;
+    private int _stepsSinceRender;
+    private int _maximumStepBatchSinceRender;
+    private int _missedRenderDeadlines;
+    private int _paintSpikeCount;
+    private int _renderRequestCount;
+    private int _paintCount;
+    private int _paintWindowSamples;
+    private double _paintWindowStart;
+    private double _paintWindowSumMs;
+    private double _paintWindowSumSquaredMs;
+    private double _paintWindowMaximumMs;
+    private long _simulationAllocatedBytesSinceRender;
     private double _fpsSmoothing = 60;
     private double _audioUpdateMsThisFrame;
     private bool _gravityEnabled = true;
@@ -64,12 +110,81 @@ public sealed class GameWindow : Form
     private IndustrialLight? _selectedLight;
     private LightEditHandle _lightEditHandle;
     private Vector2 _lightEditLast;
-    private bool _observedFactoryPower;
     private float _factoryStartupDelay = -1f;
+    private DayCyclePhase _dayPhase;
+    private float _dayPhaseTimer;
+    private int _lightingSequenceStage;
+    private bool _shopShowingWeapons;
+    private DayPayout _lastDayPayout;
+    private BloodShipmentSequence? _bloodShipment;
+    private int _daySaleProcessedCount;
+    private float _dayResultsTransferTime;
+    private Rectangle _dayResultsTransferStart;
+    private Rectangle _dayResultsTransferTarget;
+    private string? _currentDayWeaponCode;
     private FixtureDragTarget _fixtureDragTarget;
     private Vector2 _fixtureDragOffset;
     private Vector2 _fixtureDragStart;
     private bool _fixtureDragMoved;
+    private bool _toolPrimaryHeld;
+    private bool _toolRotationHeld;
+    private bool _toolEquipKeyHeld;
+    private bool _rotateCounterClockwiseHeld;
+    private bool _rotateClockwiseHeld;
+    private bool _arsenalMenuConsumedClick;
+    private bool _highResolutionTimerActive;
+    private int _resizeEventCount;
+    private int _fullscreenToggleCount;
+
+    [DllImport("winmm.dll", ExactSpelling = true)]
+    private static extern uint timeBeginPeriod(uint periodMilliseconds);
+
+    [DllImport("winmm.dll", ExactSpelling = true)]
+    private static extern uint timeEndPeriod(uint periodMilliseconds);
+
+    [DllImport("gdi32.dll", ExactSpelling = true)]
+    private static extern int GetDeviceCaps(nint deviceContext, int index);
+
+    [DllImport("gdi32.dll", ExactSpelling = true)]
+    private static extern int StretchDIBits(
+        nint destinationDeviceContext,
+        int destinationX,
+        int destinationY,
+        int destinationWidth,
+        int destinationHeight,
+        int sourceX,
+        int sourceY,
+        int sourceWidth,
+        int sourceHeight,
+        nint sourceBits,
+        ref BitmapInfo bitmapInfo,
+        uint colorUsage,
+        uint rasterOperation);
+
+    [DllImport("gdi32.dll", ExactSpelling = true)]
+    private static extern int SetStretchBltMode(nint deviceContext, int stretchMode);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
+    {
+        public uint Size;
+        public int Width;
+        public int Height;
+        public ushort Planes;
+        public ushort BitCount;
+        public uint Compression;
+        public uint SizeImage;
+        public int XPixelsPerMeter;
+        public int YPixelsPerMeter;
+        public uint ColorsUsed;
+        public uint ColorsImportant;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfo
+    {
+        public BitmapInfoHeader Header;
+    }
 
     public GameWindow()
     {
@@ -80,6 +195,9 @@ public sealed class GameWindow : Form
         KeyPreview = true;
         BackColor = Color.FromArgb(12, 16, 24);
 
+        // Render raster art into a normal GDI+ bitmap. A Bitmap constructed over a
+        // raw DIB pointer silently drops some DrawImage calls on the fullscreen path,
+        // which made Pixel Forge sprites disappear while vector primitives survived.
         _frameBuffer = new Bitmap(WorldWidth, WorldHeight, PixelFormat.Format32bppPArgb);
         _frameGraphics = Graphics.FromImage(_frameBuffer);
 
@@ -154,6 +272,25 @@ public sealed class GameWindow : Form
         Controls.Add(_lightButton);
         _lightButton.BringToFront();
 
+        _tokenButton = new Button
+        {
+            Text = "+  SPAWN TOKEN   [T]",
+            Size = new Size(190, 34),
+            Location = new Point(ClientSize.Width - 214, 200),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(70, 67, 32),
+            ForeColor = Color.FromArgb(255, 238, 175),
+            Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            TabStop = false
+        };
+        _tokenButton.FlatAppearance.BorderColor = Color.FromArgb(255, 203, 76);
+        _tokenButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(104, 96, 40);
+        _tokenButton.Click += (_, _) => SpawnDumbwaiterToken();
+        Controls.Add(_tokenButton);
+        _tokenButton.BringToFront();
+
         _fullscreenButton = new Button
         {
             Text = "FULLSCREEN  [F11]",
@@ -184,11 +321,14 @@ public sealed class GameWindow : Form
         Controls.Add(_pausePanel);
 
         _settingsPanel = CreateMenuPanel("SETTINGS");
-        _settingsPanel.Size = new Size(500, 430);
+        _settingsPanel.Size = new Size(500, 500);
         _settingsFullscreen = CreateMenuCheckBox("Fullscreen", 78);
-        _settingsDebug = CreateMenuCheckBox("Debug metrics", 118);
+        _settingsDebug = CreateMenuCheckBox("Debug overlay", 118);
         _settingsGravity = CreateMenuCheckBox("Gravity simulation", 158);
-        var settingsBackButton = CreateMenuButton("BACK", 378);
+        _settingsVolumeUnit = CreateMenuButton(string.Empty, 198);
+        _settingsVolumeUnit.Bounds = new Rectangle(58, 198, 384, 34);
+        UpdateVolumeUnitButton();
+        var settingsBackButton = CreateMenuButton("BACK", 448);
         settingsBackButton.Left = 134;
         _settingsFullscreen.CheckedChanged += (_, _) =>
         {
@@ -201,52 +341,156 @@ public sealed class GameWindow : Form
             if (_world is not null)
                 foreach (var body in _world.Bodies) body.Wake();
         };
+        _settingsVolumeUnit.Click += (_, _) =>
+        {
+            _progression.ToggleVolumeUnit();
+            _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
+            UpdateVolumeUnitButton();
+            _surface.Invalidate();
+        };
         settingsBackButton.Click += (_, _) => ShowPauseMenu();
         settingsButton.Click += (_, _) => ShowSettingsMenu();
         var audioPanel = CreateAudioSettingsPanel();
         _settingsPanel.Controls.AddRange([
-            _settingsFullscreen, _settingsDebug, _settingsGravity, audioPanel, settingsBackButton]);
+            _settingsFullscreen, _settingsDebug, _settingsGravity, _settingsVolumeUnit,
+            audioPanel, settingsBackButton]);
         Controls.Add(_settingsPanel);
 
+        _dayResultsPanel = CreateDayResultsPanel();
+        Controls.Add(_dayResultsPanel);
+        _betweenDaysPanel = CreateBetweenDaysPanel();
+        Controls.Add(_betweenDaysPanel);
+
         KeyDown += OnKeyDown;
+        KeyUp += OnKeyUp;
+        Deactivate += (_, _) =>
+        {
+            _rotateCounterClockwiseHeld = false;
+            _rotateClockwiseHeld = false;
+        };
         Resize += (_, _) =>
         {
+            _resizeEventCount++;
             LayoutOverlays();
+            UpdateDisplayDiagnostics();
             _surface.Invalidate();
         };
         FormClosed += (_, _) =>
         {
             SaveFixtureLayout();
+            _progression.Save();
             _audio.Dispose();
             _frameGraphics.Dispose();
             _frameBuffer.Dispose();
+            if (_highResolutionTimerActive)
+            {
+                timeEndPeriod(TimerResolutionMs);
+                _highResolutionTimerActive = false;
+            }
         };
-        ResetScene();
+        ResetScene(rollDailyWeapon: true);
+        _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
         _settingsGravity.Checked = true;
         LayoutOverlays();
-        Shown += (_, _) => BeginLoop();
+        Shown += (_, _) =>
+        {
+            _highResolutionTimerActive = timeBeginPeriod(TimerResolutionMs) == 0;
+            UpdateDisplayDiagnostics();
+            BeginLoop();
+        };
     }
 
     private void RenderSurface(object? sender, PaintEventArgs e)
     {
         if (_world is null) return;
-        var renderStart = Stopwatch.GetTimestamp();
-        _frameGraphics.ResetTransform();
-        _renderer.Draw(_frameGraphics, LogicalViewport, _world, _grabbed, _pendingSlice);
-        var presentStart = Stopwatch.GetTimestamp();
-
+        var paintAllocationStart = GC.GetAllocatedBytesForCurrentThread();
         var viewport = WorldViewport;
         if (viewport.IsEmpty) return;
-        e.Graphics.CompositingMode = CompositingMode.SourceCopy;
-        e.Graphics.CompositingQuality = CompositingQuality.HighSpeed;
-        e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-        e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        _renderer.PaintClipWidth = e.ClipRectangle.Width;
+        _renderer.PaintClipHeight = e.ClipRectangle.Height;
+        var paintNow = _clock.Elapsed.TotalSeconds;
+        _paintCount++;
+        if (_lastPaintTime > 0d)
+        {
+            var paintInterval = paintNow - _lastPaintTime;
+            var frameMs = Math.Max(0.001d, paintInterval * 1000d);
+            _fpsSmoothing = _fpsSmoothing * 0.92d + (1000d / frameMs) * 0.08d;
+            _renderer.FrameMs = frameMs;
+            _renderer.Fps = _fpsSmoothing;
+            _renderer.PaintJitterMs = Math.Abs(paintInterval - TargetRenderSeconds) * 1000d;
+            if (paintInterval > TargetRenderSeconds * 1.5d) _paintSpikeCount++;
+            _paintWindowSamples++;
+            _paintWindowSumMs += frameMs;
+            _paintWindowSumSquaredMs += frameMs * frameMs;
+            _paintWindowMaximumMs = Math.Max(_paintWindowMaximumMs, frameMs);
+            if (_paintWindowStart <= 0d) _paintWindowStart = paintNow;
+            if (paintNow - _paintWindowStart >= 1d)
+            {
+                var mean = _paintWindowSumMs / Math.Max(1, _paintWindowSamples);
+                var variance = _paintWindowSumSquaredMs / Math.Max(1, _paintWindowSamples) - mean * mean;
+                _renderer.PaintMeanMs = mean;
+                _renderer.PaintDeviationMs = Math.Sqrt(Math.Max(0d, variance));
+                _renderer.PaintMaximumMs = _paintWindowMaximumMs;
+                _paintWindowStart = paintNow;
+                _paintWindowSamples = 0;
+                _paintWindowSumMs = 0d;
+                _paintWindowSumSquaredMs = 0d;
+                _paintWindowMaximumMs = 0d;
+            }
+        }
+        _lastPaintTime = paintNow;
+        _renderer.PaintSpikeCount = _paintSpikeCount;
+        _renderer.PaintCount = _paintCount;
+        _renderer.RenderRequestCount = _renderRequestCount;
+        var renderStart = Stopwatch.GetTimestamp();
+        var tool = _world.Knife;
+        var showPickupPrompt = _world.ProcessingLine?.Powered == true &&
+                               tool is { Visible: true, IsGrabbed: false } &&
+                               tool.HitTest(_input.MousePosition);
+
+        // GameSurface already owns a double buffer. At the normal fixed logical
+        // size, render straight into it and avoid drawing the whole world into a
+        // second bitmap only to copy those same 921,600 pixels again.
+        if (viewport.Size == LogicalViewport)
+        {
+            var state = e.Graphics.Save();
+            e.Graphics.SetClip(viewport, CombineMode.Intersect);
+            e.Graphics.TranslateTransform(viewport.Left, viewport.Top);
+            var shake = tool?.ScreenShakeOffset ?? Vector2.Zero;
+            e.Graphics.TranslateTransform(MathF.Round(shake.X), MathF.Round(shake.Y));
+            e.Graphics.CompositingQuality = CompositingQuality.HighSpeed;
+            e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            _renderer.Draw(e.Graphics, LogicalViewport, _world, _grabbed, _pendingSlice,
+                showPickupPrompt ? tool!.Position : null);
+            e.Graphics.Restore(state);
+            _renderer.RenderMs = Stopwatch.GetElapsedTime(renderStart).TotalMilliseconds;
+            _renderer.PresentMs = 0d;
+            _renderer.UiAllocatedBytesPerPaint = Math.Max(0L,
+                GC.GetAllocatedBytesForCurrentThread() - paintAllocationStart);
+            return;
+        }
+
+        _frameGraphics.ResetTransform();
+        _frameGraphics.Clear(Color.FromArgb(255, 9, 16, 21));
+        var frameShake = tool?.ScreenShakeOffset ?? Vector2.Zero;
+        _frameGraphics.TranslateTransform(MathF.Round(frameShake.X), MathF.Round(frameShake.Y));
+        _renderer.Draw(_frameGraphics, LogicalViewport, _world, _grabbed, _pendingSlice,
+            showPickupPrompt ? tool!.Position : null);
+        var presentStart = Stopwatch.GetTimestamp();
         if (viewport.Size == _frameBuffer.Size)
         {
             e.Graphics.DrawImageUnscaled(_frameBuffer, viewport.Location);
         }
-        else
+        else if (!TryPresentScaledFrame(e.Graphics, viewport))
         {
+            // Keep a safe GDI+ fallback for unusual printer/remote device contexts.
+            // Normal display presentation uses StretchBlt and never reaches here.
+            _renderer.PresentationMode = "scaled GDI+ fallback";
+            e.Graphics.CompositingMode = CompositingMode.SourceCopy;
+            e.Graphics.CompositingQuality = CompositingQuality.HighSpeed;
+            e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
             e.Graphics.DrawImage(
                 _frameBuffer,
                 viewport,
@@ -259,6 +503,62 @@ public sealed class GameWindow : Form
         var presentEnd = Stopwatch.GetTimestamp();
         _renderer.RenderMs = Stopwatch.GetElapsedTime(renderStart, presentStart).TotalMilliseconds;
         _renderer.PresentMs = Stopwatch.GetElapsedTime(presentStart, presentEnd).TotalMilliseconds;
+        _renderer.UiAllocatedBytesPerPaint = Math.Max(0L,
+            GC.GetAllocatedBytesForCurrentThread() - paintAllocationStart);
+    }
+
+    private bool TryPresentScaledFrame(Graphics destination, Rectangle viewport)
+    {
+        nint destinationDeviceContext = 0;
+        BitmapData? frameData = null;
+        try
+        {
+            // GDI+ DrawImage performs a costly per-pixel software resample here.
+            // StretchDIBits reads the already-rendered managed bitmap directly,
+            // retaining every raster layer while keeping fullscreen nearest-neighbor
+            // presentation in native GDI.
+            _frameGraphics.Flush(FlushIntention.Sync);
+            frameData = _frameBuffer.LockBits(
+                new Rectangle(0, 0, _frameBuffer.Width, _frameBuffer.Height),
+                ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppPArgb);
+            var bitmapInfo = new BitmapInfo
+            {
+                Header = new BitmapInfoHeader
+                {
+                    Size = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
+                    Width = _frameBuffer.Width,
+                    Height = -_frameBuffer.Height,
+                    Planes = 1,
+                    BitCount = 32,
+                    Compression = UncompressedRgbBitmap,
+                    SizeImage = (uint)(Math.Abs(frameData.Stride) * _frameBuffer.Height)
+                }
+            };
+            destinationDeviceContext = destination.GetHdc();
+            SetStretchBltMode(destinationDeviceContext, ColorOnColorStretchMode);
+            var copiedScanlines = StretchDIBits(
+                destinationDeviceContext,
+                viewport.Left,
+                viewport.Top,
+                viewport.Width,
+                viewport.Height,
+                0,
+                0,
+                _frameBuffer.Width,
+                _frameBuffer.Height,
+                frameData.Scan0,
+                ref bitmapInfo,
+                RgbColorTable,
+                SourceCopyRasterOperation);
+            if (copiedScanlines > 0) _renderer.PresentationMode = "scaled fast DIB";
+            return copiedScanlines > 0;
+        }
+        finally
+        {
+            if (destinationDeviceContext != 0) destination.ReleaseHdc(destinationDeviceContext);
+            if (frameData is not null) _frameBuffer.UnlockBits(frameData);
+        }
     }
 
     private static Panel CreateMenuPanel(string title)
@@ -315,7 +615,7 @@ public sealed class GameWindow : Form
     {
         var panel = new Panel
         {
-            Bounds = new Rectangle(36, 198, 428, 156),
+            Bounds = new Rectangle(36, 248, 428, 156),
             BackColor = Color.FromArgb(15, 21, 27),
             BorderStyle = BorderStyle.FixedSingle
         };
@@ -369,6 +669,265 @@ public sealed class GameWindow : Form
         TabStop = false
     };
 
+    private void UpdateVolumeUnitButton()
+    {
+        if (_settingsVolumeUnit is null) return;
+        _settingsVolumeUnit.Text = _progression.VolumeUnit == BasinVolumeUnit.Gallons
+            ? "BASIN VOLUME  •  GALLONS   [CHANGE]"
+            : "BASIN VOLUME  •  LITERS   [CHANGE]";
+    }
+
+    private Panel CreateDayResultsPanel()
+    {
+        var panel = CreateFullScreenProgressionPanel();
+        _dayResultsTitle = CreateProgressionLabel(
+            string.Empty, new Rectangle(120, 68, 1040, 64), 26f, Color.FromArgb(101, 230, 223));
+        _dayResultsBlood = CreateProgressionLabel(
+            string.Empty, new Rectangle(250, 180, 780, 92), 15f, Color.FromArgb(225, 233, 239));
+        _dayResultsProcessed = CreateProgressionLabel(
+            string.Empty, new Rectangle(250, 282, 780, 72), 15f, Color.FromArgb(225, 233, 239));
+        _dayResultsTotal = CreateProgressionLabel(
+            string.Empty, new Rectangle(250, 390, 780, 96), 19f, Color.FromArgb(240, 195, 75));
+        _dayPayoutTransferLabel = CreateProgressionLabel(
+            string.Empty, GameRenderer.ShipmentEarningsPopupBounds, 19f,
+            Color.FromArgb(240, 195, 75));
+        _dayPayoutTransferLabel.BackColor = Color.FromArgb(8, 13, 17);
+        _dayPayoutTransferLabel.BorderStyle = BorderStyle.FixedSingle;
+        _dayPayoutTransferLabel.Anchor = AnchorStyles.None;
+        _dayPayoutTransferLabel.Visible = false;
+        _dayResultsOk = CreateProgressionButton(
+            "CONTINUE TO SHOP", new Rectangle(470, 610, 340, 48));
+        _dayResultsOk.Click += (_, _) => ShowBetweenDaysShop();
+        panel.Controls.AddRange([
+            _dayResultsTitle, _dayResultsBlood, _dayResultsProcessed, _dayResultsTotal,
+            _dayResultsOk, _dayPayoutTransferLabel]);
+        return panel;
+    }
+
+    private Panel CreateBetweenDaysPanel()
+    {
+        var panel = CreateFullScreenProgressionPanel();
+        var title = CreateProgressionLabel(
+            "BLOBFORGE PROCUREMENT", new Rectangle(54, 28, 620, 56), 22f,
+            Color.FromArgb(101, 230, 223), ContentAlignment.MiddleLeft);
+        _shopCurrency = CreateProgressionLabel(
+            string.Empty, new Rectangle(760, 32, 460, 48), 16f,
+            Color.FromArgb(240, 195, 75), ContentAlignment.MiddleRight);
+        _shopUpgradesTab = CreateProgressionButton(
+            "WEAPON UPGRADES", new Rectangle(54, 96, 210, 42));
+        _shopWeaponsTab = CreateProgressionButton(
+            "WEAPON LIST", new Rectangle(274, 96, 210, 42));
+        _shopContentHost = new Panel
+        {
+            Bounds = new Rectangle(54, 150, 1172, 482),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            BackColor = Color.FromArgb(11, 17, 22)
+        };
+        _shopUpgradesContent = CreateShopContentPanel();
+        _shopWeaponsContent = CreateShopContentPanel();
+        _shopContentHost.Controls.AddRange([_shopUpgradesContent, _shopWeaponsContent]);
+        var nextDay = CreateProgressionButton(
+            "CONTINUE TO NEXT DAY", new Rectangle(934, 650, 292, 44));
+        nextDay.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+        _shopUpgradesTab.Click += (_, _) => SwitchShopTab(showWeapons: false);
+        _shopWeaponsTab.Click += (_, _) => SwitchShopTab(showWeapons: true);
+        nextDay.Click += (_, _) => ContinueToNextDay();
+        panel.Controls.AddRange([
+            title, _shopCurrency, _shopUpgradesTab, _shopWeaponsTab, _shopContentHost, nextDay]);
+        return panel;
+    }
+
+    private static ShopFlowPanel CreateShopContentPanel() => new()
+    {
+        Dock = DockStyle.Fill,
+        AutoScroll = true,
+        FlowDirection = FlowDirection.TopDown,
+        WrapContents = false,
+        BackColor = Color.FromArgb(11, 17, 22),
+        Padding = new Padding(12),
+        Visible = false,
+        TabStop = false
+    };
+
+    private static Panel CreateFullScreenProgressionPanel() => new()
+    {
+        Size = new Size(WorldWidth, WorldHeight),
+        Dock = DockStyle.Fill,
+        BackColor = Color.FromArgb(8, 13, 17),
+        Visible = false
+    };
+
+    private static Label CreateProgressionLabel(
+        string text,
+        Rectangle bounds,
+        float size,
+        Color color,
+        ContentAlignment alignment = ContentAlignment.MiddleCenter) => new()
+    {
+        Text = text,
+        Bounds = bounds,
+        Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        ForeColor = color,
+        BackColor = Color.Transparent,
+        Font = new Font("Consolas", size, FontStyle.Bold),
+        TextAlign = alignment
+    };
+
+    private static Button CreateProgressionButton(string text, Rectangle bounds)
+    {
+        var button = new Button
+        {
+            Text = text,
+            Bounds = bounds,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(43, 57, 66),
+            ForeColor = Color.FromArgb(232, 239, 244),
+            Font = new Font("Consolas", 10f, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            TabStop = false
+        };
+        button.FlatAppearance.BorderColor = Color.FromArgb(101, 230, 223);
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(54, 76, 82);
+        return button;
+    }
+
+    private void RefreshShopContent()
+    {
+        _shopCurrency.Text = $"AVAILABLE FUNDS  {_progression.Currency:C2}";
+        RebuildShopPanel(_shopWeaponsContent, () =>
+        {
+            foreach (var item in GameProgression.WeaponCatalog)
+                _shopWeaponsContent.Controls.Add(CreateWeaponShopRow(item));
+        });
+        RebuildShopPanel(_shopUpgradesContent, () =>
+        {
+            foreach (var item in GameProgression.WeaponCatalog)
+            {
+                if (!_progression.IsWeaponUnlocked(item.Code)) continue;
+                _shopUpgradesContent.Controls.Add(CreateUpgradeShopRow(item));
+            }
+        });
+        SwitchShopTab(_shopShowingWeapons, force: true);
+    }
+
+    private static void RebuildShopPanel(ShopFlowPanel panel, Action populate)
+    {
+        panel.SuspendDrawing();
+        panel.SuspendLayout();
+        try
+        {
+            while (panel.Controls.Count > 0)
+            {
+                var control = panel.Controls[0];
+                panel.Controls.RemoveAt(0);
+                control.Dispose();
+            }
+            populate();
+        }
+        finally
+        {
+            panel.ResumeLayout(performLayout: true);
+            panel.ResumeDrawing();
+        }
+    }
+
+    private void SwitchShopTab(bool showWeapons, bool force = false)
+    {
+        if (!force && _shopShowingWeapons == showWeapons &&
+            _shopWeaponsContent.Visible == showWeapons)
+            return;
+
+        _shopContentHost.SuspendLayout();
+        try
+        {
+            _shopShowingWeapons = showWeapons;
+            SetTabAppearance(_shopUpgradesTab, !showWeapons);
+            SetTabAppearance(_shopWeaponsTab, showWeapons);
+            _shopUpgradesContent.Visible = !showWeapons;
+            _shopWeaponsContent.Visible = showWeapons;
+            var activePanel = showWeapons ? _shopWeaponsContent : _shopUpgradesContent;
+            activePanel.Bounds = _shopContentHost.ClientRectangle;
+            activePanel.BringToFront();
+        }
+        finally
+        {
+            _shopContentHost.ResumeLayout(performLayout: true);
+        }
+    }
+
+    private Control CreateWeaponShopRow(WeaponCatalogEntry item)
+    {
+        var row = CreateShopRow();
+        var unlocked = _progression.IsWeaponUnlocked(item.Code);
+        var label = CreateProgressionLabel(
+            item.Name,
+            new Rectangle(18, 7, 410, 45),
+            13f,
+            unlocked ? Color.FromArgb(101, 230, 223) : Color.FromArgb(225, 233, 239),
+            ContentAlignment.MiddleLeft);
+        label.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        var status = CreateProgressionLabel(
+            unlocked ? "UNLOCKED" : item.Cost.ToString("C0"),
+            new Rectangle(530, 7, 220, 45),
+            11f,
+            unlocked ? Color.FromArgb(101, 230, 223) : Color.FromArgb(240, 195, 75));
+        status.Anchor = AnchorStyles.Top;
+        row.Controls.Add(label);
+        row.Controls.Add(status);
+        if (!unlocked)
+        {
+            var buy = CreateProgressionButton("UNLOCK", new Rectangle(890, 12, 160, 36));
+            buy.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            buy.Enabled = _progression.Currency >= item.Cost;
+            buy.Click += (_, _) =>
+            {
+                if (_progression.TryUnlockWeapon(item.Code)) RefreshShopContent();
+            };
+            row.Controls.Add(buy);
+        }
+        return row;
+    }
+
+    private Control CreateUpgradeShopRow(WeaponCatalogEntry item)
+    {
+        var row = CreateShopRow();
+        var label = CreateProgressionLabel(
+            item.Name,
+            new Rectangle(18, 7, 410, 45),
+            13f,
+            Color.FromArgb(101, 230, 223),
+            ContentAlignment.MiddleLeft);
+        label.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        var status = CreateProgressionLabel(
+            "UPGRADE SOCKETS AWAITING WEAPON-SPECIFIC DESIGNS",
+            new Rectangle(440, 7, 620, 45),
+            9.5f,
+            Color.FromArgb(158, 174, 181),
+            ContentAlignment.MiddleRight);
+        status.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        row.Controls.AddRange([label, status]);
+        return row;
+    }
+
+    private Panel CreateShopRow() => new()
+    {
+        Width = Math.Max(820, _shopContentHost.ClientSize.Width - 48),
+        Height = 60,
+        Margin = new Padding(2, 2, 2, 7),
+        BackColor = Color.FromArgb(22, 31, 37),
+        BorderStyle = BorderStyle.FixedSingle
+    };
+
+    private static void SetTabAppearance(Button button, bool selected)
+    {
+        button.BackColor = selected
+            ? Color.FromArgb(52, 82, 84)
+            : Color.FromArgb(30, 40, 47);
+        button.ForeColor = selected
+            ? Color.FromArgb(101, 230, 223)
+            : Color.FromArgb(174, 190, 198);
+    }
+
     private Rectangle WorldViewport => ViewportLayout.Fit(_surface.ClientSize, LogicalViewport);
 
     private void LayoutOverlays()
@@ -379,8 +938,19 @@ public sealed class GameWindow : Form
         _spawnButton.BringToFront();
         _conveyorButton.BringToFront();
         _lightButton.BringToFront();
+        _tokenButton.BringToFront();
         if (_pausePanel.Visible) _pausePanel.BringToFront();
         if (_settingsPanel.Visible) _settingsPanel.BringToFront();
+        if (_dayResultsPanel.ClientSize.Width > 0)
+        {
+            _dayResultsOk.Left = Math.Max(0,
+                (_dayResultsPanel.ClientSize.Width - _dayResultsOk.Width) / 2);
+            _dayResultsOk.Top = Math.Min(
+                _dayResultsPanel.ClientSize.Height - _dayResultsOk.Height - 24,
+                _dayResultsTotal.Bottom + 56);
+        }
+        if (_dayResultsPanel.Visible) _dayResultsPanel.BringToFront();
+        if (_betweenDaysPanel.Visible) _betweenDaysPanel.BringToFront();
     }
 
     private Point CenterOverlay(Control control) => new(
@@ -405,8 +975,11 @@ public sealed class GameWindow : Form
 
     private void SetPaused(bool paused)
     {
+        if (_dayPhase is DayCyclePhase.DayResultsTransfer or
+            DayCyclePhase.Results or DayCyclePhase.Shop) return;
         _paused = paused;
         _accumulator = 0;
+        _lastSimulationStepTime = 0d;
         if (paused)
         {
             if (_fixtureDragTarget != FixtureDragTarget.None) SaveFixtureLayout();
@@ -414,8 +987,18 @@ public sealed class GameWindow : Form
             _fixtureDragMoved = false;
             _input.SetLeft(false);
             _input.SetRight(false);
+            if (_world.WeaponDumbwaiter?.Token?.IsGrabbed == true)
+                _world.WeaponDumbwaiter.ReleaseToken(
+                    _world.WeaponDumbwaiter.Token.Position, Vector2.Zero);
             _grabbed?.EndGrab(Vector2.Zero, FixedDt);
             _grabbed = null;
+            if (_world.Knife?.IsGrabbed == true)
+                _world.Knife.EndGrab(Vector2.Zero, FixedDt);
+            _toolPrimaryHeld = false;
+            if (_toolRotationHeld) _world.Knife?.EndRotationAdjust();
+            _toolRotationHeld = false;
+            _rotateCounterClockwiseHeld = false;
+            _rotateClockwiseHeld = false;
             _rightDragging = false;
             _pendingSlice.Clear();
             _sliceTarget = null;
@@ -437,9 +1020,10 @@ public sealed class GameWindow : Form
         }
         _settingsPanel.Visible = false;
         _pausePanel.Visible = paused;
-        _spawnButton.Visible = !paused;
+        _spawnButton.Visible = !paused && _world.ProcessingLine?.ContinuousFlowMode != true;
         _conveyorButton.Visible = !paused;
         _lightButton.Visible = !paused;
+        _tokenButton.Visible = !paused;
         _fullscreenButton.Visible = !paused;
         LayoutOverlays();
         if (!paused) _surface.Focus();
@@ -447,6 +1031,7 @@ public sealed class GameWindow : Form
 
     private void ToggleFullscreen()
     {
+        _fullscreenToggleCount++;
         SuspendLayout();
         if (!_isFullscreen)
         {
@@ -467,28 +1052,81 @@ public sealed class GameWindow : Form
         _settingsFullscreen.Checked = _isFullscreen;
         ResumeLayout(true);
         LayoutOverlays();
+        UpdateDisplayDiagnostics();
         _surface.Invalidate();
     }
 
-    private void ResetScene()
+    private void UpdateDisplayDiagnostics()
+    {
+        if (_surface is null) return;
+        var screen = Screen.FromControl(this);
+        var viewport = WorldViewport;
+        var refreshRate = 0;
+        if (IsHandleCreated)
+        {
+            using var graphics = CreateGraphics();
+            var deviceContext = graphics.GetHdc();
+            try
+            {
+                refreshRate = GetDeviceCaps(deviceContext, VerticalRefreshDeviceCapability);
+            }
+            finally
+            {
+                graphics.ReleaseHdc(deviceContext);
+            }
+        }
+
+        _renderer.DisplayWidth = screen.Bounds.Width;
+        _renderer.DisplayHeight = screen.Bounds.Height;
+        _renderer.DisplayRefreshHz = refreshRate;
+        _renderer.DisplayDpi = DeviceDpi;
+        _renderer.ClientWidth = ClientSize.Width;
+        _renderer.ClientHeight = ClientSize.Height;
+        _renderer.SurfaceWidth = _surface.ClientSize.Width;
+        _renderer.SurfaceHeight = _surface.ClientSize.Height;
+        _renderer.InternalRenderWidth = WorldWidth;
+        _renderer.InternalRenderHeight = WorldHeight;
+        _renderer.ViewportWidth = viewport.Width;
+        _renderer.ViewportHeight = viewport.Height;
+        _renderer.FullscreenMode = _isFullscreen ? "borderless" : "windowed";
+        _renderer.PresentationMode = viewport.Size == LogicalViewport ? "native direct" : "scaled fast blit";
+        _renderer.ResizeEventCount = _resizeEventCount;
+        _renderer.FullscreenToggleCount = _fullscreenToggleCount;
+    }
+
+    private void ResetScene(bool rollDailyWeapon = false)
     {
         _audio.StopAll();
         var cellSize = 32;
         var grid = new DestructibleGrid(WorldWidth / cellSize, WorldHeight / cellSize, cellSize);
         grid.BuildProcessingStation();
-        _world = new BlobWorld(grid);
+        _world = new BlobWorld(grid)
+        {
+            EnableBlobPersonalities = true
+        };
         _world.Lighting.ConfigureProcessingStation();
         _world.Lighting.SetFactoryPower(false);
-        _world.HoldingChamber = HoldingChamber.CreateProcessingStation(
-            _fixtureLayout.BlobCounterPosition);
-        _world.HoldingChamber.SetCounterPosition(
-            new Vector2(_world.HoldingChamber.CounterBounds.X, _world.HoldingChamber.CounterBounds.Y),
-            WorldWidth, WorldHeight);
-        _chamberFeed = new ChamberFeedController(_world.HoldingChamber);
+        _world.HoldingChamber = null;
+        _chamberFeed = null;
         _world.ProcessingLine = new ProcessingLine(
             DestructibleGrid.ProcessingDeckRow * cellSize,
             powered: false,
-            breakerPosition: _fixtureLayout.BreakerBoxPosition);
+            breakerPosition: _fixtureLayout.BreakerBoxPosition,
+            continuousFlow: true);
+        _world.TubeFeed = new OverheadTubeFeed(_world.ProcessingLine.DeckY)
+        {
+            EnableBlobPersonalities = true
+        };
+        grid.OpenContinuousConveyorPortals();
+        _world.Knife = new PhysicalKnife(_world.ProcessingLine.ContinuousToolRackCenter);
+        if (rollDailyWeapon || string.IsNullOrWhiteSpace(_currentDayWeaponCode))
+            _currentDayWeaponCode = _progression.RollDailyWeapon(_weaponRandom);
+        _world.Knife.SelectArsenalVisual(
+            GameProgression.WeaponVariantForCode(_currentDayWeaponCode));
+        _world.WeaponDumbwaiter = new WeaponDumbwaiter(
+            _world.ProcessingLine.ContinuousToolRackCenter);
+        _world.WeaponDumbwaiter.PrepareInitialDelivery(
+            GameProgression.WeaponVariantForCode(_currentDayWeaponCode), _world.Knife);
         _world.ProcessingLine.SetBreakerPosition(
             new Vector2(_world.ProcessingLine.BreakerBounds.X, _world.ProcessingLine.BreakerBounds.Y),
             WorldWidth, WorldHeight);
@@ -508,33 +1146,74 @@ public sealed class GameWindow : Form
         _pendingSlice.Clear();
         _sliceTarget = null;
         _accumulator = 0;
-        _observedFactoryPower = false;
         _factoryStartupDelay = -1f;
+        _dayPhase = DayCyclePhase.AwaitingStart;
+        _dayPhaseTimer = 0f;
+        _lightingSequenceStage = 0;
+        _renderer.CenterAnnouncement = null;
+        _renderer.CenterAnnouncementOpacity = 1f;
+        _renderer.BloodShipment = null;
+        _bloodShipment = null;
+        _daySaleProcessedCount = 0;
+        _dayResultsTransferTime = 0f;
+        _dayPayoutTransferLabel.Visible = false;
+        _dayResultsTotal.Visible = true;
+        _dayResultsOk.Visible = true;
+        _renderer.DisplayVolumeUnit = _progression.VolumeUnit;
+        _dayResultsPanel.Visible = false;
+        _betweenDaysPanel.Visible = false;
         _fixtureDragTarget = FixtureDragTarget.None;
         _fixtureDragMoved = false;
+        _toolPrimaryHeld = false;
+        _toolRotationHeld = false;
+        _toolEquipKeyHeld = false;
+        _rotateCounterClockwiseHeld = false;
+        _rotateClockwiseHeld = false;
+        _arsenalMenuConsumedClick = false;
+        _renderer.ArsenalMenuOpen = false;
         _spawnButton.Enabled = false;
+        _spawnButton.Visible = false;
+        _conveyorButton.Visible = true;
+        _lightButton.Visible = true;
+        _tokenButton.Visible = true;
+        _fullscreenButton.Visible = true;
+        _paused = false;
     }
 
     private async void BeginLoop()
     {
         _lastTime = _clock.Elapsed.TotalSeconds;
+        _lastPumpTime = _lastTime;
+        _nextRenderTime = _lastTime;
         while (!IsDisposed && Visible)
         {
             var now = _clock.Elapsed.TotalSeconds;
+            _maximumPumpGapSincePaint = Math.Max(_maximumPumpGapSincePaint, now - _lastPumpTime);
+            _lastPumpTime = now;
             var frame = Math.Min(now - _lastTime, 0.1);
             _lastTime = now;
-            _world.StepsThisFrame = 0;
-            _audioUpdateMsThisFrame = 0d;
             var fixedUpdateStart = Stopwatch.GetTimestamp();
+            var fixedUpdateAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+            var stepsThisPump = 0;
 
-            if (!_paused) _accumulator += frame;
+            var simulationSuspended = _paused ||
+                                      _dayPhase is DayCyclePhase.Results or DayCyclePhase.Shop;
+            if (!simulationSuspended) _accumulator += frame;
             else _accumulator = 0;
 
-            while (!_paused && _accumulator >= FixedDt && _world.StepsThisFrame < MaxStepsPerFrame)
+            while (!simulationSuspended &&
+                   _accumulator >= FixedDt &&
+                   stepsThisPump < MaxCatchUpStepsPerPump)
             {
+                var simulationStepTime = _clock.Elapsed.TotalSeconds;
+                if (_lastSimulationStepTime > 0d)
+                    _maximumSimulationGapSincePaint = Math.Max(
+                        _maximumSimulationGapSincePaint,
+                        simulationStepTime - _lastSimulationStepTime);
+                _lastSimulationStepTime = simulationStepTime;
                 FixedUpdate(FixedDt);
                 _accumulator -= FixedDt;
-                _world.StepsThisFrame++;
+                stepsThisPump++;
             }
 
             if (_accumulator >= FixedDt)
@@ -544,14 +1223,50 @@ public sealed class GameWindow : Form
                 _accumulator %= FixedDt;
             }
 
-            _renderer.FixedUpdateMs = Stopwatch.GetElapsedTime(fixedUpdateStart).TotalMilliseconds;
-            _renderer.AudioUpdateMs = _audioUpdateMsThisFrame;
+            _fixedUpdateMsSinceRender += Stopwatch.GetElapsedTime(fixedUpdateStart).TotalMilliseconds;
+            _simulationAllocatedBytesSinceRender += Math.Max(0L,
+                GC.GetAllocatedBytesForCurrentThread() - fixedUpdateAllocationStart);
+            _stepsSinceRender += stepsThisPump;
+            _maximumStepBatchSinceRender = Math.Max(_maximumStepBatchSinceRender, stepsThisPump);
 
-            var frameMs = Math.Max(0.001, frame * 1000);
-            _fpsSmoothing = _fpsSmoothing * 0.92 + (1000.0 / frameMs) * 0.08;
-            _renderer.FrameMs = frameMs;
-            _renderer.Fps = _fpsSmoothing;
-            _surface.Invalidate(WorldViewport);
+            var renderNow = _clock.Elapsed.TotalSeconds;
+            if (renderNow >= _nextRenderTime)
+            {
+                var lateness = renderNow - _nextRenderTime;
+                _maximumRenderLatenessSincePaint = Math.Max(_maximumRenderLatenessSincePaint, lateness);
+                var deadlinesAdvanced = 0;
+                do
+                {
+                    _nextRenderTime += TargetRenderSeconds;
+                    deadlinesAdvanced++;
+                } while (_nextRenderTime <= renderNow);
+                _missedRenderDeadlines += Math.Max(0, deadlinesAdvanced - 1);
+
+                _world.StepsThisFrame = _stepsSinceRender;
+                _renderer.FixedUpdateMs = _fixedUpdateMsSinceRender;
+                _renderer.SimulationAllocatedBytesPerFrame = _simulationAllocatedBytesSinceRender;
+                _renderer.AudioUpdateMs = _audioUpdateMsThisFrame;
+                _renderer.HostPumpGapMs = _maximumPumpGapSincePaint * 1000d;
+                _renderer.SimulationGapMs = _maximumSimulationGapSincePaint * 1000d;
+                _renderer.RenderDeadlineLateMs = _maximumRenderLatenessSincePaint * 1000d;
+                _renderer.MaxStepBatch = _maximumStepBatchSinceRender;
+                _renderer.RenderDeadlineMisses = _missedRenderDeadlines;
+
+                _stepsSinceRender = 0;
+                _maximumStepBatchSinceRender = 0;
+                _fixedUpdateMsSinceRender = 0d;
+                _simulationAllocatedBytesSinceRender = 0L;
+                _audioUpdateMsThisFrame = 0d;
+                _maximumPumpGapSincePaint = 0d;
+                _maximumSimulationGapSincePaint = 0d;
+                _maximumRenderLatenessSincePaint = 0d;
+                _renderRequestCount++;
+                _surface.Invalidate(WorldViewport);
+            }
+
+            // Keep simulation/input sampling independent from the 60 Hz paint cap.
+            // A short UI-thread yield lets 120 Hz fixed ticks land near 8.33 ms
+            // instead of batching two of them after one coarse 16.67 ms delay.
             await Task.Delay(1);
         }
     }
@@ -559,17 +1274,21 @@ public sealed class GameWindow : Form
     private void FixedUpdate(float dt)
     {
         _world.Gravity = _gravityEnabled ? new Vector2(0f, 980f) : Vector2.Zero;
+        var keyboardRotation = (_rotateClockwiseHeld ? 1f : 0f) -
+                               (_rotateCounterClockwiseHeld ? 1f : 0f);
+        if (MathF.Abs(keyboardRotation) > 0.01f)
+            _world.Knife?.RotateBaseBy(keyboardRotation * MathF.PI * 0.82f * dt);
         var line = _world.ProcessingLine;
-        if (line?.Powered == true && _observedFactoryPower)
+        if (line?.Powered == true && _dayPhase == DayCyclePhase.Active)
         {
             if (_factoryStartupDelay > 0f)
             {
                 _factoryStartupDelay -= dt;
-                if (_factoryStartupDelay <= 0f) _chamberFeed?.RequestNext();
+                if (_factoryStartupDelay <= 0f) _factoryStartupDelay = 0f;
             }
             else
             {
-                var spawned = _chamberFeed?.Update(_world.Bodies, dt, StationUnit.Create);
+                var spawned = _world.TubeFeed?.Update(_world.Bodies, dt, StationUnit.Create);
                 if (spawned is not null) _audio.Play(SoundCue.BlobDrop);
             }
         }
@@ -579,19 +1298,309 @@ public sealed class GameWindow : Form
             _grabbed.UpdateGrabTarget(target, dt);
         }
         _world.Step(dt);
-        if (line?.Powered == true && !_observedFactoryPower)
-        {
-            _observedFactoryPower = true;
-            _factoryStartupDelay = 0.82f;
-            _world.Lighting.SetFactoryPower(true);
-            _audio.SetLooping(SoundCue.FactoryHum, true);
-            _audio.SetLooping(SoundCue.Conveyor, true);
-            _spawnButton.Enabled = true;
-        }
+        if (_grabbed is { IsGrabbed: false }) _grabbed = null;
+        UpdateDayCycle(dt, line);
         var audioStart = Stopwatch.GetTimestamp();
         UpdateMachineAudio();
         _audioUpdateMsThisFrame += Stopwatch.GetElapsedTime(audioStart).TotalMilliseconds;
     }
+
+    private void UpdateDayCycle(float dt, ProcessingLine? line)
+    {
+        if (line is null) return;
+        switch (_dayPhase)
+        {
+            case DayCyclePhase.AwaitingStart:
+                if (!line.Powered) return;
+                _dayPhase = DayCyclePhase.StartingLights;
+                _dayPhaseTimer = 0f;
+                _lightingSequenceStage = 0;
+                _world.Lighting.SetPoweredLightCount(0);
+                return;
+
+            case DayCyclePhase.StartingLights:
+            {
+                if (!line.Powered)
+                {
+                    CompleteDayShutdown(line);
+                    return;
+                }
+                _dayPhaseTimer += dt;
+                var stage = _dayPhaseTimer switch
+                {
+                    >= 0.72f => _world.Lighting.Lights.Count,
+                    >= 0.46f => Math.Min(2, _world.Lighting.Lights.Count),
+                    >= 0.20f => Math.Min(1, _world.Lighting.Lights.Count),
+                    _ => 0
+                };
+                SetLightingSequenceStage(stage);
+                if (_dayPhaseTimer < 0.86f) return;
+                _dayPhase = DayCyclePhase.StartAnnouncement;
+                _dayPhaseTimer = 1.65f;
+                _renderer.CenterAnnouncement = _progression.DayLabel();
+                _renderer.CenterAnnouncementOpacity = 1f;
+                _audio.SetLooping(SoundCue.FactoryHum, true);
+                _audio.SetLooping(SoundCue.Conveyor, true);
+                return;
+            }
+
+            case DayCyclePhase.StartAnnouncement:
+                if (!line.Powered)
+                {
+                    CompleteDayShutdown(line);
+                    return;
+                }
+                _dayPhaseTimer -= dt;
+                _renderer.CenterAnnouncementOpacity =
+                    Math.Clamp(_dayPhaseTimer / 0.35f, 0f, 1f);
+                if (_dayPhaseTimer > 0f) return;
+                _renderer.CenterAnnouncement = null;
+                _renderer.CenterAnnouncementOpacity = 1f;
+                _dayPhase = DayCyclePhase.Active;
+                _factoryStartupDelay = 0.24f;
+                return;
+
+            case DayCyclePhase.Active:
+            {
+                // Pulling the live handle upward extinguishes the authored lamps
+                // right-to-left. Releasing early restores them as the lever returns.
+                var lightCount = _world.Lighting.Lights.Count;
+                var stage = Math.Clamp(
+                    (int)MathF.Ceiling(line.BreakerLever * lightCount - 0.001f),
+                    0,
+                    lightCount);
+                SetLightingSequenceStage(stage);
+                if (!line.Powered)
+                {
+                    CompleteDayShutdown(line);
+                    return;
+                }
+                if (!line.PoweringDown) return;
+                _dayPhase = DayCyclePhase.EndingLights;
+                _dayPhaseTimer = 0f;
+                _renderer.ArsenalMenuOpen = false;
+                return;
+            }
+
+            case DayCyclePhase.EndingLights:
+                _dayPhaseTimer += dt;
+                SetLightingSequenceStage(0);
+                if (line.Powered) return;
+                CompleteDayShutdown(line);
+                return;
+
+            case DayCyclePhase.EndAnnouncement:
+                _dayPhaseTimer -= dt;
+                _renderer.CenterAnnouncementOpacity =
+                    Math.Clamp(_dayPhaseTimer / 0.35f, 0f, 1f);
+                if (_dayPhaseTimer > 0f) return;
+                _renderer.CenterAnnouncement = null;
+                _renderer.CenterAnnouncementOpacity = 1f;
+                _bloodShipment = new BloodShipmentSequence(
+                    line.Basin,
+                    _progression.BloodRatePerGallon,
+                    _daySaleProcessedCount,
+                    _progression.ProcessedBlobRate);
+                _renderer.BloodShipment = _bloodShipment;
+                _dayPhase = DayCyclePhase.BloodShipment;
+                return;
+
+            case DayCyclePhase.BloodShipment:
+                if (_bloodShipment is null)
+                {
+                    _bloodShipment = new BloodShipmentSequence(
+                        line.Basin,
+                        _progression.BloodRatePerGallon,
+                        _daySaleProcessedCount,
+                        _progression.ProcessedBlobRate);
+                    _renderer.BloodShipment = _bloodShipment;
+                }
+                _bloodShipment.Update(dt);
+                if (!_bloodShipment.Complete) return;
+                _lastDayPayout = _progression.CompleteDay(
+                    _bloodShipment.InitialGallons,
+                    _bloodShipment.InitialLiters,
+                    _daySaleProcessedCount);
+                _renderer.BloodShipment = null;
+                _bloodShipment = null;
+                ShowDayResults();
+                return;
+
+            case DayCyclePhase.DayResultsTransfer:
+                UpdateDayResultsTransfer(dt);
+                return;
+        }
+    }
+
+    private void CompleteDayShutdown(ProcessingLine line)
+    {
+        if (_dayPhase == DayCyclePhase.EndAnnouncement) return;
+        _world.Lighting.SetFactoryPower(false);
+        _audio.StopAll();
+        _daySaleProcessedCount = line.ProcessedCount;
+        _dayPhase = DayCyclePhase.EndAnnouncement;
+        _dayPhaseTimer = 1.65f;
+        _renderer.CenterAnnouncement = $"{_progression.DayLabel()} END";
+        _renderer.CenterAnnouncementOpacity = 1f;
+        SetFactoryOverlayControlsVisible(false);
+    }
+
+    private void SetLightingSequenceStage(int stage)
+    {
+        stage = Math.Clamp(stage, 0, _world.Lighting.Lights.Count);
+        if (_lightingSequenceStage == stage) return;
+        _lightingSequenceStage = stage;
+        _world.Lighting.SetPoweredLightCount(stage);
+    }
+
+    private void ShowDayResults()
+    {
+        _dayPhase = DayCyclePhase.DayResultsTransfer;
+        var payout = _lastDayPayout;
+        _dayResultsTitle.Text = $"{FormatDay(payout.Year, payout.DayOfYear)} COMPLETE";
+        var unitAmount = _progression.VolumeUnit == BasinVolumeUnit.Gallons
+            ? $"{payout.BloodGallons:0.0} gal"
+            : $"{payout.BloodLiters:0.0} L";
+        var rate = _progression.VolumeUnit == BasinVolumeUnit.Gallons
+            ? $"{payout.BloodRatePerGallon:C2} / gal"
+            : $"{payout.BloodRatePerGallon / (decimal)BloodBasin.LitersPerUsGallon:C2} / L";
+        _dayResultsBlood.Text =
+            $"BLOOD SOLD\n{unitAmount}  ×  {rate}  =  {payout.BloodPayout:C2}";
+        _dayResultsProcessed.Text =
+            $"DAMAGED BLOBS PROCESSED\n{payout.ProcessedBlobs}  ×  " +
+            $"{payout.ProcessedRate:C2}  =  {payout.ProcessedPayout:C2}";
+        _dayResultsTotal.Text =
+            $"DAY PAYOUT  {payout.TotalPayout:C2}\nTOTAL FUNDS  {payout.CurrencyAfterSale:C2}";
+        _dayResultsTotal.Visible = false;
+        _dayResultsOk.Visible = false;
+        _dayResultsTransferTime = 0f;
+        _dayResultsTransferStart = ScaleLogicalBoundsToDayPanel(
+            GameRenderer.ShipmentEarningsPopupBounds);
+        _dayResultsTransferTarget = _dayResultsTotal.Bounds;
+        _dayPayoutTransferLabel.Bounds = _dayResultsTransferStart;
+        _dayPayoutTransferLabel.Text = $"{payout.TotalPayout:C2}";
+        _dayPayoutTransferLabel.Visible = true;
+        SetFactoryOverlayControlsVisible(false);
+        _dayResultsPanel.Visible = true;
+        LayoutOverlays();
+        _dayResultsPanel.BringToFront();
+        _dayPayoutTransferLabel.BringToFront();
+    }
+
+    private void UpdateDayResultsTransfer(float dt)
+    {
+        const float duration = 0.86f;
+        _dayResultsTransferTime += dt;
+        var linear = Math.Clamp(_dayResultsTransferTime / duration, 0f, 1f);
+        var eased = linear * linear * (3f - 2f * linear);
+        _dayPayoutTransferLabel.Bounds = new Rectangle(
+            LerpInt(_dayResultsTransferStart.X, _dayResultsTransferTarget.X, eased),
+            LerpInt(_dayResultsTransferStart.Y, _dayResultsTransferTarget.Y, eased),
+            LerpInt(_dayResultsTransferStart.Width, _dayResultsTransferTarget.Width, eased),
+            LerpInt(_dayResultsTransferStart.Height, _dayResultsTransferTarget.Height, eased));
+        if (linear < 1f) return;
+
+        _dayPayoutTransferLabel.Visible = false;
+        _dayResultsTotal.Visible = true;
+        _dayResultsOk.Visible = true;
+        _dayPhase = DayCyclePhase.Results;
+    }
+
+    private static int LerpInt(int from, int to, float amount) =>
+        (int)MathF.Round(from + (to - from) * amount);
+
+    private Rectangle ScaleLogicalBoundsToDayPanel(Rectangle logical)
+    {
+        var scaleX = _dayResultsPanel.ClientSize.Width / (float)WorldWidth;
+        var scaleY = _dayResultsPanel.ClientSize.Height / (float)WorldHeight;
+        return new Rectangle(
+            (int)MathF.Round(logical.X * scaleX),
+            (int)MathF.Round(logical.Y * scaleY),
+            Math.Max(1, (int)MathF.Round(logical.Width * scaleX)),
+            Math.Max(1, (int)MathF.Round(logical.Height * scaleY)));
+    }
+
+    internal int WritePayoutHandoffSnapshot(string outputPath)
+    {
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(-32000, -32000);
+        _paused = true;
+        Show();
+        Application.DoEvents();
+        _lastDayPayout = new DayPayout(
+            1, 1, 1,
+            1884.6f,
+            7133.2f,
+            GameProgression.BaseBloodRatePerGallon,
+            5182.65m,
+            7,
+            GameProgression.BaseProcessedBlobRate,
+            126m,
+            5308.65m,
+            8754.31m);
+        ShowDayResults();
+        PerformLayout();
+        _dayResultsPanel.PerformLayout();
+        Application.DoEvents();
+
+        using var comparison = new Bitmap(WorldWidth * 3, WorldHeight);
+        using var frame = new Bitmap(WorldWidth, WorldHeight);
+        using var graphics = Graphics.FromImage(comparison);
+
+        void Capture(int panel)
+        {
+            frame.SetResolution(comparison.HorizontalResolution, comparison.VerticalResolution);
+            using (var clear = Graphics.FromImage(frame)) clear.Clear(_dayResultsPanel.BackColor);
+            _dayResultsPanel.DrawToBitmap(frame, new Rectangle(0, 0, WorldWidth, WorldHeight));
+            graphics.DrawImageUnscaled(frame, panel * WorldWidth, 0);
+        }
+
+        Capture(0);
+        UpdateDayResultsTransfer(0.43f);
+        Capture(1);
+        UpdateDayResultsTransfer(0.43f);
+        Capture(2);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, ImageFormat.Png);
+        Hide();
+        Console.WriteLine($"Payout handoff snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    private void ShowBetweenDaysShop()
+    {
+        _dayPhase = DayCyclePhase.Shop;
+        _dayResultsPanel.Visible = false;
+        _dayPayoutTransferLabel.Visible = false;
+        _betweenDaysPanel.Visible = true;
+        _shopShowingWeapons = false;
+        RefreshShopContent();
+        _betweenDaysPanel.BringToFront();
+    }
+
+    private void ContinueToNextDay()
+    {
+        _progression.AdvanceDay();
+        _betweenDaysPanel.Visible = false;
+        ResetScene(rollDailyWeapon: true);
+        SetFactoryOverlayControlsVisible(true);
+        LayoutOverlays();
+        _surface.Focus();
+    }
+
+    private void SetFactoryOverlayControlsVisible(bool visible)
+    {
+        _spawnButton.Visible = false;
+        _conveyorButton.Visible = visible;
+        _lightButton.Visible = visible;
+        _tokenButton.Visible = visible;
+        _fullscreenButton.Visible = visible;
+    }
+
+    private static string FormatDay(int year, int day) =>
+        year > 1 ? $"YEAR {year}  •  DAY {day}" : $"DAY {day}";
 
     private void UpdateMachineAudio()
     {
@@ -602,8 +1611,10 @@ public sealed class GameWindow : Form
             machineryAvailable && line!.CrusherButtonHeld && line.LockedBody is not null);
         _audio.SetLooping(SoundCue.Drill,
             machineryAvailable && line!.DrillLeverHeld && line.DrillLockedBody is not null);
-        _audio.SetLooping(SoundCue.Vacuum, machineryAvailable && _draggingVacuumNozzle);
-        _audio.SetLooping(SoundCue.Filter, machineryAvailable && _draggingFilterKnob);
+        _audio.SetLooping(SoundCue.Vacuum,
+            machineryAvailable && line!.VacuumHose.IsDragging && line.VacuumLockedBody is not null);
+        _audio.SetLooping(SoundCue.Filter,
+            machineryAvailable && line!.FilterDragging && line.FilterLockedBody is not null);
         _audio.SetLooping(SoundCue.Press,
             machineryAvailable && line!.DrumLockedBody is not null && MathF.Abs(line.DrumAngularSpeed) > 0.4f);
     }
@@ -613,9 +1624,44 @@ public sealed class GameWindow : Form
         if (_paused) return;
         var point = ToWorld(e.Location);
         _input.SetMouse(point);
+        if (_renderer.ArsenalMenuOpen)
+        {
+            var hovered = _renderer.HitTestArsenalMenu(point);
+            if (hovered >= 0) _renderer.ArsenalMenuSelection = hovered;
+            _surface.Cursor = hovered >= 0 ? Cursors.Hand : Cursors.Default;
+            return;
+        }
+        if (_world.WeaponDumbwaiter?.Token?.IsGrabbed == true)
+        {
+            _world.WeaponDumbwaiter.SetTokenGrabTarget(point);
+            _surface.Cursor = Cursors.Hand;
+            return;
+        }
+        if (_toolRotationHeld && _world.Knife is { } rotatingTool)
+        {
+            rotatingTool.UpdateRotationAdjust(point);
+            _surface.Cursor = Cursors.Cross;
+            return;
+        }
+        if (_toolPrimaryHeld && _world.Knife?.IsDeployed == true)
+        {
+            _world.Knife.SetGrabTarget(point);
+            _surface.Cursor = Cursors.Hand;
+            return;
+        }
+        if (_world.Knife?.IsGrabbed == true)
+        {
+            _world.Knife.SetGrabTarget(point);
+            _surface.Cursor = Cursors.Hand;
+            return;
+        }
         if (_draggingBreakerLever && _world.ProcessingLine is { } breakerLine)
         {
-            if (breakerLine.DragBreakerLever(point)) _audio.Play(SoundCue.Breaker);
+            if (breakerLine.DragBreakerLever(point))
+            {
+                _audio.Play(SoundCue.Breaker);
+                _world.WeaponDumbwaiter?.BeginInitialOpening();
+            }
             _surface.Cursor = Cursors.Hand;
             return;
         }
@@ -630,9 +1676,12 @@ public sealed class GameWindow : Form
             _surface.Cursor = Cursors.SizeAll;
             return;
         }
+        var dumbwaiter = _world.WeaponDumbwaiter;
         _surface.Cursor = _world.ProcessingLine?.HitBreakerLever(point) == true ||
                           _world.ProcessingLine?.HitDrumWheel(point) == true ||
-                          _world.ProcessingLine?.HitBloodShop(point) == true
+                          _world.ProcessingLine?.HitBloodShop(point) == true ||
+                          _world.Knife?.HitTest(point) == true ||
+                          dumbwaiter?.BeginHover(point) == true
             ? Cursors.Hand
             : _world.ProcessingLine?.HitBreaker(point) == true ||
               _world.HoldingChamber?.HitCounter(point) == true
@@ -694,15 +1743,92 @@ public sealed class GameWindow : Form
     {
         if (_paused || !WorldViewport.Contains(e.Location)) return;
         _input.SetMouse(ToWorld(e.Location));
+        if (_renderer.ArsenalMenuOpen)
+        {
+            _arsenalMenuConsumedClick = true;
+            if (e.Button == MouseButtons.Left)
+            {
+                var selected = _renderer.HitTestArsenalMenu(_input.MousePosition);
+                if (selected >= 0)
+                {
+                    _renderer.ArsenalMenuSelection = selected;
+                    ConfirmArsenalSelection();
+                }
+            }
+            _surface.Focus();
+            return;
+        }
+        if (e.Button == MouseButtons.Left &&
+            _renderer.TryHandleDebugOverlayClick(_input.MousePosition))
+        {
+            _surface.Focus();
+            return;
+        }
         if (e.Button == MouseButtons.Left)
         {
             _input.SetLeft(true);
+            if (_toolRotationHeld)
+            {
+                _surface.Focus();
+                return;
+            }
             if (_world.ProcessingLine is { } breakerLine &&
                 breakerLine.BeginBreakerLeverDrag(_input.MousePosition))
             {
                 _draggingBreakerLever = true;
                 _grabbed = null;
                 _conveyorEditHandle = ConveyorEditHandle.None;
+                _surface.Cursor = Cursors.Hand;
+                _surface.Focus();
+                return;
+            }
+            if (_world.ProcessingLine?.Powered == true &&
+                _world.WeaponDumbwaiter is { } dumbwaiter)
+            {
+                if (dumbwaiter.ButtonArmed && dumbwaiter.HitButton(_input.MousePosition) &&
+                    _world.Knife is { } exchangingTool)
+                {
+                    var replacementCode = _progression.RollRerollWeapon(
+                        _weaponRandom, _currentDayWeaponCode ?? "CLEAVER");
+                    if (dumbwaiter.Activate(
+                            GameProgression.WeaponVariantForCode(replacementCode), exchangingTool))
+                    {
+                        _currentDayWeaponCode = replacementCode;
+                        _toolPrimaryHeld = false;
+                        _toolRotationHeld = false;
+                        _input.SetRight(false);
+                    }
+                    _surface.Focus();
+                    return;
+                }
+                if (dumbwaiter.BeginTokenGrab(_input.MousePosition))
+                {
+                    _grabbed = null;
+                    _surface.Cursor = Cursors.Hand;
+                    _surface.Focus();
+                    return;
+                }
+            }
+            if (_world.ProcessingLine?.Powered == true &&
+                _world.Knife is { IsDeployed: true, ArsenalVisualVariant: 8 } deployedSling &&
+                deployedSling.CanBeginSlingshotPull(_input.MousePosition))
+            {
+                deployedSling.SetGrabTarget(_input.MousePosition);
+                _toolPrimaryHeld = deployedSling.BeginPrimaryAction();
+                _surface.Cursor = Cursors.Hand;
+                _surface.Focus();
+                return;
+            }
+            if (_world.ProcessingLine?.Powered == true && _world.Knife?.IsEquipped == true)
+            {
+                if (_world.Knife.PlaceAtPreview())
+                {
+                    _toolPrimaryHeld = false;
+                    _surface.Cursor = Cursors.Default;
+                    _surface.Focus();
+                    return;
+                }
+                _toolPrimaryHeld = _world.Knife.BeginPrimaryAction();
                 _surface.Cursor = Cursors.Hand;
                 _surface.Focus();
                 return;
@@ -720,6 +1846,15 @@ public sealed class GameWindow : Form
             ClearFixtureSelection();
             if (_world.ProcessingLine?.Powered != true)
             {
+                _surface.Focus();
+                return;
+            }
+            if (_world.Knife?.BeginGrab(_input.MousePosition) == true)
+            {
+                _world.WeaponDumbwaiter?.NotifyWeaponTaken();
+                _grabbed = null;
+                _conveyorEditHandle = ConveyorEditHandle.None;
+                _surface.Cursor = Cursors.Hand;
                 _surface.Focus();
                 return;
             }
@@ -834,6 +1969,17 @@ public sealed class GameWindow : Form
         }
         else if (e.Button == MouseButtons.Right)
         {
+            if (_world.ProcessingLine?.Powered == true && _world.Knife is { IsEquipped: true } tool &&
+                tool.BeginRotationAdjust(_input.MousePosition))
+            {
+                _toolPrimaryHeld = false;
+                _input.SetRight(true);
+                _toolRotationHeld = true;
+                _surface.Cursor = Cursors.Cross;
+                _surface.Focus();
+                return;
+            }
+            if (_world.ProcessingLine?.ContinuousFlowMode == true) return;
             _input.SetRight(true);
             _rightGestureStart = _input.MousePosition;
             _rightDragging = false;
@@ -849,13 +1995,49 @@ public sealed class GameWindow : Form
     {
         if (_paused) return;
         _input.SetMouse(ToWorld(e.Location));
+        if (_arsenalMenuConsumedClick)
+        {
+            if (e.Button == MouseButtons.Left) _input.SetLeft(false);
+            _arsenalMenuConsumedClick = false;
+            return;
+        }
+        if (_renderer.ArsenalMenuOpen) return;
         if (e.Button == MouseButtons.Left)
         {
             _input.SetLeft(false);
+            if (_world.WeaponDumbwaiter?.Token?.IsGrabbed == true)
+            {
+                _world.WeaponDumbwaiter.ReleaseToken(
+                    _input.MousePosition, _input.GetMouseVelocity());
+                _surface.Cursor = Cursors.Default;
+                return;
+            }
+            if (_toolPrimaryHeld && _world.Knife is { } activeTool)
+            {
+                activeTool.EndPrimaryAction();
+                _toolPrimaryHeld = false;
+                _surface.Cursor = Cursors.Hand;
+                return;
+            }
+            if (_world.Knife?.IsEquipped == true)
+            {
+                _toolPrimaryHeld = false;
+                _surface.Cursor = Cursors.Hand;
+                return;
+            }
+            if (_world.Knife?.IsGrabbed == true)
+            {
+                _world.Knife.EndGrab(_input.GetMouseVelocity(), FixedDt);
+                _surface.Cursor = Cursors.Default;
+                return;
+            }
             if (_draggingBreakerLever)
             {
                 if (_world.ProcessingLine?.DragBreakerLever(_input.MousePosition) == true)
+                {
                     _audio.Play(SoundCue.Breaker);
+                    _world.WeaponDumbwaiter?.BeginInitialOpening();
+                }
                 _world.ProcessingLine?.EndBreakerLeverDrag();
                 _draggingBreakerLever = false;
                 _surface.Cursor = Cursors.Default;
@@ -916,6 +2098,16 @@ public sealed class GameWindow : Form
         }
         else if (e.Button == MouseButtons.Right)
         {
+            if (_toolRotationHeld && _world.Knife is { } tool)
+            {
+                tool.UpdateRotationAdjust(_input.MousePosition);
+                tool.EndRotationAdjust();
+                _toolRotationHeld = false;
+                _input.SetRight(false);
+                _surface.Cursor = Cursors.Hand;
+                return;
+            }
+            if (_world.ProcessingLine?.ContinuousFlowMode == true) return;
             var thresholdSq = DamageGestureProfile.DragThreshold * DamageGestureProfile.DragThreshold;
             var dragged = _rightDragging ||
                           Vector2.DistanceSquared(_rightGestureStart, _input.MousePosition) >= thresholdSq;
@@ -1035,6 +2227,25 @@ public sealed class GameWindow : Form
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode == Keys.F4 && e.Alt)
+        {
+            Close();
+            return;
+        }
+        if (_dayPhase is DayCyclePhase.DayResultsTransfer or
+            DayCyclePhase.Results or DayCyclePhase.Shop)
+        {
+            if (e.KeyCode == Keys.F11 || e.KeyCode == Keys.Enter && e.Alt)
+                ToggleFullscreen();
+            e.SuppressKeyPress = true;
+            return;
+        }
+        if (_renderer.ArsenalMenuOpen && e.KeyCode == Keys.Escape)
+        {
+            CloseArsenalMenu();
+            e.SuppressKeyPress = true;
+            return;
+        }
         if (e.KeyCode == Keys.Escape)
         {
             if (_settingsPanel.Visible)
@@ -1056,6 +2267,57 @@ public sealed class GameWindow : Form
         }
         if (_paused) return;
 
+        if (e.KeyCode == Keys.I && _renderer.DebugDraw)
+        {
+            if (_renderer.ArsenalMenuOpen) CloseArsenalMenu();
+            else OpenArsenalMenu();
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (_renderer.ArsenalMenuOpen)
+        {
+            switch (e.KeyCode)
+            {
+                case Keys.Left:
+                    MoveArsenalSelection(-1);
+                    break;
+                case Keys.Right:
+                    MoveArsenalSelection(1);
+                    break;
+                case Keys.Up:
+                    MoveArsenalSelection(-5);
+                    break;
+                case Keys.Down:
+                    MoveArsenalSelection(5);
+                    break;
+                case Keys.Enter:
+                    ConfirmArsenalSelection();
+                    break;
+            }
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.KeyCode == Keys.E)
+        {
+            if (!_toolEquipKeyHeld)
+            {
+                _toolEquipKeyHeld = true;
+                if (_world.Knife?.TryPickupBaseball(_input.MousePosition) != true)
+                    ToggleEquippedTool();
+            }
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.KeyCode == Keys.Z && _world.Knife?.DeigniteSaber() == true)
+        {
+            _toolPrimaryHeld = false;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
         switch (e.KeyCode)
         {
             case Keys.R:
@@ -1066,12 +2328,23 @@ public sealed class GameWindow : Form
                 _settingsGravity.Checked = _gravityEnabled;
                 foreach (var body in _world.Bodies) body.Wake();
                 break;
-            case Keys.D:
+            case Keys.M:
                 _renderer.DebugDraw = !_renderer.DebugDraw;
                 _settingsDebug.Checked = _renderer.DebugDraw;
                 break;
+            case Keys.A:
+                _rotateCounterClockwiseHeld = true;
+                e.SuppressKeyPress = true;
+                break;
+            case Keys.D:
+                _rotateClockwiseHeld = true;
+                e.SuppressKeyPress = true;
+                break;
             case Keys.B:
                 SpawnBlob();
+                break;
+            case Keys.T:
+                SpawnDumbwaiterToken();
                 break;
             case Keys.C:
                 SpawnConveyor();
@@ -1132,6 +2405,74 @@ public sealed class GameWindow : Form
                 ApplyDiagnosticSlice(Vector2.Normalize(new Vector2(1f, 0.55f)));
                 break;
         }
+    }
+
+    private void OnKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.E) _toolEquipKeyHeld = false;
+        if (e.KeyCode == Keys.A) _rotateCounterClockwiseHeld = false;
+        if (e.KeyCode == Keys.D) _rotateClockwiseHeld = false;
+    }
+
+    private void ToggleEquippedTool()
+    {
+        if (_world.ProcessingLine?.Powered != true || _world.Knife is not { } tool) return;
+        if (tool.IsEquipped)
+        {
+            if (_toolRotationHeld)
+            {
+                tool.EndRotationAdjust();
+                _toolRotationHeld = false;
+                _input.SetRight(false);
+            }
+            if (_toolPrimaryHeld) tool.EndPrimaryAction();
+            _toolPrimaryHeld = false;
+            tool.EndGrab(_input.GetMouseVelocity(), FixedDt);
+            _surface.Cursor = Cursors.Default;
+            return;
+        }
+        if (tool.IsGrabbed || !tool.HitTest(_input.MousePosition)) return;
+        if (!tool.Equip(_input.MousePosition, _input.MousePosition)) return;
+        _world.WeaponDumbwaiter?.NotifyWeaponTaken();
+        _grabbed = null;
+        _conveyorEditHandle = ConveyorEditHandle.None;
+        _surface.Cursor = Cursors.Hand;
+        _surface.Focus();
+    }
+
+    private void OpenArsenalMenu()
+    {
+        _renderer.ArsenalMenuSelection = Math.Clamp(
+            (_world.Knife?.ArsenalVisualVariant ?? -1) + 1,
+            0,
+            GameRenderer.ArsenalItemCount - 1);
+        _renderer.ArsenalMenuOpen = true;
+        _arsenalMenuConsumedClick = false;
+        _surface.Cursor = Cursors.Default;
+        _surface.Invalidate();
+    }
+
+    private void CloseArsenalMenu()
+    {
+        _renderer.ArsenalMenuOpen = false;
+        _arsenalMenuConsumedClick = false;
+        _surface.Cursor = Cursors.Default;
+        _surface.Invalidate();
+    }
+
+    private void MoveArsenalSelection(int delta)
+    {
+        var count = GameRenderer.ArsenalItemCount;
+        _renderer.ArsenalMenuSelection = (_renderer.ArsenalMenuSelection + delta % count + count) % count;
+        _surface.Invalidate();
+    }
+
+    private void ConfirmArsenalSelection()
+    {
+        var menuSelection = Math.Clamp(
+            _renderer.ArsenalMenuSelection, 0, GameRenderer.ArsenalItemCount - 1);
+        _world.Knife?.SelectArsenalVisual(menuSelection - 1);
+        CloseArsenalMenu();
     }
 
     private void SelectNextConveyor()
@@ -1241,6 +2582,15 @@ public sealed class GameWindow : Form
         _surface.Focus();
     }
 
+    private void SpawnDumbwaiterToken()
+    {
+        var line = _world.ProcessingLine;
+        if (line is null) return;
+        _world.WeaponDumbwaiter?.TrySpawnDebugToken(
+            new Vector2(360f, line.DeckY - 58f));
+        _surface.Focus();
+    }
+
     private void BeginFixtureDrag(FixtureDragTarget target, RectangleF bounds)
     {
         ClearFixtureSelection();
@@ -1286,10 +2636,55 @@ public sealed class GameWindow : Form
         }
     }
 
+    private sealed class ShopFlowPanel : FlowLayoutPanel
+    {
+        private const int WmSetRedraw = 0x000B;
+
+        public ShopFlowPanel()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.ResizeRedraw, true);
+        }
+
+        public void SuspendDrawing()
+        {
+            if (IsHandleCreated) SendMessage(Handle, WmSetRedraw, nint.Zero, nint.Zero);
+        }
+
+        public void ResumeDrawing()
+        {
+            if (!IsHandleCreated) return;
+            SendMessage(Handle, WmSetRedraw, new nint(1), nint.Zero);
+            Invalidate(invalidateChildren: true);
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern nint SendMessage(
+            nint windowHandle,
+            int message,
+            nint wParam,
+            nint lParam);
+    }
+
     private enum FixtureDragTarget : byte
     {
         None,
         BlobCounter,
         BreakerBox
+    }
+
+    private enum DayCyclePhase : byte
+    {
+        AwaitingStart,
+        StartingLights,
+        StartAnnouncement,
+        Active,
+        EndingLights,
+        EndAnnouncement,
+        BloodShipment,
+        DayResultsTransfer,
+        Results,
+        Shop
     }
 }

@@ -11,6 +11,16 @@
     <RootNamespace>BlobForge</RootNamespace>
   </PropertyGroup>
 
+  <!-- Keep the shipped Windows build in one executable. Besides simplifying
+       handoff, this prevents enterprise application-control policies from
+       rejecting the otherwise loose, unsigned game assembly at launch. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
   <ItemGroup>
     <Content Include="Assets\FactoryTileset.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -54,5 +64,55 @@
     <Content Include="Assets\DrumHousing.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
     <Content Include="Assets\DrumRotor.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
     <Content Include="Assets\DrumHandwheel.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\FactoryWorker.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\WorkerInfrastructure.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\OverheadTube.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\ContinuousEndDrain.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\ConveyorWallPortal.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\Knife.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\KnifeHolster.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\NailBoard.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\NailBoardRack.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\CuteBlobStyle.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\CuteBlobFace.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\ButcherCleaver.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\ButcherCleaverRack.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\CleaverHeavyImpact.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\TestArsenalTools.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\SlingshotDeployed.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\TestArsenalHolsters.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\SawProjectile.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\RatProjectile.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\ElementalEffects.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\BloodSupplyTruck.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\BloodSaleFunnel.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\WeaponDumbwaiter.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\WeaponDumbwaiterControls.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\WeaponRerollToken.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
   </ItemGroup>
+
+  <!-- Runtime art is deliberately loose beside the single-file executable.
+       GameRenderer loads it from AppContext.BaseDirectory/Assets, so allowing
+       single-file publish to bundle these files produces an empty Assets folder
+       and silently activates fallback drawings. -->
+  <ItemGroup>
+    <Content Update="Assets\**\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="VerifyPublishedBlobForgeAssets" AfterTargets="Publish">
+    <Error Condition="!Exists('$(PublishDir)Assets\FactoryTileset.png')"
+           Text="Published BlobForge build is missing Assets\FactoryTileset.png." />
+    <Error Condition="!Exists('$(PublishDir)Assets\FactoryBackdropTileset.png')"
+           Text="Published BlobForge build is missing Assets\FactoryBackdropTileset.png." />
+    <Error Condition="!Exists('$(PublishDir)Assets\ButcherCleaver.png')"
+           Text="Published BlobForge build is missing Assets\ButcherCleaver.png." />
+    <Error Condition="!Exists('$(PublishDir)Assets\TestArsenalTools.png')"
+           Text="Published BlobForge build is missing Assets\TestArsenalTools.png." />
+    <Error Condition="!Exists('$(PublishDir)Assets\ElementalEffects.png')"
+           Text="Published BlobForge build is missing Assets\ElementalEffects.png." />
+  </Target>
 </Project>

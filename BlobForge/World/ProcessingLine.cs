@@ -12,6 +12,13 @@ public enum CartCycleState : byte
     Returning
 }
 
+public enum ForegroundBasinContact : byte
+{
+    None,
+    Collected,
+    ReemitPhysical
+}
+
 public readonly record struct DoorwayBloodStain(
     Vector2 Position,
     float Amount,
@@ -19,12 +26,21 @@ public readonly record struct DoorwayBloodStain(
     byte Variation,
     bool Vertical);
 
-public sealed class BloodShopItem(string code, string label, float cost)
+public sealed class BloodShopItem(
+    string code,
+    string label,
+    float cost,
+    bool repeatable = false,
+    int maximumPurchases = 1)
 {
     public string Code { get; } = code;
     public string Label { get; } = label;
     public float Cost { get; } = cost;
     public bool Purchased { get; internal set; }
+    public bool Repeatable { get; } = repeatable;
+    public int MaximumPurchases { get; } = Math.Max(1, maximumPurchases);
+    public int PurchaseCount { get; internal set; }
+    public bool CanPurchase => Repeatable ? PurchaseCount < MaximumPurchases : !Purchased;
 }
 
 public sealed class ProcessingLine
@@ -34,6 +50,7 @@ public sealed class ProcessingLine
     private const float BayWidth = 48f;
     private const float OutputTransferWidth = 64f;
     private const float BeltHeight = 26f;
+    private int _basinOverflowEjectionSerial;
     private const float FirstX = 256f;
     private const float CartSpeed = 205f;
     private const float BloodFluidConversion = 0.20f;
@@ -42,6 +59,9 @@ public sealed class ProcessingLine
     private const float ReceivingTubRampWidth = 32f;
     private const float ReceivingTubDepth = 26f;
     private const float BasinCaptureMargin = 18f;
+    public const int MaximumFactoryWorkers = 5;
+    public const float FactoryWorkerCost = 8_000f;
+    public const int FilterProtectedRemnantParticles = 12;
     private static readonly float[] SpikeOffsets = { -36f, -18f, 0f, 18f, 36f };
     private static readonly float[] BayBloodYieldMultipliers = { 1f, 1.25f, 1.55f, 1.95f, 2.40f };
     private readonly HashSet<int> _bayOneEnteredParents = new();
@@ -51,6 +71,9 @@ public sealed class ProcessingLine
     private readonly HashSet<int> _vacuumedParents = new();
     private readonly HashSet<int> _filteredParents = new();
     private readonly HashSet<int> _cartPassengers = new();
+    private readonly HashSet<int> _continuousEntryCandidates = new();
+    private readonly HashSet<int> _continuousEnteredParents = new();
+    private readonly HashSet<int> _continuousDamagedProcessedParents = new();
     private readonly List<int> _dispatchedParents = new(4);
     private readonly bool[] _spikeContacts = new bool[5];
     private SoftBody? _lockedBody;
@@ -66,6 +89,8 @@ public sealed class ProcessingLine
     private bool _drillReturning;
     private float _drillDamageAccumulator;
     private float _drillSpin;
+    private float _drillSpinSpeed;
+    private float _drillRecoil;
     private int _drillDamagePulses;
     private int _drillBrokenLinks;
     private int _pressBrokenLinks;
@@ -104,23 +129,32 @@ public sealed class ProcessingLine
     private bool _filterTraversed;
     private int _filterCutCount;
     private int _filterBrokenLinks;
+    private int _filterBreakBudget;
     private float _cartX;
     private float _cartDeltaX;
     private bool _powerEngaging;
+    private bool _powerDisengaging;
     private bool _breakerLeverDragging;
     private Vector2 _breakerPosition;
     private readonly Vector2[] _receivingTubSurface;
     private readonly List<DoorwayBloodStain> _doorwayStains = new(24);
+    private readonly List<FactoryWorker> _factoryWorkers = new(MaximumFactoryWorkers);
+    private bool _workerCrusherHeld;
+    private bool _workerDrillHeld;
+    private readonly float[] _automaticOperationTimes = new float[5];
     private readonly BloodShopItem[] _bloodShopItems =
     [
-        new("SLOT-A", "UPGRADE SOCKET A", 5_000f),
+        new("WORKER", "BLOOD WORKER", FactoryWorkerCost, repeatable: true,
+            maximumPurchases: MaximumFactoryWorkers),
         new("SLOT-B", "UPGRADE SOCKET B", 12_000f),
         new("SLOT-C", "UPGRADE SOCKET C", 25_000f)
     ];
 
-    public ProcessingLine(float deckY, bool powered = true, Vector2? breakerPosition = null)
+    public ProcessingLine(float deckY, bool powered = true, Vector2? breakerPosition = null,
+        bool continuousFlow = false)
     {
         DeckY = deckY;
+        ContinuousFlowMode = continuousFlow;
         Powered = powered;
         BreakerLever = powered ? 1f : 0f;
         _breakerPosition = breakerPosition ?? new Vector2(42f, deckY - 150f);
@@ -138,12 +172,13 @@ public sealed class ProcessingLine
         var x = FirstX;
         for (var station = 0; station < 5; station++)
         {
-            AddBelt(x, TransferWidth);
+            if (!continuousFlow) AddBelt(x, TransferWidth);
             x += TransferWidth;
             Bays.Add(new ProcessingBay(station, x, BayWidth));
             x += BayWidth;
         }
-        AddBelt(x, OutputTransferWidth);
+        if (continuousFlow) AddBelt(-64f, 1408f);
+        else AddBelt(x, OutputTransferWidth);
         CartDockBounds = new RectangleF(x + OutputTransferWidth + 4f, deckY + 32f, 106f, 64f);
         _cartX = CartDockBounds.X;
         WalkwayBounds = new RectangleF(1072f, deckY + 96f, 208f, 14f);
@@ -153,6 +188,7 @@ public sealed class ProcessingLine
     }
 
     public float DeckY { get; }
+    public bool ContinuousFlowMode { get; }
     public List<ConveyorBelt> Belts { get; } = new(6);
     public List<ProcessingBay> Bays { get; } = new(5);
     public RectangleF CartDockBounds { get; }
@@ -170,6 +206,8 @@ public sealed class ProcessingLine
     public float DoorOpenness { get; private set; }
     public bool IsCartLoaded { get; private set; }
     public bool Powered { get; private set; }
+    public bool PoweringUp => _powerEngaging;
+    public bool PoweringDown => _powerDisengaging;
     public bool BreakerSelected { get; set; }
     public float BreakerLever { get; private set; }
     public float PowerPhase { get; private set; }
@@ -179,19 +217,24 @@ public sealed class ProcessingLine
     public Vector2 BreakerLeverHandle => Vector2.Lerp(BreakerTrackTop, BreakerTrackBottom, BreakerLever);
     public SoftBody? LockedBody => _lockedBody;
     public float CrusherTravel { get; private set; }
-    public bool CrusherButtonHeld => _buttonHeld;
+    public bool CrusherButtonHeld => _buttonHeld || _workerCrusherHeld;
     public Vector2 CrusherButtonCenter => new(Bays[0].CenterX + 68f, DeckY - 94f);
     public float CrusherHeadTop => DeckY - 150f + CrusherTravel * 92f;
     public SoftBody? DrillLockedBody => _drillLockedBody;
     public float DrillTravel { get; private set; }
     public float DrillSpin => _drillSpin;
+    public float DrillSpinSpeed => _drillSpinSpeed;
+    public float DrillRecoil => _drillRecoil;
     public int DrillDamagePulses => _drillDamagePulses;
     public int DrillBrokenLinks => _drillBrokenLinks;
-    public bool DrillLeverHeld => _drillLeverHeld;
+    public bool DrillLeverHeld => _drillLeverHeld || _workerDrillHeld;
     public Vector2 DrillLeverCenter => new(Bays[1].CenterX + 63f, DeckY - 78f);
-    public float DrillHeadTop => DeckY - 162f + DrillTravel * 72f;
+    public float DrillVibrationX => _drillSpinSpeed <= 0.01f
+        ? 0f
+        : MathF.Sin(_drillSpin * 1.7f) * (0.7f + 1.3f * Math.Clamp(_drillSpinSpeed / 34f, 0f, 1f));
+    public float DrillHeadTop => DeckY - 162f + DrillTravel * 72f - _drillRecoil * 3.5f;
     public Vector2 DrillTip => new(
-        Bays[1].CenterX + MathF.Sin(_drillSpin) * 1.8f,
+        Bays[1].CenterX + DrillVibrationX,
         DrillHeadTop + 78f);
     public SoftBody? PressLockedBody => _pressLockedBody;
     public float PressTravel { get; private set; }
@@ -242,15 +285,30 @@ public sealed class ProcessingLine
     public Vector2 VacuumHoseAnchor => new(Bays[3].CenterX + 42f, DeckY - 98f);
     public Vector2 VacuumNozzleRest => new(Bays[3].CenterX + 64f, DeckY - 48f);
     public Vector2 VacuumHolsterCenter => VacuumNozzleRest;
+    public Vector2 ContinuousToolRackCenter => new(640f, DeckY - 205f);
+    public RectangleF ContinuousEndDrainBounds => new(1080f, DeckY - 6f, 144f, 112f);
+    public RectangleF ContinuousDrainCollectorBounds => new(1128f, DeckY - 8f, 82f, BeltHeight + 34f);
+    public Vector2 ContinuousDrainPipeEntry => new(1172f, DeckY + 22f);
+    public Vector2 ContinuousDrainBasinMouth => new(1104f, Basin.Top + 7f);
     public float VacuumProgress => _vacuumProgress;
     public float VacuumFlowPhase => _vacuumFlowPhase;
     public bool VacuumContact => _vacuumContact;
     public int VacuumExtractedLinks => _vacuumExtractedLinks;
     public float VacuumDrainRemaining => _vacuumReservoir;
     public IReadOnlyList<DoorwayBloodStain> DoorwayStains => _doorwayStains;
+    public int ProcessedCount { get; private set; }
     public IReadOnlyList<BloodShopItem> BloodShopItems => _bloodShopItems;
+    public IReadOnlyList<FactoryWorker> FactoryWorkers => _factoryWorkers;
     public const float ReliefValveCost = 2_500f;
-    public bool MachineryLockedByStorage => Powered && Basin.IsFull;
+    public float WorkerCatwalkY => DeckY - 194f;
+    public float WorkerTrunkX => Basin.Right + 18f;
+    public Vector2 WorkerOutletMouth => new(Basin.Right + 29f, Basin.Bottom - 25f);
+    public RectangleF WorkerOutletBounds => new(Basin.Right, Basin.Bottom - 64f, 48f, 64f);
+    // Capacity freezes only the stored/spendable value. The physical drain remains
+    // open so incoming matter can traverse the pipe, hit the full pool, and displace
+    // a visible equal-or-smaller spill over the basin lips.
+    public bool MachineryLockedByStorage => false;
+    public bool BasinAtCapacity => Basin.IsFull;
     public RectangleF BloodShopBounds => new(
         32f,
         DeckY,
@@ -327,6 +385,13 @@ public sealed class ProcessingLine
     public bool IsInTransit(SoftBody body)
         => (CartState is CartCycleState.DoorOpening or CartCycleState.Departing) &&
            _cartPassengers.Contains(body.ParentId);
+    public bool IsContinuousPortalTransit(SoftBody body)
+    {
+        if (!ContinuousFlowMode) return false;
+        var center = body.Center;
+        return center.X >= 1160f &&
+               center.Y >= DeckY - 92f && center.Y <= DeckY + 24f;
+    }
 
     private ConveyorBelt AddBelt(float x, float width)
     {
@@ -338,29 +403,29 @@ public sealed class ProcessingLine
     }
 
     public bool HitCrusherButton(Vector2 point)
-        => Powered && !MachineryLockedByStorage &&
+        => !ContinuousFlowMode && Powered && !MachineryLockedByStorage &&
            Vector2.DistanceSquared(point, CrusherButtonCenter) <= 16f * 16f;
 
     public bool HitDrillLever(Vector2 point)
-        => Powered && !MachineryLockedByStorage &&
+        => !ContinuousFlowMode && Powered && !MachineryLockedByStorage &&
            Vector2.DistanceSquared(point, DrillLeverCenter) <= 24f * 24f;
 
     public bool HitPressButton(Vector2 point) => false;
 
     public bool HitDrumWheel(Vector2 point)
-        => Powered && !MachineryLockedByStorage && _pressLockedBody is not null &&
+        => !ContinuousFlowMode && Powered && !MachineryLockedByStorage && _pressLockedBody is not null &&
            !_drumLoading && !_drumFinishing &&
            Vector2.DistanceSquared(point, DrumWheelCenter) <= 25f * 25f;
 
     public bool HitVacuumNozzle(Vector2 point)
-        => Powered && !MachineryLockedByStorage && VacuumHose.HitNozzle(point);
+        => !ContinuousFlowMode && Powered && !MachineryLockedByStorage && VacuumHose.HitNozzle(point);
 
     public bool HitFilterKnob(Vector2 point)
-        => Powered && !MachineryLockedByStorage && _filterLockedBody is not null &&
+        => !ContinuousFlowMode && Powered && !MachineryLockedByStorage && _filterLockedBody is not null &&
            Vector2.DistanceSquared(point, FilterKnobCenter) <= 22f * 22f;
 
     public bool HitBloodShop(Vector2 point)
-        => Powered && BloodShopBounds.Contains(point.X, point.Y) && point.Y >= BloodShopTopAt(point.X);
+        => !ContinuousFlowMode && Powered && BloodShopBounds.Contains(point.X, point.Y) && point.Y >= BloodShopTopAt(point.X);
 
     public bool TryActivateBloodShop(Vector2 point)
     {
@@ -368,9 +433,11 @@ public sealed class ProcessingLine
         for (var i = 0; i < _bloodShopItems.Length; i++)
         {
             var item = _bloodShopItems[i];
-            if (item.Purchased || !BloodShopItemBounds(i).Contains(point.X, point.Y)) continue;
+            if (!item.CanPurchase || !BloodShopItemBounds(i).Contains(point.X, point.Y)) continue;
             if (!Basin.TrySpend(item.Cost)) return true;
             item.Purchased = true;
+            item.PurchaseCount++;
+            if (item.Code == "WORKER") SpawnFactoryWorker();
             return true;
         }
         if (BloodShopReliefBounds.Contains(point.X, point.Y))
@@ -379,12 +446,12 @@ public sealed class ProcessingLine
     }
 
     public bool HitCart(Vector2 point)
-        => Powered && CartState == CartCycleState.Docked && OutputCartBounds.Contains(point.X, point.Y);
+        => !ContinuousFlowMode && Powered && CartState == CartCycleState.Docked && OutputCartBounds.Contains(point.X, point.Y);
 
     public bool HitBreaker(Vector2 point) => BreakerBounds.Contains(point.X, point.Y);
 
     public bool HitBreakerLever(Vector2 point)
-        => !Powered && !_powerEngaging &&
+        => !_powerEngaging && !_powerDisengaging &&
            Vector2.DistanceSquared(point, BreakerLeverHandle) <= 17f * 17f;
 
     public void SetBreakerPosition(Vector2 position, float worldWidth, float worldHeight)
@@ -407,13 +474,21 @@ public sealed class ProcessingLine
     /// </summary>
     public bool DragBreakerLever(Vector2 point)
     {
-        if (!_breakerLeverDragging || Powered || _powerEngaging) return false;
+        if (!_breakerLeverDragging || _powerEngaging || _powerDisengaging) return false;
         var top = BreakerTrackTop.Y;
         var bottom = BreakerTrackBottom.Y;
         BreakerLever = Math.Clamp((point.Y - top) / MathF.Max(1f, bottom - top), 0f, 1f);
-        if (BreakerLever < 0.82f) return false;
+        if (!Powered)
+        {
+            if (BreakerLever < 0.82f) return false;
+            _breakerLeverDragging = false;
+            _powerEngaging = true;
+            return true;
+        }
+
+        if (BreakerLever > 0.18f) return false;
         _breakerLeverDragging = false;
-        _powerEngaging = true;
+        _powerDisengaging = true;
         return true;
     }
 
@@ -576,21 +651,35 @@ public sealed class ProcessingLine
     {
         UpdatePower(dt);
         if (!Powered) return;
+        Basin.Step(dt);
+        // Continuous-flow material is captured inside GranularMaterialSystem.Step,
+        // immediately after particle integration and before terrain collision. A
+        // second full-particle scan here ran twice per rendered frame, did no extra
+        // containment work, and made blood cost scale unnecessarily with the fixed
+        // 120 Hz body rate. Legacy machinery retains this pre-step collection pass.
+        if (!ContinuousFlowMode) CollectBasinInflows(granular, dt);
+        if (ContinuousFlowMode)
+        {
+            foreach (var belt in Belts)
+                belt.SetAutomationSpeed(MachineryLockedByStorage ? 0f : OperatingSpeed);
+            UpdateContinuousTransit(bodies, granular);
+            return;
+        }
         VacuumHose.Step(dt, VacuumHoseAnchor, VacuumNozzleRest, DeckY,
             VacuumHose.IsDragging ? _vacuumLockedBody?.Center : null);
-        Basin.Step(dt);
-        CollectBasinInflows(granular, dt);
         if (MachineryLockedByStorage)
         {
             foreach (var belt in Belts) belt.SetAutomationSpeed(0f);
             _buttonHeld = false;
             _drillLeverHeld = false;
+            _workerCrusherHeld = false;
+            _workerDrillHeld = false;
             _drumWheelDragging = false;
             _filterDragging = false;
             _vacuumContact = false;
             VacuumHose.EndDrag();
             HoldBodyInMachine(dt);
-            RefreshCartLoad(bodies, granular);
+            if (!ContinuousFlowMode) RefreshCartLoad(bodies, granular);
             return;
         }
         UpdateCart(bodies, granular, dt);
@@ -599,6 +688,7 @@ public sealed class ProcessingLine
         RebindOrCapturePress(bodies);
         RebindOrCaptureVacuum(bodies);
         RebindOrCaptureFilter(bodies);
+        UpdateFactoryWorkers(dt);
         UpdateCrusher(dt);
         UpdateDrill(dt);
         UpdatePress(granular, dt);
@@ -609,15 +699,25 @@ public sealed class ProcessingLine
         BoostVacuumQueue(bodies, dt);
         HoldBodyInMachine(dt);
         PropelAcrossTables(bodies, dt);
-        RefreshCartLoad(bodies, granular);
+        if (!ContinuousFlowMode) RefreshCartLoad(bodies, granular);
     }
 
     private void UpdatePower(float dt)
     {
+        if (_powerDisengaging)
+        {
+            BreakerLever = MoveTowards(BreakerLever, 0f, dt * 1.15f);
+            if (BreakerLever > 0.001f) return;
+            BreakerLever = 0f;
+            _powerDisengaging = false;
+            Powered = false;
+            return;
+        }
+
         if (!_powerEngaging)
         {
-            if (!Powered && !_breakerLeverDragging)
-                BreakerLever = MoveTowards(BreakerLever, 0f, dt * 5.5f);
+            if (!_breakerLeverDragging)
+                BreakerLever = MoveTowards(BreakerLever, Powered ? 1f : 0f, dt * 5.5f);
             if (Powered) PowerPhase = (PowerPhase + dt * 2.5f) % 1f;
             return;
         }
@@ -880,6 +980,10 @@ public sealed class ProcessingLine
         _filterLastCutX = FilterLaserX;
         _filterCutCount = 0;
         _filterBrokenLinks = 0;
+        _filterBreakBudget = Math.Clamp(
+            (_filterLockedBody.PhysicalParticleCount - FilterProtectedRemnantParticles) / 3,
+            0,
+            10);
         _filterTraversed = false;
     }
 
@@ -924,7 +1028,7 @@ public sealed class ProcessingLine
 
     private void UpdateCrusher(float dt)
     {
-        var target = _buttonHeld && _lockedBody is not null && !_returning ? 1f : 0f;
+        var target = CrusherButtonHeld && _lockedBody is not null && !_returning ? 1f : 0f;
         var speed = target > CrusherTravel ? 1.65f : 2.35f;
         CrusherTravel = MoveTowards(CrusherTravel, target, speed * dt);
         if (_lockedBody is not null && CrusherTravel > 0.25f) DamageAtSpikeContacts();
@@ -947,12 +1051,19 @@ public sealed class ProcessingLine
 
     private void UpdateDrill(float dt)
     {
-        var target = _drillLeverHeld && _drillLockedBody is not null && !_drillReturning ? 1f : 0f;
-        var speed = target > DrillTravel ? 1.35f : 2.2f;
+        var active = DrillLeverHeld && _drillLockedBody is not null && !_drillReturning;
+        _drillSpinSpeed = MoveTowards(_drillSpinSpeed, active ? 34f : 0f,
+            (active ? 105f : 72f) * dt);
+        _drillSpin = (_drillSpin + _drillSpinSpeed * dt) % (MathF.PI * 2f);
+        _drillRecoil = MoveTowards(_drillRecoil, 0f, 15f * dt);
+
+        // The motor audibly/visibly winds up before the ram commits. Once armed,
+        // the head lunges instead of easing gently through the body.
+        var target = active && _drillSpinSpeed >= 18f ? 1f : 0f;
+        var speed = target > DrillTravel ? 3.65f : 4.8f;
         DrillTravel = MoveTowards(DrillTravel, target, speed * dt);
-        if (_drillLeverHeld && _drillLockedBody is not null)
+        if (active)
         {
-            _drillSpin = (_drillSpin + 24f * dt) % (MathF.PI * 2f);
             DamageAtDrillContact(dt);
         }
         if (_drillReturning && DrillTravel <= 0.001f) CompleteDrillCycle();
@@ -984,6 +1095,7 @@ public sealed class ProcessingLine
         _drillDamageAccumulator -= 0.06f;
         _drillBrokenLinks += _drillLockedBody.DamageBonds(contactPoint, 5.2f, 1.08f);
         _drillDamagePulses++;
+        _drillRecoil = 1f;
     }
 
     private void UpdatePress(List<GranularParticle> granular, float dt)
@@ -1182,7 +1294,7 @@ public sealed class ProcessingLine
     {
         if (_vacuumReleaseBoost <= 0f) return;
         _vacuumReleaseBoost = MathF.Max(0f, _vacuumReleaseBoost - dt);
-        var feed = Belts[3];
+        var feed = ContinuousFlowMode ? Belts[0] : Belts[3];
         for (var i = 0; i < bodies.Count; i++)
         {
             var body = bodies[i];
@@ -1198,6 +1310,11 @@ public sealed class ProcessingLine
 
     public void RegisterDoorwayBlood(Vector2 current, Vector2 previous, float radius, float speed)
     {
+        // Continuous mode uses an authored wall portal. Its opening is empty air,
+        // so the legacy cart-door stain plane would draw unsupported vertical
+        // blood inside that opening. Real wall/conveyor contacts already stain
+        // their own visible surfaces in this mode.
+        if (ContinuousFlowMode) return;
         var door = DoorwayBounds;
         var nearJamb = current.X + radius >= door.Left - 7f && current.X - radius <= door.Left + 3f &&
                        current.Y >= door.Top - 8f && current.Y <= door.Bottom;
@@ -1232,13 +1349,77 @@ public sealed class ProcessingLine
     {
         for (var i = granular.Count - 1; i >= 0; i--)
         {
-            if (!TryCollectBasinInflow(granular[i], dt)) continue;
-            granular.RemoveAt(i);
+            var particle = granular[i];
+            if (TryCollectBasinInflow(ref particle, dt))
+                granular.RemoveAt(i);
+            else
+                granular[i] = particle;
         }
     }
 
-    public bool TryCollectBasinInflow(GranularParticle particle, float dt)
+    public bool RouteThroughContinuousEndDrain(ref GranularParticle particle, float dt)
     {
+        if (!ContinuousFlowMode || particle.Kind == GranularKind.Acid) return false;
+
+        var entry = ContinuousDrainPipeEntry;
+        var mouth = ContinuousDrainBasinMouth;
+        var collector = ContinuousDrainCollectorBounds;
+        var inCollector = particle.Position.X + particle.Radius >= collector.Left &&
+                          particle.Position.X - particle.Radius <= collector.Right &&
+                          particle.Position.Y >= collector.Top &&
+                          particle.Position.Y <= DeckY + 12f;
+
+        var route = mouth - entry;
+        var routeLengthSquared = route.LengthSquared();
+        var amount = routeLengthSquared < 0.001f
+            ? 0f
+            : Math.Clamp(Vector2.Dot(particle.Position - entry, route) / routeLengthSquared, 0f, 1f);
+        var closest = entry + route * amount;
+        var inBasinDrop = particle.InContinuousDrain &&
+                          particle.Position.X >= mouth.X - 18f &&
+                          particle.Position.X <= mouth.X + 18f &&
+                          particle.Position.Y >= mouth.Y - 5f &&
+                          particle.Position.Y <= Basin.Bottom;
+        if (inBasinDrop)
+        {
+            particle.Position = new Vector2(
+                particle.Position.X + (mouth.X - particle.Position.X) * 0.18f,
+                particle.Position.Y + 76f * dt);
+            particle.PreviousPosition = particle.Position - new Vector2(0f, 62f * dt);
+            particle.RestFrames = 0;
+            return true;
+        }
+        var inPipe = particle.InContinuousDrain &&
+                     particle.Position.Y >= DeckY + 12f &&
+                     Vector2.DistanceSquared(particle.Position, closest) <= 30f * 30f;
+        if (!inCollector && !inPipe) return false;
+
+        if (inCollector)
+        {
+            particle.InContinuousDrain = true;
+            // Crossing the one wide collector is the only handoff from belt to
+            // drain. Material remains visible at the pipe entry rather than being
+            // converted or deleted at the grate.
+            particle.Position = Vector2.Lerp(
+                particle.Position,
+                new Vector2(Math.Clamp(particle.Position.X, entry.X - 22f, entry.X + 22f), entry.Y),
+                0.62f);
+            particle.PreviousPosition = particle.Position - new Vector2(-10f, 58f) * dt;
+        }
+        else
+        {
+            var direction = Vector2.Normalize(route);
+            var guided = Vector2.Lerp(particle.Position, closest, 0.38f);
+            particle.Position = guided + direction * (94f * dt);
+            particle.PreviousPosition = particle.Position - direction * (74f * dt);
+        }
+        particle.RestFrames = 0;
+        return true;
+    }
+
+    public bool TryCollectBasinInflow(ref GranularParticle particle, float dt)
+    {
+        if (particle.Kind == GranularKind.Acid) return false;
         // Capture against the complete tank footprint, including its solid endcaps.
         // This check also runs immediately after granular integration, before terrain
         // collision can turn contained blood into stains on the factory floor below.
@@ -1264,6 +1445,28 @@ public sealed class ProcessingLine
         var nutrition = particle.Kind == GranularKind.Blood
             ? fluidVolume * 0.42f
             : pixelArea * 0.90f;
+        if (Basin.IsFull)
+        {
+            // The incoming pixel displaces an equal visible portion of the full
+            // pool. Reuse that same physical particle at the nearest lip so the
+            // overflow falls, collides, and stains without increasing reserve.
+            var spillRight = Basin.RegisterOverflowImpact(
+                depositX, downwardSpeed, particle.Radius, fluidVolume);
+            var direction = spillRight ? 1f : -1f;
+            particle.Position = new Vector2(
+                spillRight
+                    ? Basin.Right + BasinCaptureMargin + particle.Radius + 2f
+                    : Basin.Left - BasinCaptureMargin - particle.Radius - 2f,
+                Basin.Top + 3f + particle.Radius * 0.25f);
+            var spillVelocity = NextBasinOverflowEjectionVelocity(
+                direction,
+                downwardSpeed);
+            particle.PreviousPosition = particle.Position - spillVelocity * safeDt;
+            particle.RestFrames = 0;
+            particle.SplatterOnImpact = true;
+            particle.InContinuousDrain = false;
+            return false;
+        }
         Basin.AddSuspendedMaterial(
             depositX,
             particle.Position.Y,
@@ -1274,6 +1477,87 @@ public sealed class ProcessingLine
         return true;
     }
 
+    public ForegroundBasinContact TryCollectForegroundSpill(
+        ref ForegroundGranularSpill spill,
+        float dt)
+    {
+        if (spill.Kind == GranularKind.Acid) return ForegroundBasinContact.None;
+        const float openingInset = 6f;
+        if (spill.Position.X + spill.Radius < Basin.Left + openingInset ||
+            spill.Position.X - spill.Radius > Basin.Right - openingInset ||
+            spill.Position.Y + spill.Radius < Basin.Top)
+            return ForegroundBasinContact.None;
+
+        var depositX = Math.Clamp(
+            spill.Position.X,
+            Basin.Left + openingInset,
+            Basin.Right - openingInset);
+        var surfaceY = Basin.SurfaceYAt(depositX);
+        if (spill.Position.Y + spill.Radius < surfaceY)
+            return ForegroundBasinContact.None;
+
+        var downwardSpeed = MathF.Max(0f, spill.Velocity.Y);
+        var pixelArea = MathF.PI * spill.Radius * spill.Radius;
+        var fluidVolume = spill.Kind == GranularKind.Blood
+            ? pixelArea * BloodFluidConversion * BloodYieldMultiplierAt(depositX)
+            : pixelArea * 0.045f;
+        var nutrition = spill.Kind == GranularKind.Blood
+            ? fluidVolume * 0.42f
+            : pixelArea * 0.90f;
+        if (Basin.IsFull)
+        {
+            // Keep the same foreground pixel: a full basin redirects it over
+            // one lip instead of storing it or creating a replacement pixel.
+            var spillRight = Basin.RegisterOverflowImpact(
+                depositX,
+                downwardSpeed,
+                spill.Radius,
+                fluidVolume);
+            var direction = spillRight ? 1f : -1f;
+            spill.Position = new Vector2(
+                spillRight
+                    ? Basin.Right + openingInset + spill.Radius + 2f
+                    : Basin.Left - openingInset - spill.Radius - 2f,
+                Basin.Top + 3f + spill.Radius * 0.25f);
+            spill.Velocity = NextBasinOverflowEjectionVelocity(
+                direction,
+                downwardSpeed);
+            return ForegroundBasinContact.ReemitPhysical;
+        }
+
+        Basin.AddSuspendedMaterial(
+            depositX,
+            Math.Clamp(
+                spill.Position.Y,
+                Basin.FluidTop + spill.Radius,
+                Basin.FluidBottom - spill.Radius),
+            fluidVolume,
+            downwardSpeed,
+            nutrition,
+            spill.Radius);
+        return ForegroundBasinContact.Collected;
+    }
+
+    private Vector2 NextBasinOverflowEjectionVelocity(
+        float direction,
+        float downwardSpeed)
+    {
+        var serial = ++_basinOverflowEjectionSerial;
+        var hash = unchecked((uint)(serial * 747796405 + 2891336453));
+        hash ^= hash >> 16;
+        var lateralVariation = (hash & 31) / 31f;
+        var verticalVariation = ((hash >> 8) & 31) / 31f;
+        var lateralSpeed =
+            28f +
+            lateralVariation * 54f +
+            MathF.Min(24f, downwardSpeed * 0.055f);
+        var verticalSpeed =
+            -72f +
+            verticalVariation * 108f +
+            MathF.Min(16f, downwardSpeed * 0.025f);
+        return new Vector2(direction * lateralSpeed, verticalSpeed);
+    }
+
     public bool IsBasinProtectedFloor(Vector2 point)
         => point.X >= Basin.Left - BasinCaptureMargin &&
            point.X <= Basin.Right + BasinCaptureMargin &&
@@ -1281,17 +1565,20 @@ public sealed class ProcessingLine
 
     private void DamageFilterSweep(float previousX, float currentX)
     {
-        if (_filterLockedBody is null || _filterLockedBody.PhysicalParticleCount <= 7) return;
+        if (_filterLockedBody is null || _filterBreakBudget <= _filterBrokenLinks) return;
         var distance = MathF.Abs(currentX - previousX);
         var slices = Math.Clamp((int)MathF.Ceiling(distance / 3.5f), 1, 18 - _filterCutCount);
         for (var slice = 1; slice <= slices; slice++)
         {
+            var remainingBreaks = _filterBreakBudget - _filterBrokenLinks;
+            if (remainingBreaks <= 0) break;
             var x = previousX + (currentX - previousX) * (slice / (float)slices);
             _filterBrokenLinks += _filterLockedBody.DamageLine(
                 new Vector2(x, DeckY - 70f),
                 new Vector2(x, DeckY - 2f),
                 2.6f,
-                1.08f);
+                1.08f,
+                remainingBreaks);
             _filterCutCount++;
         }
     }
@@ -1313,6 +1600,7 @@ public sealed class ProcessingLine
         _filterLastCutX = FilterLaserX;
         _filterTraversed = false;
         _filterCutCount = 0;
+        _filterBreakBudget = 0;
     }
 
     private void EmitFilterResidue(List<GranularParticle> granular)
@@ -1438,9 +1726,11 @@ public sealed class ProcessingLine
                 });
             }
             _pressedParents.Add(_pressLockedBody.ParentId);
-            var outgoingBelt = Belts[3];
+            var outgoingBelt = ContinuousFlowMode ? Belts[0] : Belts[3];
             var dropTarget = new Vector2(
-                outgoingBelt.Position.X + MathF.Max(34f, _pressLockedBody.Radius * 0.82f),
+                ContinuousFlowMode
+                    ? Bays[2].Right + MathF.Max(24f, _pressLockedBody.Radius * 0.65f)
+                    : outgoingBelt.Position.X + MathF.Max(34f, _pressLockedBody.Radius * 0.82f),
                 DeckY - _pressLockedBody.Radius - 5f);
             _pressLockedBody.ApplyTranslation(dropTarget - _pressLockedBody.Center, preserveVelocity: true);
             _pressLockedBody.AddImpulse(-_pressLockedBody.AverageVelocity(dt), dt);
@@ -1519,6 +1809,7 @@ public sealed class ProcessingLine
         _filterStartKnob = 1f;
         _filterTraversed = false;
         _filterCutCount = 0;
+        _filterBreakBudget = 0;
     }
 
     private void PropelAcrossTables(IReadOnlyList<SoftBody> bodies, float dt)
@@ -1551,6 +1842,7 @@ public sealed class ProcessingLine
     private void UpdateBeltAutomation(IReadOnlyList<SoftBody> bodies)
     {
         foreach (var belt in Belts) belt.SetAutomationSpeed(OperatingSpeed);
+        if (ContinuousFlowMode) return;
         if (_lockedBody is not null) StopFeedWhenQueued(Belts[0], Bays[0].Left, bodies, _lockedBody);
         if (_drillLockedBody is not null) StopFeedWhenQueued(Belts[1], Bays[1].Left, bodies, _drillLockedBody);
         if (_pressLockedBody is not null) StopFeedWhenQueued(Belts[2], Bays[2].Left, bodies, _pressLockedBody);
@@ -1606,10 +1898,12 @@ public sealed class ProcessingLine
         }
         if (ReferenceEquals(body, _drillLockedBody) && DrillTravel > 0.02f)
         {
-            var bit = new RectangleF(Bays[1].CenterX - 7f, DrillHeadTop + 20f, 14f, 57f);
+            var bit = new RectangleF(Bays[1].CenterX + DrillVibrationX - 7f,
+                DrillHeadTop + 20f, 14f, 57f);
             var contact = ResolveBox(ref particle, bit, dt);
             if (contact.Hit) return contact;
         }
+        if (ContinuousFlowMode) return SurfaceContact.None;
         var tubContact = ResolveReceivingTub(ref particle, dt);
         if (tubContact.Hit) return tubContact;
         var tableContact = ResolveTables(ref particle, dt);
@@ -1694,6 +1988,7 @@ public sealed class ProcessingLine
 
     public SurfaceContact ResolveGranularCartOnly(ref Particle particle, float dt)
     {
+        if (ContinuousFlowMode) return SurfaceContact.None;
         if (!CouldNeedCartContainment(particle.Position, particle.PreviousPosition, particle.Radius))
             return SurfaceContact.None;
         var contact = ResolveCart(ref particle, dt);
@@ -1702,6 +1997,7 @@ public sealed class ProcessingLine
 
     public bool CouldNeedCartContainment(Vector2 current, Vector2 previous, float radius)
     {
+        if (ContinuousFlowMode) return false;
         var cart = OutputCartBounds;
         var minimumX = MathF.Min(current.X, previous.X) - radius;
         var maximumX = MathF.Max(current.X, previous.X) + radius;
@@ -1713,6 +2009,8 @@ public sealed class ProcessingLine
 
     public SurfaceContact ResolveGranular(ref Particle particle, float dt, GranularKind kind)
     {
+        if (ContinuousFlowMode)
+            return SurfaceContact.None;
         var tubContact = ResolveReceivingTub(ref particle, dt);
         if (tubContact.Hit) return tubContact;
         if (kind is GranularKind.Blood or GranularKind.Tissue && RouteGranularIntoDrain(ref particle))
@@ -2081,6 +2379,362 @@ public sealed class ProcessingLine
         var hasNegative = d1 < 0f || d2 < 0f || d3 < 0f;
         var hasPositive = d1 > 0f || d2 > 0f || d3 > 0f;
         return !(hasNegative && hasPositive);
+    }
+
+    private void UpdateContinuousTransit(IReadOnlyList<SoftBody> bodies, List<GranularParticle> granular)
+    {
+        const float wallInnerEdgeX = 32f;
+        for (var i = 0; i < bodies.Count; i++)
+        {
+            var body = bodies[i];
+            var center = body.Center;
+            if (!body.IsDetachedDebris && !_continuousEnteredParents.Contains(body.ParentId))
+            {
+                // A lineage is eligible only after it has actually travelled outside the
+                // left wall. This prevents bodies created in the room (including tests and
+                // authored fixtures) from being mistaken for doorway arrivals.
+                if (center.X + body.Radius <= 0f)
+                {
+                    _continuousEntryCandidates.Add(body.ParentId);
+                }
+                // Count the unit once its trailing edge has cleared the physical wall plane,
+                // which is also where the tube feed releases it onto the playable conveyor.
+                else if (center.X - body.Radius >= wallInnerEdgeX &&
+                         _continuousEntryCandidates.Remove(body.ParentId) &&
+                         _continuousEnteredParents.Add(body.ParentId))
+                {
+                    // Eligibility begins at the left doorway, but payout credit is
+                    // withheld until this lineage sustains real material damage.
+                }
+            }
+
+            if (center.X <= 1328f && center.Y <= 760f) continue;
+            if (!_dispatchedParents.Contains(body.ParentId)) _dispatchedParents.Add(body.ParentId);
+            _continuousEntryCandidates.Remove(body.ParentId);
+        }
+        ObserveProcessedDamage(bodies);
+        for (var i = granular.Count - 1; i >= 0; i--)
+            if (granular[i].Position.X > 1340f || granular[i].Position.Y > 780f)
+                granular.RemoveAt(i);
+    }
+
+    /// <summary>
+    /// Credits an eligible conveyor lineage on the first authoritative material-damage
+    /// observation. This is also called immediately after weapon simulation so a lethal
+    /// one-tick hit is counted before topology conversion can leave only detached debris.
+    /// </summary>
+    public void ObserveProcessedDamage(IReadOnlyList<SoftBody> bodies)
+    {
+        if (!ContinuousFlowMode || _continuousEnteredParents.Count == 0) return;
+        for (var i = 0; i < bodies.Count; i++)
+        {
+            var body = bodies[i];
+            if (!body.HasLocalDamage ||
+                !_continuousEnteredParents.Contains(body.ParentId) ||
+                !_continuousDamagedProcessedParents.Add(body.ParentId))
+                continue;
+            ProcessedCount++;
+        }
+    }
+
+    private void UpdateAutomaticMachineControls(float dt)
+    {
+        _workerCrusherHeld = false;
+        _workerDrillHeld = false;
+
+        if (_lockedBody is null)
+        {
+            _automaticOperationTimes[0] = 0f;
+        }
+        else
+        {
+            _automaticOperationTimes[0] += dt;
+            if (_automaticOperationTimes[0] < 1.05f && !_returning)
+            {
+                _workerCrusherHeld = true;
+                _cycleStarted = true;
+            }
+            else if (_cycleStarted) _returning = true;
+        }
+
+        if (_drillLockedBody is null)
+        {
+            _automaticOperationTimes[1] = 0f;
+        }
+        else
+        {
+            _automaticOperationTimes[1] += dt;
+            if (_automaticOperationTimes[1] < 1.15f && !_drillReturning)
+            {
+                _workerDrillHeld = true;
+                _drillCycleStarted = true;
+            }
+            else if (_drillCycleStarted) _drillReturning = true;
+        }
+
+        if (_pressLockedBody is null)
+        {
+            _automaticOperationTimes[2] = 0f;
+        }
+        else
+        {
+            _automaticOperationTimes[2] += dt;
+            if (!_drumLoading && !_drumFinishing)
+            {
+                _drumWheelDragging = true;
+                _drumDriveDirection = 1f;
+                _drumInputHold = 0.1f;
+                _drumInputMotion += 11f * dt;
+                _drumWheelAngle += 11f * dt;
+            }
+        }
+
+        if (_vacuumLockedBody is null)
+        {
+            _automaticOperationTimes[3] = 0f;
+            if (VacuumHose.IsDragging) VacuumHose.EndDrag();
+        }
+        else
+        {
+            _automaticOperationTimes[3] += dt;
+            if (!VacuumHose.IsDragging) VacuumHose.BeginDrag(VacuumNozzleRest);
+            VacuumHose.DragTo(_vacuumLockedBody.Center, DeckY);
+        }
+
+        if (_filterLockedBody is null)
+        {
+            _automaticOperationTimes[4] = 0f;
+        }
+        else
+        {
+            _automaticOperationTimes[4] += dt;
+            if (!_filterDragging && !_filterReturning && _automaticOperationTimes[4] <= dt * 1.5f)
+                BeginFilterDrag(FilterKnobCenter);
+            if (_filterDragging)
+            {
+                var amount = Math.Clamp(_automaticOperationTimes[4] / 0.78f, 0f, 1f);
+                DragFilterKnob(Bays[4].CenterX + 34f - amount * 68f);
+                if (amount >= 0.999f) EndFilterDrag();
+            }
+        }
+    }
+
+    private void SpawnFactoryWorker()
+    {
+        if (_factoryWorkers.Count >= MaximumFactoryWorkers) return;
+        _factoryWorkers.Add(new FactoryWorker(_factoryWorkers.Count + 1, WorkerOutletMouth));
+    }
+
+    private void UpdateFactoryWorkers(float dt)
+    {
+        _workerCrusherHeld = false;
+        _workerDrillHeld = false;
+
+        for (var i = 0; i < _factoryWorkers.Count; i++)
+        {
+            var worker = _factoryWorkers[i];
+            worker.Phase += dt;
+            switch (worker.Activity)
+            {
+                case FactoryWorkerActivity.Forming:
+                    worker.Formation = Math.Clamp(worker.Formation + dt / 1.05f, 0f, 1f);
+                    if (worker.Formation < 0.999f) break;
+                    worker.Formation = 1f;
+                    worker.Activity = FactoryWorkerActivity.Climbing;
+                    worker.Phase = 0f;
+                    break;
+                case FactoryWorkerActivity.Climbing:
+                    worker.Position = MoveTowards(worker.Position,
+                        new Vector2(WorkerTrunkX, WorkerCatwalkY), 120f * dt);
+                    if (Vector2.DistanceSquared(worker.Position,
+                            new Vector2(WorkerTrunkX, WorkerCatwalkY)) > 0.25f) break;
+                    worker.Position = new Vector2(WorkerTrunkX, WorkerCatwalkY);
+                    worker.Activity = FactoryWorkerActivity.Idle;
+                    worker.Phase = 0f;
+                    break;
+                case FactoryWorkerActivity.Idle:
+                    AssignFactoryWorker(worker);
+                    break;
+                case FactoryWorkerActivity.Walking:
+                {
+                    if (!WorkerBayNeedsOperator(worker.AssignedBay))
+                    {
+                        ReleaseWorkerAssignment(worker);
+                        break;
+                    }
+                    var anchor = WorkerOperationAnchor(worker.AssignedBay);
+                    worker.FacingRight = anchor.X >= worker.Position.X;
+                    worker.Position = MoveTowards(worker.Position,
+                        new Vector2(anchor.X, WorkerCatwalkY), 160f * dt);
+                    if (MathF.Abs(worker.Position.X - anchor.X) > 0.25f) break;
+                    worker.Position = new Vector2(anchor.X, WorkerCatwalkY);
+                    worker.Activity = FactoryWorkerActivity.Descending;
+                    worker.Phase = 0f;
+                    break;
+                }
+                case FactoryWorkerActivity.Descending:
+                {
+                    if (!WorkerBayNeedsOperator(worker.AssignedBay))
+                    {
+                        worker.Activity = FactoryWorkerActivity.Ascending;
+                        break;
+                    }
+                    var anchor = WorkerOperationAnchor(worker.AssignedBay);
+                    worker.Position = MoveTowards(worker.Position, anchor, 100f * dt);
+                    if (Vector2.DistanceSquared(worker.Position, anchor) > 0.25f) break;
+                    worker.Position = anchor;
+                    worker.Activity = FactoryWorkerActivity.Operating;
+                    worker.OperationTime = 0f;
+                    worker.Phase = 0f;
+                    break;
+                }
+                case FactoryWorkerActivity.Operating:
+                    if (!OperateMachineForWorker(worker, dt)) break;
+                    StopWorkerControl(worker.AssignedBay);
+                    worker.Activity = FactoryWorkerActivity.Ascending;
+                    worker.Phase = 0f;
+                    break;
+                case FactoryWorkerActivity.Ascending:
+                {
+                    var target = new Vector2(worker.Position.X, WorkerCatwalkY);
+                    worker.Position = MoveTowards(worker.Position, target, 100f * dt);
+                    if (MathF.Abs(worker.Position.Y - WorkerCatwalkY) > 0.25f) break;
+                    worker.Position = target;
+                    worker.AssignedBay = -1;
+                    worker.Activity = FactoryWorkerActivity.Idle;
+                    worker.Phase = 0f;
+                    break;
+                }
+            }
+        }
+    }
+
+    private void AssignFactoryWorker(FactoryWorker worker)
+    {
+        var bestBay = -1;
+        var bestDistance = float.PositiveInfinity;
+        for (var bay = 0; bay < Bays.Count; bay++)
+        {
+            if (!WorkerBayNeedsOperator(bay) || _factoryWorkers.Any(other =>
+                    !ReferenceEquals(other, worker) && other.AssignedBay == bay)) continue;
+            var distance = MathF.Abs(worker.Position.X - WorkerOperationAnchor(bay).X);
+            if (distance >= bestDistance) continue;
+            bestDistance = distance;
+            bestBay = bay;
+        }
+        if (bestBay < 0) return;
+        worker.AssignedBay = bestBay;
+        worker.Activity = FactoryWorkerActivity.Walking;
+        worker.Phase = 0f;
+    }
+
+    private void ReleaseWorkerAssignment(FactoryWorker worker)
+    {
+        StopWorkerControl(worker.AssignedBay);
+        worker.Activity = worker.Position.Y > WorkerCatwalkY + 0.5f
+            ? FactoryWorkerActivity.Ascending
+            : FactoryWorkerActivity.Idle;
+        if (worker.Activity == FactoryWorkerActivity.Idle) worker.AssignedBay = -1;
+        worker.Phase = 0f;
+    }
+
+    private bool WorkerBayNeedsOperator(int bay) => bay switch
+    {
+        0 => _lockedBody is not null && !_returning,
+        1 => _drillLockedBody is not null && !_drillReturning,
+        2 => _pressLockedBody is not null,
+        3 => _vacuumLockedBody is not null,
+        4 => _filterLockedBody is not null,
+        _ => false
+    };
+
+    public Vector2 WorkerOperationAnchor(int bay) => bay switch
+    {
+        0 => CrusherButtonCenter + new Vector2(-9f, 16f),
+        1 => DrillLeverCenter + new Vector2(-9f, 16f),
+        2 => DrumWheelCenter + new Vector2(-9f, 17f),
+        3 => VacuumNozzleRest + new Vector2(-10f, 18f),
+        4 => FilterKnobCenter + new Vector2(-10f, 18f),
+        _ => new Vector2(WorkerTrunkX, WorkerCatwalkY)
+    };
+
+    private bool OperateMachineForWorker(FactoryWorker worker, float dt)
+    {
+        worker.OperationTime += dt;
+        switch (worker.AssignedBay)
+        {
+            case 0:
+                if (_lockedBody is null) return true;
+                if (worker.OperationTime < 1.05f)
+                {
+                    _workerCrusherHeld = true;
+                    _cycleStarted = true;
+                    _returning = false;
+                }
+                else if (_cycleStarted)
+                {
+                    _workerCrusherHeld = false;
+                    _returning = true;
+                }
+                return false;
+            case 1:
+                if (_drillLockedBody is null) return true;
+                if (worker.OperationTime < 1.15f)
+                {
+                    _workerDrillHeld = true;
+                    _drillCycleStarted = true;
+                    _drillReturning = false;
+                }
+                else if (_drillCycleStarted)
+                {
+                    _workerDrillHeld = false;
+                    _drillReturning = true;
+                }
+                return false;
+            case 2:
+                if (_pressLockedBody is null) return true;
+                if (_drumLoading || _drumFinishing) return false;
+                _drumWheelDragging = true;
+                _drumDriveDirection = 1f;
+                _drumInputHold = 0.1f;
+                _drumInputMotion += 11f * dt;
+                _drumWheelAngle += 11f * dt;
+                return false;
+            case 3:
+                if (_vacuumLockedBody is null) return true;
+                if (!VacuumHose.IsDragging) VacuumHose.BeginDrag(VacuumNozzleRest);
+                VacuumHose.DragTo(_vacuumLockedBody.Center, DeckY);
+                return false;
+            case 4:
+                if (_filterLockedBody is null) return true;
+                if (!_filterDragging && !_filterReturning && worker.OperationTime <= dt * 1.5f)
+                    BeginFilterDrag(FilterKnobCenter);
+                if (_filterDragging)
+                {
+                    var amount = Math.Clamp(worker.OperationTime / 0.78f, 0f, 1f);
+                    DragFilterKnob(Bays[4].CenterX + 34f - amount * 68f);
+                    if (amount >= 0.999f) EndFilterDrag();
+                }
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private void StopWorkerControl(int bay)
+    {
+        if (bay == 0) _workerCrusherHeld = false;
+        if (bay == 1) _workerDrillHeld = false;
+        if (bay == 2) _drumWheelDragging = false;
+        if (bay == 3 && _vacuumLockedBody is null) VacuumHose.EndDrag();
+    }
+
+    private static Vector2 MoveTowards(Vector2 current, Vector2 target, float maxDelta)
+    {
+        var delta = target - current;
+        var distance = delta.Length();
+        if (distance <= maxDelta || distance < 0.0001f) return target;
+        return current + delta / distance * maxDelta;
     }
 
     private static float MoveTowards(float current, float target, float maxDelta)

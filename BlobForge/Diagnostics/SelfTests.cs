@@ -19,22 +19,48 @@ public static class SelfTests
             ("standard archetype spawns consistently", StandardArchetypeSpawnsConsistently),
             ("processing units use the compact physical scale", ProcessingUnitUsesCompactScale),
             ("fixed viewport fits and maps the whole world", FixedViewportFitsAndMapsWorld),
+            ("debug overlay layers toggle independently", DebugOverlayLayersToggleIndependently),
             ("factory tiles follow structural topology", FactoryTilesFollowStructure),
             ("holding chamber contains releases and feeds one at a time", HoldingChamberFeedsOneAtATime),
             ("lever holds the hatch and pixel lighting stays cached", LeverAndLightingAreDeterministic),
             ("main breaker requires a downward handle pull", BreakerRequiresDownwardHandlePull),
+            ("powered breaker reverses upward to end the day", BreakerReversesUpwardToPowerOff),
             ("holding chamber receives and releases a full soft body", HoldingChamberReceivesAndReleasesBody),
             ("powered receiving tub replaces the chamber support tower", ReceivingTubReplacesTerrainTower),
             ("released blobs cannot re-enter the holding chamber", ReleasedBlobCannotReenterChamber),
             ("blood treats the chamber tube as environment", BloodTreatsChamberTubeAsEnvironment),
             ("processing line has independent back-pressure segments", ProcessingLineBackPressureIsIndependent),
+            ("continuous flow uses one offscreen belt with machinery removed", ContinuousFlowUsesSingleAutomaticLine),
+            ("continuous conveyor keeps committed tissue above its top run", ContinuousConveyorContainsCommittedTissue),
+            ("a small spawned gore fraction can fall through conveyors", SpawnedGoreCanBypassConveyors),
+            ("overhead tube tumbles untouchable blobs before release", OverheadTubeBlobsTumbleWithoutInteraction),
+            ("overhead tube visibly stages and releases physical blobs", OverheadTubeStagesAndReleasesBodies),
+            ("overhead tube glass preserves hard-impact weapon damage", OverheadTubeGlassPreservesHardImpactDamage),
+            ("continuous belt enters through physical wall portals", ContinuousBeltUsesWallPortals),
+            ("butcher cleaver physically contacts and cuts along its visible edge", KnifePokesPhysicalTissue),
+            ("cleaver swings only on LMB and blunt surfaces never cut", CleaverFacesMovementAndOnlyEdgeDamages),
+            ("cleaver carries persistent contact-local blood stains", CleaverCarriesBloodStains),
+            ("blood pixels stain contacted blob tissue persistently", BloodPixelsStainBlobTissue),
+            ("detached tissue retains some cute blob coloration", DetachedTissueRetainsBlobColor),
+            ("dropped cleaver settles and rides without belt-driven rolling", DroppedCleaverRidesWithoutRolling),
+            ("nearby cleaver flies back to its centered wall rack", KnifeReturnsToHolster),
+            ("arsenal selection swaps the grabbable tool in the centered rack", ArsenalSelectionSwapsCenteredTool),
+            ("physical dumbwaiter token deposits and rerolls one unlocked weapon", WeaponDumbwaiterRerollsOneWeapon),
+            ("arsenal primary actions dispatch weapon-specific behavior", ArsenalPrimaryActionsAreDistinct),
+            ("slingshot impacts damage launched and struck blobs", SlingshotImpactsDamageBothBodies),
+            ("expanded arsenal entities keep their promised distinct mechanics", ExpandedArsenalMechanicsAreDistinct),
+            ("explosive fractures launch outward with varied fragment spin", ExplosiveFracturesHaveVariedSpin),
+            ("single exit drain routes blood and tissue after full belt travel", ContinuousEndDrainRoutesMatter),
             ("spike crusher locks damages and releases one blob", SpikeCrusherCycleIsLocalized),
             ("bay two spike drill holds damages and releases one blob", SpikeDrillCycleRequiresHeldLever),
             ("bays three through five use distinct player-operated machinery", FinalMachineControlsAreDistinct),
             ("machine drains feed the conserved blood basin", MachineDrainsFeedBasin),
             ("basin inflow sloshes internally without staining the floor below", BasinInflowStaysContained),
-            ("full basin locks safely and shop spending releases the line", FullBasinLocksAndShopSpendingUnlocks),
+            ("full basin keeps its physical drain open and spills excess", FullBasinKeepsDrainOpenAndSpillsExcess),
+            ("purchased blood worker forms routes and operates real machinery", BloodWorkerAutomatesMachinery),
             ("basin blood uses conserved sleeping cellular fluid", BasinFluidIsCellularAndConserved),
+            ("basin gallons liters and day payout share one calibrated volume", BasinVolumeAndPayoutAreCalibrated),
+            ("day-end trucks drain conserved basin blood as physical pixels", DayEndShipmentConservesBlood),
             ("later machine bays produce progressively richer basin blood", LaterBaysIncreaseBloodYield),
             ("Diego is dormant and basin bubbles wait for 35% fill", DiegoIsDormantAndBubblesWaitForFill),
             ("machine platforms stay narrow between transfer belts", NarrowTablesEjectToNextTransfer),
@@ -50,8 +76,10 @@ public static class SelfTests
             ("flat-floor deterministic rest", FlatFloorRest),
             ("deformed tissue deterministic rest", DeformedTissueRest),
             ("grab promotes full tissue", GrabPromotesFullTissue),
+            ("representation scheduler prioritizes and caps active tissue", RepresentationSchedulerPrioritizesAndCapsActiveTissue),
             ("event damage destroys terrain cell", ImpactDamageDestroysCell),
             ("tissue bonds are damageable", TissueBondsBreak),
+            ("blob faces blink and briefly react to damage", BlobFacesBlinkAndReactToDamage),
             ("interior point damage redirects to visible tissue", InteriorPointDamageRedirects),
             ("outside point damage is ignored", OutsidePointDamageIsIgnored),
             ("single point hit removes only local tissue", SinglePointHitStaysLocal),
@@ -98,6 +126,7 @@ public static class SelfTests
             ("bleeding slows and clots over time", BleedingSlowsAndClots),
             ("blood emission has bounded upward speed", BloodEmissionIsWoundLike),
             ("blood pixels cannot remain inside blob tissue", BloodCannotRemainInsideBlob),
+            ("overcrowded blood and tissue fall through the foreground", DenseGranularPilesBecomeForegroundSpills),
             ("blood paints terrain and dries persistently", BloodPaintsAndDriesOnTerrain),
             ("dried stains wait for explicit cleaning", DriedStainsWaitForCleaning),
             ("fresh blood diversifies dried runoff", FreshBloodDiversifiesDriedRunoff),
@@ -106,7 +135,8 @@ public static class SelfTests
             ("active blood trails survive stain-layer churn", ActiveBloodTrailsSurviveStainChurn),
             ("old saturated blood zones can renew runoff", SaturatedBloodZoneRenewsRunoff),
             ("settled blood pools keep staining a saturated floor", SettledBloodPoolKeepsStaining),
-            ("mass damage remains event-budgeted", MassDamageRemainsBudgeted)
+            ("mass damage remains event-budgeted", MassDamageRemainsBudgeted),
+            ("blob personalities produce varied occasional hops", BlobPersonalitiesProduceVariedHops)
         };
 
         var failed = 0;
@@ -168,6 +198,31 @@ public static class SelfTests
             "breaker housing could no longer be repositioned independently of its handle");
     }
 
+    private static void BreakerReversesUpwardToPowerOff()
+    {
+        var line = new ProcessingLine(480f, powered: true);
+        var world = new BlobWorld(FlatGrid()) { ProcessingLine = line };
+        Assert(line.BeginBreakerLeverDrag(line.BreakerLeverHandle),
+            "powered breaker handle could not be grabbed");
+        var partial = Vector2.Lerp(line.BreakerTrackTop, line.BreakerTrackBottom, 0.55f);
+        Assert(!line.DragBreakerLever(partial),
+            "partial upward breaker pull ended the day too early");
+        line.EndBreakerLeverDrag();
+        for (var step = 0; step < 30; step++) world.Step(Dt);
+        Assert(line.Powered && line.BreakerLever > 0.98f,
+            "released partial shutdown did not restore the live breaker");
+
+        Assert(line.BeginBreakerLeverDrag(line.BreakerLeverHandle),
+            "live breaker could not begin a full upward pull");
+        Assert(line.DragBreakerLever(line.BreakerTrackTop - new Vector2(0f, 8f)) &&
+               line.PoweringDown,
+            "full upward pull did not begin the shutdown sequence");
+        line.EndBreakerLeverDrag();
+        for (var step = 0; step < 90 && line.Powered; step++) world.Step(Dt);
+        Assert(!line.Powered && !line.PoweringDown && line.BreakerLever < 0.01f,
+            "shutdown sequence did not finish with power and lever fully off");
+    }
+
     private static void FixedViewportFitsAndMapsWorld()
     {
         var logical = new Size(1280, 720);
@@ -190,10 +245,43 @@ public static class SelfTests
                 Math.Max(1, (int)MathF.Floor(logical.Width * expectedScale)),
                 Math.Max(1, (int)MathF.Floor(logical.Height * expectedScale)));
             Assert(viewport.Size == expectedSize,
-                $"viewport {viewport.Size} did not use the available fullscreen scale {expectedSize}");
+                $"viewport {viewport.Size} did not use the available aspect-fit scale {expectedSize}");
         }
         Assert(ViewportLayout.Fit(new Size(1920, 1080), logical) == new Rectangle(0, 0, 1920, 1080),
-            "16:9 fullscreen left black bars around the play area");
+            "16:9 fullscreen did not fill the display");
+    }
+
+    private static void DebugOverlayLayersToggleIndependently()
+    {
+        var renderer = new GameRenderer { DebugDraw = true };
+        Assert(renderer.DebugShowFps &&
+               renderer.DebugShowBlobPoints &&
+               !renderer.DebugShowBonds &&
+               renderer.DebugShowToolColliders &&
+               !renderer.DebugShowMetrics,
+            "debug overlay did not start in the lightweight inspection layout");
+
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(227f, 93f)) &&
+               !renderer.DebugShowBlobPoints &&
+               renderer.DebugShowToolColliders,
+            "BLOBS toggle also hid the independent tool colliders");
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(428f, 93f)) &&
+               renderer.DebugShowMetrics,
+            "METRICS toggle did not expose the detailed diagnostic text");
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(105f, 93f)) &&
+               !renderer.DebugShowFps &&
+               !renderer.DebugShowBlobPoints &&
+               !renderer.DebugShowBonds &&
+               !renderer.DebugShowToolColliders &&
+               !renderer.DebugShowMetrics,
+            "ALL- did not disable every optional debug layer");
+        Assert(renderer.TryHandleDebugOverlayClick(new Vector2(47f, 93f)) &&
+               renderer.DebugShowFps &&
+               renderer.DebugShowBlobPoints &&
+               renderer.DebugShowBonds &&
+               renderer.DebugShowToolColliders &&
+               renderer.DebugShowMetrics,
+            "ALL+ did not restore every optional debug layer");
     }
 
     private static void FactoryTilesFollowStructure()
@@ -428,8 +516,17 @@ public static class SelfTests
         world.Step(Dt);
         Assert(ReferenceEquals(line.DrillLockedBody, blob), "processed blob did not lock into bay two");
         line.SetDrillLeverHeld(true);
-        for (var i = 0; i < 125; i++) world.Step(Dt);
+        var sawSpinUp = false;
+        var sawImpactRecoil = false;
+        for (var i = 0; i < 125; i++)
+        {
+            world.Step(Dt);
+            sawSpinUp |= line.DrillSpinSpeed >= 30f;
+            sawImpactRecoil |= line.DrillRecoil > 0.9f;
+        }
         Assert(line.DrillTravel > 0.98f, "held drill lever did not lower the rotating bit");
+        Assert(sawSpinUp, "drill never reached its violent high-speed spin state");
+        Assert(sawImpactRecoil, "drill contact produced no visible hammer recoil");
         Assert(line.DrillBrokenLinks > 0,
             $"drill contact produced no localized structural wound (pulses {line.DrillDamagePulses}, " +
             $"center {line.DrillLockedBody?.Center}, tip {line.DrillTip})");
@@ -440,6 +537,7 @@ public static class SelfTests
         for (var i = 0; i < 90; i++) world.Step(Dt);
         Assert(line.DrillTravel < 0.01f && line.DrillLockedBody is null,
             "drill failed to retract and release after the lever was released");
+        Assert(line.DrillSpinSpeed < 0.01f, "drill motor failed to spin down after release");
     }
 
     private static void FinalMachineControlsAreDistinct()
@@ -505,7 +603,8 @@ public static class SelfTests
             for (var x = (int)(line.DrumCenter.X - 48f); x <= (int)(line.DrumCenter.X + 48f); x++)
             {
                 var pixel = loadingRender.GetPixel(x, y);
-                if (pixel.R > 180 && pixel.G < 75 && pixel.B < 75) visibleForegroundPixels++;
+                if (pixel.R >= 55 && pixel.R <= 190 && pixel.G > 145 && pixel.B > 120)
+                    visibleForegroundPixels++;
             }
             Assert(visibleForegroundPixels >= 5,
                 $"loading blob was clipped behind Bay 3 before entering the drum " +
@@ -559,16 +658,17 @@ public static class SelfTests
                 using var drumRender = new Bitmap(1280, 720);
                 using var drumGraphics = Graphics.FromImage(drumRender);
                 new GameRenderer().Draw(drumGraphics, drumRender.Size, world, null);
-                var redBlobPixels = 0;
+                var mintBlobPixels = 0;
                 var center = line.DrumCenter;
                 for (var y = (int)(center.Y - 38f); y <= (int)(center.Y + 38f); y++)
                 for (var x = (int)(center.X - 38f); x <= (int)(center.X + 38f); x++)
                 {
                     var pixel = drumRender.GetPixel(x, y);
-                    if (pixel.R > 180 && pixel.G < 70 && pixel.B < 70) redBlobPixels++;
+                    if (pixel.R >= 55 && pixel.R <= 190 && pixel.G > 145 && pixel.B > 120)
+                        mintBlobPixels++;
                 }
-                Assert(redBlobPixels >= 30,
-                    $"spinning blob was not visibly rendered inside the drum ({redBlobPixels} red pixels)");
+                Assert(mintBlobPixels >= 30,
+                    $"spinning blob was not visibly rendered inside the drum ({mintBlobPixels} mint pixels)");
             }
             if (i == 90)
                 Assert(line.DrumProgress < 0.70f,
@@ -625,6 +725,7 @@ public static class SelfTests
             "vacuum drain kept pouring after its processed blob had left Bay 4");
 
         var filterBody = MoveToBay(4);
+        var filterEntryParticles = filterBody.PhysicalParticleCount;
         Assert(ReferenceEquals(line.FilterLockedBody, filterBody), "bay five failed to capture the pumped unit");
         Assert(line.FilterLaserActive, "filter lasers were not energized when the unit entered bay five");
         Assert(line.BeginFilterDrag(line.FilterKnobCenter), "filter knob refused a valid drag start");
@@ -642,6 +743,27 @@ public static class SelfTests
             "completed blob could start a second laser pass");
         Assert(world.Granular.Particles.Count(particle => particle.Kind == GranularKind.Tissue) >= 8,
             "final machine did not guarantee a small residue load for the output cart");
+
+        for (var i = 0; i < 30; i++) world.Step(Dt);
+        var survivingRemnant = world.Bodies
+            .Where(body => body.ParentId == parentId && body.PhysicalParticleCount > 0)
+            .OrderByDescending(body => body.PhysicalParticleCount)
+            .FirstOrDefault();
+        var requiredRemnant = Math.Min(
+            ProcessingLine.FilterProtectedRemnantParticles,
+            filterEntryParticles);
+        Assert(survivingRemnant is not null && survivingRemnant.PhysicalParticleCount >= requiredRemnant,
+            $"Bay 5 destroyed the protected final remnant " +
+            $"({survivingRemnant?.PhysicalParticleCount ?? 0}/{requiredRemnant} particles survived)");
+
+        var cart = line.OutputCartBounds;
+        bool RemnantReachedCart() => world.Bodies.Any(body =>
+            body.ParentId == parentId && body.PhysicalParticleCount >= requiredRemnant &&
+            body.Center.X >= cart.Left + 5f && body.Center.X <= cart.Right - 5f &&
+            body.Center.Y >= cart.Top - 38f);
+        for (var i = 0; i < 720 && !RemnantReachedCart(); i++) world.Step(Dt);
+        Assert(RemnantReachedCart(),
+            "the protected Bay 5 remnant failed to travel into the output cart");
 
     }
 
@@ -734,6 +856,7 @@ public static class SelfTests
         var world = new BlobWorld(grid) { ProcessingLine = line, Gravity = Vector2.Zero };
         world.Conveyors.AddRange(line.Belts);
         var x = line.Basin.Left + line.Basin.Width * 0.52f;
+        line.Basin.AddMaterial(x, line.Basin.FluidCapacity * 0.18f, 0f, 0f);
         var start = new Vector2(x, line.Basin.SurfaceYAt(x) - 24f);
         world.Granular.Particles.Add(new GranularParticle
         {
@@ -753,6 +876,8 @@ public static class SelfTests
             "basin inflow vanished immediately instead of floating and dissolving");
         Assert(line.Basin.TotalDeposited > 0f && line.Basin.SloshAmplitude > 0.08f,
             "contained inflow did not add fluid and a visible slosh impulse");
+        Assert(line.Basin.SurfaceSplashes.Count >= 2 && line.Basin.SurfaceRipples.Count > 0,
+            "blood entering an existing pool produced no surface splash or expanding ripple");
         Assert(line.Basin.InteriorStains.Count > 0 && line.Basin.InteriorStains.All(stain =>
                 stain.X >= line.Basin.Left + 4f && stain.X <= line.Basin.Right - 4f &&
                 stain.Y >= line.Basin.Top + 5f && stain.Y <= line.Basin.Bottom - 7f),
@@ -767,7 +892,7 @@ public static class SelfTests
             "basin slosh did not damp after the inflow settled");
     }
 
-    private static void FullBasinLocksAndShopSpendingUnlocks()
+    private static void FullBasinKeepsDrainOpenAndSpillsExcess()
     {
         var grid = new DestructibleGrid(40, 22, 32);
         grid.BuildProcessingStation();
@@ -786,10 +911,12 @@ public static class SelfTests
             $"full basin escaped its capacity invariant ({basin.StoredVolume} / {basin.FluidCapacity})");
 
         world.Step(Dt);
-        Assert(line.MachineryLockedByStorage && line.Belts.All(belt => MathF.Abs(belt.Speed) < 0.001f),
-            "100% storage did not stop every processing-line conveyor");
-        Assert(Enumerable.Range(0, line.Bays.Count).All(line.IsBayInUse),
-            "100% storage did not put every machine into its red locked state");
+        Assert(line.BasinAtCapacity && !line.MachineryLockedByStorage,
+            "100% storage did not preserve normal factory operation while freezing reserve growth");
+        Assert(line.Belts.All(belt => MathF.Abs(belt.Speed - ProcessingLine.OperatingSpeed) < 0.001f),
+            "100% storage stopped a processing-line conveyor");
+        Assert(!Enumerable.Range(0, line.Bays.Count).All(line.IsBayInUse),
+            "100% storage falsely put every machine into a locked/busy state");
 
         var itemBounds = line.BloodShopItemBounds(0);
         var itemPoint = new Vector2(itemBounds.Left + itemBounds.Width * 0.5f,
@@ -799,7 +926,7 @@ public static class SelfTests
             "blood exchange did not purchase an affordable upgrade socket");
         Assert(MathF.Abs(beforePurchase - basin.SpendableBlood - line.BloodShopItems[0].Cost) < 0.02f,
             "upgrade socket price was not deducted from the conserved basin value");
-        Assert(!line.MachineryLockedByStorage, "spending below capacity did not release the storage interlock");
+        Assert(!line.BasinAtCapacity, "spending below capacity did not clear the basin capacity state");
 
         world.Step(Dt);
         Assert(line.Belts.All(belt => MathF.Abs(belt.Speed - ProcessingLine.OperatingSpeed) < 0.001f),
@@ -810,6 +937,238 @@ public static class SelfTests
         Assert(line.TryActivateBloodShop(reliefPoint) &&
                MathF.Abs(beforeRelief - basin.SpendableBlood - ProcessingLine.ReliefValveCost) < 0.02f,
             "repeatable purge control did not spend its displayed basin price");
+
+        var continuousGrid = new DestructibleGrid(40, 22, 32);
+        continuousGrid.BuildProcessingStation();
+        continuousGrid.OpenContinuousConveyorPortals();
+        var continuousLine = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * continuousGrid.CellSize,
+            continuousFlow: true);
+        continuousLine.Basin.AddMaterial(
+            continuousLine.Basin.Left + continuousLine.Basin.Width * 0.5f,
+            continuousLine.Basin.FluidCapacity,
+            180f,
+            0f);
+        Assert(continuousLine.BasinAtCapacity,
+            "continuous-flow basin did not report its full reserve state");
+
+        var collectorParticle = new GranularParticle
+        {
+            Position = new Vector2(
+                continuousLine.ContinuousDrainCollectorBounds.Left + 20f,
+                continuousLine.ContinuousDrainCollectorBounds.Top + 4f),
+            PreviousPosition = new Vector2(
+                continuousLine.ContinuousDrainCollectorBounds.Left + 17f,
+                continuousLine.ContinuousDrainCollectorBounds.Top + 4f),
+            Radius = 2f,
+            Lifetime = 10f,
+            Kind = GranularKind.Blood
+        };
+        var collectorBefore = collectorParticle.Position;
+        Assert(continuousLine.RouteThroughContinuousEndDrain(ref collectorParticle, Dt) &&
+               Vector2.DistanceSquared(collectorParticle.Position, collectorBefore) > 0.001f,
+            "full basin incorrectly closed the physical collector and stopped funnel travel");
+        var enteredBasinDrop = false;
+        for (var step = 0; step < 420; step++)
+        {
+            continuousLine.RouteThroughContinuousEndDrain(ref collectorParticle, Dt);
+            enteredBasinDrop |=
+                collectorParticle.Position.Y >= continuousLine.ContinuousDrainBasinMouth.Y - 5f &&
+                MathF.Abs(collectorParticle.Position.X - continuousLine.ContinuousDrainBasinMouth.X) <= 18f;
+            if (enteredBasinDrop) break;
+        }
+        Assert(enteredBasinDrop,
+            "blood accepted by the full-basin collector never traversed the normal pipe to its mouth");
+
+        var denseDrain = new GranularMaterialSystem();
+        for (var index = 0; index < 180; index++)
+        {
+            var x = continuousLine.ContinuousDrainCollectorBounds.Left + 5f + index % 10 * 3.2f;
+            var y = continuousLine.ContinuousDrainCollectorBounds.Top + 2f + index / 10 * 0.4f;
+            denseDrain.Particles.Add(new GranularParticle
+            {
+                Position = new Vector2(x, y),
+                PreviousPosition = new Vector2(x - 2f, y),
+                Radius = 2.1f,
+                Lifetime = 30f,
+                Kind = index % 4 == 0 ? GranularKind.Tissue : GranularKind.Blood
+            });
+        }
+        var noBodies = new List<SoftBody>();
+        for (var step = 0; step < 720; step++)
+        {
+            denseDrain.BeginStep();
+            denseDrain.Step(1f / 60f, new Vector2(0f, 980f), continuousGrid,
+                noBodies, continuousLine.Belts, processingLine: continuousLine);
+        }
+        Assert(denseDrain.Particles.All(particle =>
+                !continuousLine.ContinuousDrainCollectorBounds.Contains(
+                    particle.Position.X, particle.Position.Y) &&
+                !particle.InContinuousDrain),
+            "dense full-basin inflow rebuilt a collision plug in the funnel or pipe");
+
+        var spillParticle = new GranularParticle
+        {
+            Position = new Vector2(
+                continuousLine.Basin.Left + continuousLine.Basin.Width * 0.72f,
+                continuousLine.Basin.FluidTop + 2f),
+            PreviousPosition = new Vector2(
+                continuousLine.Basin.Left + continuousLine.Basin.Width * 0.72f,
+                continuousLine.Basin.FluidTop - 4f),
+            Radius = 2.4f,
+            Lifetime = 10f,
+            Kind = GranularKind.Blood
+        };
+        var storedBeforeSpill = continuousLine.Basin.StoredVolume;
+        Assert(!continuousLine.TryCollectBasinInflow(ref spillParticle, Dt),
+            "blood landing on a full basin was incorrectly counted and consumed");
+        Assert(MathF.Abs(continuousLine.Basin.StoredVolume - storedBeforeSpill) < 0.001f &&
+               continuousLine.Basin.TotalOverflowed > 0f,
+            "full-basin overflow changed stored/spendable blood");
+        var firstSpilledRight =
+            spillParticle.Position.X > continuousLine.Basin.Right + 18f;
+        var firstSpilledLeft =
+            spillParticle.Position.X < continuousLine.Basin.Left - 18f;
+        Assert((firstSpilledRight || firstSpilledLeft) &&
+               spillParticle.Position.Y <= continuousLine.Basin.Top + 6f &&
+               (firstSpilledRight
+                   ? spillParticle.Position.X > spillParticle.PreviousPosition.X
+                   : spillParticle.Position.X < spillParticle.PreviousPosition.X),
+            "excess blood was not physically displaced over the nearest basin lip");
+        Assert(continuousLine.Basin.SurfaceSplashes.Count > 0,
+            "overflow impact produced no visible disturbance on the full pool");
+
+        var oppositeSpill = spillParticle with
+        {
+            Position = new Vector2(
+                continuousLine.Basin.Left + continuousLine.Basin.Width * 0.72f,
+                continuousLine.Basin.FluidTop + 2f),
+            PreviousPosition = new Vector2(
+                continuousLine.Basin.Left + continuousLine.Basin.Width * 0.72f,
+                continuousLine.Basin.FluidTop - 4f)
+        };
+        Assert(!continuousLine.TryCollectBasinInflow(ref oppositeSpill, Dt) &&
+               (firstSpilledRight
+                   ? oppositeSpill.Position.X < continuousLine.Basin.Left - 18f &&
+                     oppositeSpill.Position.X < oppositeSpill.PreviousPosition.X
+                   : oppositeSpill.Position.X > continuousLine.Basin.Right + 18f &&
+                     oppositeSpill.Position.X > oppositeSpill.PreviousPosition.X),
+            "successive full-basin overflow did not alternate to the opposite lip");
+        var spillLeft = 0;
+        var spillRight = 0;
+        for (var impact = 0; impact < 24; impact++)
+        {
+            if (continuousLine.Basin.RegisterOverflowImpact(
+                    continuousLine.Basin.Left + continuousLine.Basin.Width * 0.72f,
+                    240f + impact * 7f, 2.4f, 18f))
+                spillRight++;
+            else
+                spillLeft++;
+        }
+        Assert(spillLeft == spillRight,
+            $"full-basin overflow was not evenly distributed ({spillLeft} left/{spillRight} right)");
+        Assert(continuousLine.Basin.FrontOverflowStains.Count == 0,
+            "full basin still created the disabled front-glass overflow trails");
+    }
+
+    private static void BloodWorkerAutomatesMachinery()
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize);
+        var world = new BlobWorld(grid) { ProcessingLine = line };
+        world.Conveyors.AddRange(line.Belts);
+        line.Basin.AddMaterial(line.Basin.Left + 20f, ProcessingLine.FactoryWorkerCost + 500f,
+            180f, 0f);
+
+        var itemBounds = line.BloodShopItemBounds(0);
+        var purchasePoint = new Vector2(itemBounds.Left + itemBounds.Width * 0.5f,
+            itemBounds.Top + itemBounds.Height * 0.5f);
+        Assert(line.TryActivateBloodShop(purchasePoint) && line.FactoryWorkers.Count == 1,
+            "worker purchase did not spawn one forming worker at the basin outlet");
+        Assert(line.BloodShopItems[0].PurchaseCount == 1 && line.BloodShopItems[0].CanPurchase,
+            "repeatable worker shop item did not retain its bounded crew capacity");
+
+        var body = BlobArchetype.ProcessingUnit.Create(
+            new Vector2(line.Bays[0].CenterX, line.DeckY - 30f));
+        world.Bodies.Add(body);
+        var sawClimb = false;
+        var sawWalk = false;
+        var sawOperate = false;
+        for (var step = 0; step < 2_100 && !line.HasEnteredBayOne(body); step++) world.Step(Dt);
+        for (var step = 0; step < 2_100 && line.LockedBody is not null; step++)
+        {
+            world.Step(Dt);
+            var activity = line.FactoryWorkers[0].Activity;
+            sawClimb |= activity is FactoryWorkerActivity.Climbing or FactoryWorkerActivity.Descending;
+            sawWalk |= activity == FactoryWorkerActivity.Walking;
+            sawOperate |= activity == FactoryWorkerActivity.Operating &&
+                          line.FactoryWorkers[0].AssignedBay == 0;
+        }
+
+        Assert(sawClimb && sawWalk && sawOperate,
+            $"worker route skipped required scaffold animation states " +
+            $"(climb {sawClimb}, walk {sawWalk}, operate {sawOperate})");
+        world.Step(Dt);
+        Assert(line.LockedBody is null && line.FactoryWorkers[0].Activity == FactoryWorkerActivity.Ascending,
+            $"worker failed to hold and release the crusher's real button cycle " +
+            $"(locked {line.LockedBody is not null}, activity {line.FactoryWorkers[0].Activity})");
+
+        bool BayHasBody(int bay) => bay switch
+        {
+            1 => line.DrillLockedBody is not null,
+            2 => line.DrumLockedBody is not null,
+            3 => line.VacuumLockedBody is not null,
+            4 => line.FilterLockedBody is not null,
+            _ => false
+        };
+        SoftBody MoveParentToBay(int bay)
+        {
+            for (var step = 0; step < 1_200 &&
+                               line.FactoryWorkers[0].Activity != FactoryWorkerActivity.Idle; step++)
+                world.Step(Dt);
+            var current = world.Bodies.Where(candidate => candidate.ParentId == body.ParentId)
+                .OrderByDescending(candidate => candidate.PhysicalParticleCount)
+                .First();
+            current.ApplyTranslation(new Vector2(line.Bays[bay].CenterX - current.Center.X,
+                line.DeckY - 30f - current.Center.Y), preserveVelocity: true);
+            current.AddImpulse(-current.AverageVelocity(Dt), Dt);
+            world.Step(Dt);
+            Assert(BayHasBody(bay), $"processed worker-test blob did not capture in Bay {bay + 1}");
+            return current;
+        }
+        void CompleteWorkerBay(int bay, int maximumSteps)
+        {
+            var sawBayOperation = false;
+            for (var step = 0; step < maximumSteps && BayHasBody(bay); step++)
+            {
+                world.Step(Dt);
+                var worker = line.FactoryWorkers[0];
+                sawBayOperation |= worker.Activity == FactoryWorkerActivity.Operating &&
+                                   worker.AssignedBay == bay;
+            }
+            Assert(sawBayOperation && !BayHasBody(bay),
+                $"worker failed to operate and release Bay {bay + 1} " +
+                $"(operated {sawBayOperation}, occupied {BayHasBody(bay)})");
+        }
+
+        MoveParentToBay(1);
+        CompleteWorkerBay(1, 2_400);
+        MoveParentToBay(2);
+        CompleteWorkerBay(2, 3_600);
+        MoveParentToBay(3);
+        CompleteWorkerBay(3, 2_400);
+        MoveParentToBay(4);
+        CompleteWorkerBay(4, 2_400);
+
+        var workerSprite = Path.Combine(AppContext.BaseDirectory, "Assets", "FactoryWorker.png");
+        var infrastructure = Path.Combine(AppContext.BaseDirectory, "Assets", "WorkerInfrastructure.png");
+        using var workerBitmap = new Bitmap(workerSprite);
+        using var infrastructureBitmap = new Bitmap(infrastructure);
+        Assert(workerBitmap.Width == 24 * 22 && workerBitmap.Height == 32,
+            "worker spritesheet dimensions do not match the 22-frame runtime contract");
+        Assert(infrastructureBitmap.Width == 128 && infrastructureBitmap.Height == 64,
+            "worker infrastructure atlas dimensions do not match its runtime contract");
     }
 
     private static void BasinFluidIsCellularAndConserved()
@@ -905,6 +1264,128 @@ public static class SelfTests
             "dormant Diego removed volume from the cellular basin");
         Assert(MathF.Abs(RepresentedVolume() - basin.CurrentFluidVolume) < 0.02f,
             "cell raster diverged from authoritative volume during dormant-creature simulation");
+    }
+
+    private static void BasinVolumeAndPayoutAreCalibrated()
+    {
+        var basin = new BloodBasin(250f, 571f, 866f, 101f);
+        var expectedCapacityLiters =
+            866f / BloodBasin.WorldUnitsPerMeter *
+            (101f - 12f) / BloodBasin.WorldUnitsPerMeter *
+            BloodBasin.EstimatedTankDepthMeters *
+            BloodBasin.LitersPerCubicMeter;
+        Assert(MathF.Abs(basin.EstimatedCapacityLiters - expectedCapacityLiters) < 0.1f,
+            "basin capacity did not follow its authored physical dimensions");
+        basin.AddMaterial(
+            basin.Left + basin.Width * 0.5f,
+            basin.FluidCapacity * 0.5f,
+            0f,
+            0f);
+        Assert(MathF.Abs(basin.EstimatedStoredLiters - expectedCapacityLiters * 0.5f) < 0.1f &&
+               MathF.Abs(
+                   basin.EstimatedStoredGallons * BloodBasin.LitersPerUsGallon -
+                   basin.EstimatedStoredLiters) < 0.1f,
+            "gallons and liters did not describe the same conserved blood");
+
+        var progression = GameProgression.CreateTransient();
+        progression.ToggleVolumeUnit();
+        Assert(progression.VolumeUnit == BasinVolumeUnit.Liters,
+            "volume preference did not toggle to liters");
+        var expectedBloodPayout = decimal.Round(
+            (decimal)basin.EstimatedStoredGallons * GameProgression.BaseBloodRatePerGallon,
+            2,
+            MidpointRounding.AwayFromZero);
+        var payout = progression.CompleteDay(basin, processedBlobs: 3);
+        Assert(payout.BloodPayout == expectedBloodPayout &&
+               payout.ProcessedPayout == 3m * GameProgression.BaseProcessedBlobRate &&
+               payout.TotalPayout == payout.BloodPayout + payout.ProcessedPayout &&
+               payout.CurrencyAfterSale == progression.Currency,
+            "day payout did not itemize blood and damage-qualified processing correctly");
+        Assert(basin.StoredVolume <= 0.001f && basin.FluidCellCount == 0,
+            "selling the day did not empty the authoritative basin");
+        Assert(progression.TryUnlockWeapon("NAIL_GUN") &&
+               progression.IsWeaponUnlocked("NAIL_GUN"),
+            "earned currency could not unlock a weapon");
+
+        for (var day = 0; day < GameProgression.DaysPerYear; day++)
+            progression.AdvanceDay();
+        Assert(progression.Year == 2 && progression.DayOfYear == 1 &&
+               progression.DayLabel().Contains("YEAR 2", StringComparison.Ordinal),
+            "absolute day progression did not roll into year two");
+    }
+
+    private static void DayEndShipmentConservesBlood()
+    {
+        var basin = new BloodBasin(250f, 507f, 866f, 101f);
+        basin.AddMaterial(
+            basin.Left + basin.Width * 0.5f,
+            basin.FluidCapacity * 0.64f,
+            0f,
+            0f);
+        var initial = basin.StoredVolume;
+        var sequence = new BloodShipmentSequence(
+            basin,
+            GameProgression.BaseBloodRatePerGallon,
+            processedBlobs: 4,
+            processedRate: GameProgression.BaseProcessedBlobRate);
+        var maximumConservationError = 0f;
+        var maximumDrainShelf = 0f;
+        var previousDisplayedBlood = 0m;
+
+        for (var step = 0; step < 60 * 120 && !sequence.Complete; step++)
+        {
+            sequence.Update(Dt);
+            if (step % 20 == 0 && basin.StoredVolume < initial - 0.01f &&
+                basin.FluidCellCount >= BloodBasin.FluidGridWidth)
+            {
+                var columnFills = Enumerable.Range(0, BloodBasin.FluidGridWidth)
+                    .Select(x => Enumerable.Range(0, BloodBasin.FluidGridHeight)
+                        .Sum(y => basin.FluidFillAt(x, y)))
+                    .ToArray();
+                maximumDrainShelf = MathF.Max(maximumDrainShelf,
+                    columnFills.Max() - columnFills.Min());
+            }
+            var inFlight = 0f;
+            for (var i = 0; i < sequence.Pixels.Count; i++)
+                inFlight += sequence.Pixels[i].Volume;
+            var represented = basin.StoredVolume + inFlight + sequence.ShippedVolume;
+            maximumConservationError = MathF.Max(
+                maximumConservationError,
+                MathF.Abs(initial - represented));
+            Assert(sequence.InFlightParticleCount <= BloodShipmentSequence.MaximumParticles,
+                "day-end transfer escaped its bounded physical-pixel budget");
+            if (sequence.Stage is not BloodShipmentStage.FinalizingPayout and
+                not BloodShipmentStage.Complete)
+            {
+                Assert(sequence.DisplayedBloodEarnings + 0.02m >= previousDisplayedBlood &&
+                       sequence.DisplayedBloodEarnings <= sequence.LoadedBloodPayout + 0.02m,
+                    "live earnings stopped being a smooth function of blood received by trucks");
+                previousDisplayedBlood = sequence.DisplayedBloodEarnings;
+            }
+        }
+
+        Assert(sequence.Complete,
+            "day-end blood shipment did not finish within its bounded sequence time " +
+            $"(stage {sequence.Stage}, basin {basin.StoredVolume:0.00}, " +
+            $"shipped {sequence.ShippedVolume:0.00}/{initial:0.00}, " +
+            $"pixels {sequence.InFlightParticleCount}, trucks " +
+            $"{sequence.DepartedTruckCount}/{sequence.PlannedTruckCount})");
+        Assert(basin.StoredVolume <= 0.001f &&
+               MathF.Abs(sequence.ShippedVolume - initial) <= 0.02f,
+            "day-end trucks did not empty and receive the authoritative basin volume");
+        Assert(sequence.DepartedTruckCount == sequence.PlannedTruckCount &&
+               sequence.DepartedTruckCount is >= 1 and <= BloodShipmentSequence.MaximumTrucks,
+            "day-end shipment did not dispatch the planned bounded truck batches");
+        Assert(maximumConservationError <= MathF.Max(0.1f, initial * 0.00001f),
+            $"day-end transfer created or lost blood while pixels were in flight " +
+            $"({maximumConservationError:0.000} volume error)");
+        Assert(maximumDrainShelf <= 1.001f,
+            $"shipment extraction left end walls instead of draining as one pool " +
+            $"({maximumDrainShelf:0.###} cell height spread)");
+        Assert(sequence.DisplayedTotalEarnings == sequence.ProjectedTotalPayout &&
+               sequence.ProjectedTotalPayout ==
+               sequence.ProjectedBloodPayout + sequence.ProcessedBonus,
+            "shipment earnings did not finish at the exact itemized day payout");
     }
 
     private static void LaterBaysIncreaseBloodYield()
@@ -1725,6 +2206,28 @@ public static class SelfTests
         }
 
         Console.WriteLine("Station render benchmark (1280x720, simulation advanced at 120 Hz):");
+        var flowGrid = new DestructibleGrid(40, 22, 32);
+        flowGrid.BuildProcessingStation();
+        flowGrid.OpenContinuousConveyorPortals();
+        var flowLine = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * flowGrid.CellSize,
+            continuousFlow: true);
+        var flowWorld = new BlobWorld(flowGrid)
+        {
+            ProcessingLine = flowLine,
+            TubeFeed = new OverheadTubeFeed(flowLine.DeckY)
+            {
+                MaximumBodiesInFactory = 4,
+                EnableBlobPersonalities = true
+            },
+            EnableBlobPersonalities = true,
+            Knife = new PhysicalKnife(flowLine.ContinuousToolRackCenter)
+        };
+        flowWorld.Conveyors.AddRange(flowLine.Belts);
+        flowWorld.Lighting.ConfigureProcessingStation();
+        flowWorld.Lighting.SetFactoryPower(true);
+        Measure("continuous flow", flowWorld, _ =>
+            flowWorld.TubeFeed!.Update(flowWorld.Bodies, Dt, BlobArchetype.ProcessingUnit.Create));
+
         var idle = CreateStation();
         Measure("powered idle", idle.World);
 
@@ -1852,7 +2355,7 @@ public static class SelfTests
                 -Vector2.UnitY,
                 0.08f);
 
-        using var bitmap = new Bitmap(1280, 720);
+        using var bitmap = new Bitmap(2560, 720);
         using var graphics = Graphics.FromImage(bitmap);
         var renderer = new GameRenderer();
         for (var i = 0; i < 20; i++) renderer.Draw(graphics, bitmap.Size, world, null);
@@ -1937,43 +2440,709 @@ public static class SelfTests
         return 0;
     }
 
+    public static int RunFactoryStressBenchmark()
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            continuousFlow: true);
+        var world = new BlobWorld(grid)
+        {
+            ProcessingLine = line,
+            EnableBlobPersonalities = true,
+            Knife = new PhysicalKnife(line.ContinuousToolRackCenter)
+        };
+        world.Conveyors.AddRange(line.Belts);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+
+        // Reproduce the late-play state rather than the inexpensive spawn state:
+        // a compressed, mutually contacting pile with several damaged bodies.
+        for (var index = 0; index < 16; index++)
+        {
+            var column = index % 5;
+            var row = index / 5;
+            world.Bodies.Add(BlobArchetype.ProcessingUnit.Create(new Vector2(
+                115f + column * 55f + row * 8f,
+                line.DeckY - 42f - row * 54f)));
+        }
+        for (var step = 0; step < 180; step++) world.Step(Dt);
+        for (var index = 0; index < 9; index++)
+        {
+            var body = world.Bodies[index];
+            DamageGestureProfile.Bite(body, body.Center + new Vector2(
+                (index % 3 - 1) * body.Radius * 0.35f,
+                body.Radius * 0.52f));
+        }
+        for (var step = 0; step < 24; step++) world.Step(Dt);
+
+        const int loosePixels = 1450;
+        for (var index = 0; index < loosePixels; index++)
+        {
+            var column = index % 370;
+            var layer = index / 370;
+            var position = new Vector2(56f + column * 3.05f,
+                line.DeckY - 3f - layer * 3.15f);
+            world.Granular.Particles.Add(new GranularParticle
+            {
+                Position = position,
+                PreviousPosition = position - new Vector2(0f, index % 4),
+                Radius = 1.45f + index % 3 * 0.15f,
+                Lifetime = 100f,
+                RestFrames = (byte)(index < 980 ? 18 : 0),
+                Kind = index % 5 == 0 ? GranularKind.Tissue : GranularKind.Blood
+            });
+        }
+        for (var index = 0; index < 360; index++)
+            line.Belts[0].DepositBlood(
+                line.Belts[0].Position + new Vector2(8f + index * 3.2f, index % 5),
+                -Vector2.UnitY,
+                0.055f);
+
+        using var bitmap = new Bitmap(1280, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        var renderer = new GameRenderer { ProfileStages = true };
+        for (var warmup = 0; warmup < 20; warmup++)
+        {
+            world.Step(Dt);
+            world.Step(Dt);
+            renderer.Draw(graphics, bitmap.Size, world, null);
+        }
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        const int frames = 180;
+        var simulationTicks = 0d;
+        var renderTicks = 0d;
+        var simulationAllocated = 0L;
+        var renderAllocated = 0L;
+        var maximumFrameMs = 0d;
+        var environmentMs = 0d;
+        var machineryBackMs = 0d;
+        var matterMs = 0d;
+        var machineryFrontMs = 0d;
+        var lightingMs = 0d;
+        var uiMs = 0d;
+        var conveyorMs = 0d;
+        var basinMs = 0d;
+        var stainMs = 0d;
+        var looseRenderMs = 0d;
+        var blobRenderMs = 0d;
+        var dynamicBuildStart = renderer.DynamicLightingBuildMsTotal;
+        var dynamicRaycastStart = renderer.DynamicLightingRaycastMsTotal;
+        var dynamicRasterStart = renderer.DynamicLightingRasterMsTotal;
+        var dynamicBuildCountStart = renderer.DynamicLightingBuildCount;
+        using var benchmarkProcess = Process.GetCurrentProcess();
+        var processCpuStart = benchmarkProcess.TotalProcessorTime;
+        for (var frame = 0; frame < frames; frame++)
+        {
+            var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+            var start = Stopwatch.GetTimestamp();
+            world.Step(Dt);
+            world.Step(Dt);
+            var afterSimulation = Stopwatch.GetTimestamp();
+            var simulationAllocationEnd = GC.GetAllocatedBytesForCurrentThread();
+            renderer.Draw(graphics, bitmap.Size, world, null);
+            var end = Stopwatch.GetTimestamp();
+            var allocationEnd = GC.GetAllocatedBytesForCurrentThread();
+            simulationTicks += afterSimulation - start;
+            renderTicks += end - afterSimulation;
+            simulationAllocated += simulationAllocationEnd - allocationStart;
+            renderAllocated += allocationEnd - simulationAllocationEnd;
+            environmentMs += renderer.EnvironmentStageMs;
+            machineryBackMs += renderer.MachineryBackStageMs;
+            matterMs += renderer.MatterStageMs;
+            machineryFrontMs += renderer.MachineryFrontStageMs;
+            lightingMs += renderer.LightingStageMs;
+            uiMs += renderer.UiStageMs;
+            conveyorMs += renderer.ConveyorStageMs;
+            basinMs += renderer.BasinBackStageMs;
+            stainMs += renderer.StainStageMs;
+            looseRenderMs += renderer.GranularStageMs;
+            blobRenderMs += renderer.BlobStageMs;
+            maximumFrameMs = Math.Max(maximumFrameMs,
+                Stopwatch.GetElapsedTime(start, end).TotalMilliseconds);
+        }
+        var processCpuMs =
+            (benchmarkProcess.TotalProcessorTime - processCpuStart).TotalMilliseconds / frames;
+
+        var tickToMs = 1000d / Stopwatch.Frequency;
+        var simulationMs = simulationTicks * tickToMs / frames;
+        var renderMs = renderTicks * tickToMs / frames;
+        var totalMs = simulationMs + renderMs;
+        Console.WriteLine("Late factory stress benchmark (2x 120 Hz steps + 1x 1280x720 render):");
+        Console.WriteLine(
+            $"  {world.Bodies.Count} blobs, {world.Granular.Particles.Count} loose pixels, " +
+            $"{world.Grid.StainedCellCount + line.Belts.Sum(belt => belt.BloodStains.Count)} stains");
+        Console.WriteLine(
+            $"  total {totalMs:0.00} ms/frame (sim {simulationMs:0.00}, render {renderMs:0.00}, " +
+            $"max {maximumFrameMs:0.00}, process CPU {processCpuMs:0.00})");
+        Console.WriteLine(
+            $"  alloc {simulationAllocated / 1024d / frames:0.0} KiB/frame sim + " +
+            $"{renderAllocated / 1024d / frames:0.0} KiB/frame render");
+        Console.WriteLine(
+            $"  last body {world.LastBodyPhysicsMs:0.00} ms, granular {world.LastGranularSimulationMs:0.00} ms; " +
+            $"contacts {world.ContactsThisStep}, blob {world.BlobContactsThisStep}");
+        Console.WriteLine(
+            $"  collision split: particle/hash {world.LastBlobParticleCollisionMs:0.00} ms, " +
+            $"hull guard {world.LastHullCollisionMs:0.00} ms");
+        Console.WriteLine(
+            $"  render env {environmentMs / frames:0.00}, back {machineryBackMs / frames:0.00}, " +
+            $"matter {matterMs / frames:0.00}, front {machineryFrontMs / frames:0.00}, " +
+            $"light {lightingMs / frames:0.00}, ui {uiMs / frames:0.00}");
+        Console.WriteLine(
+            $"  render split: conveyor {conveyorMs / frames:0.00}, basin {basinMs / frames:0.00}, " +
+            $"stains {stainMs / frames:0.00}, granular {looseRenderMs / frames:0.00}, " +
+            $"blobs {blobRenderMs / frames:0.00}");
+        var dynamicBuilds = renderer.DynamicLightingBuildCount - dynamicBuildCountStart;
+        if (dynamicBuilds > 0)
+        {
+            Console.WriteLine(
+                $"  dynamic light rebuilds: {dynamicBuilds}, avg " +
+                $"{(renderer.DynamicLightingBuildMsTotal - dynamicBuildStart) / dynamicBuilds:0.00} ms " +
+                $"(rays {(renderer.DynamicLightingRaycastMsTotal - dynamicRaycastStart) / dynamicBuilds:0.00}, " +
+                $"raster {(renderer.DynamicLightingRasterMsTotal - dynamicRasterStart) / dynamicBuilds:0.00})");
+        }
+        const double frameBudgetMs = 25.0;
+        const double simulationAllocationBudgetKiB = 128.0;
+        const double renderAllocationBudgetKiB = 32.0;
+        var simulationAllocationKiB = simulationAllocated / 1024d / frames;
+        var renderAllocationKiB = renderAllocated / 1024d / frames;
+        var passed = processCpuMs <= frameBudgetMs &&
+                     simulationAllocationKiB <= simulationAllocationBudgetKiB &&
+                     renderAllocationKiB <= renderAllocationBudgetKiB;
+        Console.WriteLine(
+            $"  regression budget: {(passed ? "PASS" : "FAIL")} " +
+            $"(<= {frameBudgetMs:0.0} ms process CPU, <= {simulationAllocationBudgetKiB:0} KiB sim, " +
+            $"<= {renderAllocationBudgetKiB:0} KiB render)");
+        return passed ? 0 : 1;
+    }
+
+    public static int RunSpreadPopulationBenchmark()
+    {
+        const int bodyCount = 192;
+        const int columns = 24;
+        const float spacing = 220f;
+        var bodies = new List<SoftBody>(bodyCount);
+        for (var bodyIndex = 0; bodyIndex < bodyCount; bodyIndex++)
+        {
+            bodies.Add(BlobArchetype.ProcessingUnit.Create(new Vector2(
+                bodyIndex % columns * spacing,
+                bodyIndex / columns * spacing)));
+        }
+
+        var particleHash = new BlobParticleSpatialHash();
+        for (var warmup = 0; warmup < 16; warmup++)
+        {
+            particleHash.BuildAndResolve(bodies, Dt);
+            BlobHullCollision.ResolveAll(bodies, Dt);
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        const int passes = 120;
+        var particleTicks = 0L;
+        var hullTicks = 0L;
+        var contacts = 0;
+        var allocationStart = GC.GetAllocatedBytesForCurrentThread();
+        for (var pass = 0; pass < passes; pass++)
+        {
+            var start = Stopwatch.GetTimestamp();
+            contacts += particleHash.BuildAndResolve(bodies, Dt);
+            var afterParticles = Stopwatch.GetTimestamp();
+            contacts += BlobHullCollision.ResolveAll(bodies, Dt);
+            var end = Stopwatch.GetTimestamp();
+            particleTicks += afterParticles - start;
+            hullTicks += end - afterParticles;
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+        var tickToMs = 1000d / Stopwatch.Frequency;
+        var legacyPairsPerGuard = bodyCount * (bodyCount - 1) / 2;
+        Console.WriteLine(
+            $"Spread population benchmark: {bodyCount} awake blobs, " +
+            $"{legacyPairsPerGuard:N0} legacy pairs/guard, {passes} passes");
+        Console.WriteLine(
+            $"  particle/hash + center guard {particleTicks * tickToMs / passes:0.000} ms/pass, " +
+            $"hull guard {hullTicks * tickToMs / passes:0.000} ms/pass");
+        Console.WriteLine(
+            $"  managed allocation {allocated / 1024d / passes:0.000} KiB/pass, contacts {contacts}");
+        return contacts == 0 ? 0 : 1;
+    }
+
 
     public static int WriteStationSnapshot(string outputPath)
     {
         var grid = new DestructibleGrid(40, 22, 32);
         grid.BuildProcessingStation();
-        var chamber = HoldingChamber.CreateProcessingStation();
-        var world = new BlobWorld(grid) { HoldingChamber = chamber };
-        world.Lighting.ConfigureProcessingStation();
-        var feed = new ChamberFeedController(chamber);
-        world.ProcessingLine = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize);
-        world.Conveyors.AddRange(world.ProcessingLine.Belts);
-        for (var i = 0; i < 600; i++)
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            continuousFlow: true);
+        var world = new BlobWorld(grid)
         {
-            feed.Update(world.Bodies, Dt, BlobArchetype.ProcessingUnit.Create);
+            ProcessingLine = line,
+            TubeFeed = new OverheadTubeFeed(line.DeckY) { MaximumBodiesInFactory = 5 },
+            Knife = new PhysicalKnife(line.ContinuousToolRackCenter),
+            WeaponDumbwaiter = new WeaponDumbwaiter(line.ContinuousToolRackCenter)
+        };
+        world.WeaponDumbwaiter.PrepareInitialDelivery(-1, world.Knife);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        world.Conveyors.AddRange(line.Belts);
+        for (var i = 0; i < 1200; i++)
+        {
+            world.TubeFeed.Update(world.Bodies, Dt, BlobArchetype.ProcessingUnit.Create);
             world.Step(Dt);
         }
-        var cart = world.ProcessingLine.CartDockBounds;
-        world.Bodies.Add(BlobArchetype.ProcessingUnit.Create(
-            new Vector2(cart.Left + cart.Width * 0.5f, cart.Top - 20f)));
-        for (var i = 0; i < 90; i++) world.Step(Dt);
         // Seed the diagnostic render with a representative, non-gameplay basin load so the
         // translucent filtered surface and live volume gauge are visible while Diego is dormant.
         for (var i = 0; i < 220; i++)
         {
-            world.ProcessingLine.Basin.AddMaterial(
-                world.ProcessingLine.Basin.Left + 55f + i % 70 * 10.5f,
+            line.Basin.AddMaterial(
+                line.Basin.Left + 55f + i % 70 * 10.5f,
                 fluidVolume: 46f,
                 downwardSpeed: 28f + i % 9,
                 nutrition: 0.045f);
         }
+        for (var deposit = 0; deposit < 14; deposit++)
+            line.Belts[0].DepositBlood(
+                line.Belts[0].Position + new Vector2(560f, 0f),
+                -Vector2.UnitY,
+                0.20f);
         for (var i = 0; i < 180; i++) world.Step(Dt);
+        var impactX = line.Basin.Left + line.Basin.Width * 0.73f;
+        line.Basin.AddSuspendedMaterial(
+            impactX,
+            line.Basin.SurfaceYAt(impactX) - 7f,
+            fluidVolume: 18f,
+            downwardSpeed: 185f,
+            nutrition: 0f,
+            radius: 3.1f);
+        for (var i = 0; i < 4; i++) world.Step(Dt);
+        using var bitmap = new Bitmap(1280, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null, null,
+            line.ContinuousToolRackCenter);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Station snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteDumbwaiterSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            powered: true,
+            continuousFlow: true);
+        var tool = new PhysicalKnife(line.ContinuousToolRackCenter);
+        var dumbwaiter = new WeaponDumbwaiter(line.ContinuousToolRackCenter);
+        var world = new BlobWorld(grid)
+        {
+            ProcessingLine = line,
+            Knife = tool,
+            WeaponDumbwaiter = dumbwaiter
+        };
+        world.Conveyors.AddRange(line.Belts);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        dumbwaiter.PrepareInitialDelivery(-1, tool);
+
+        using var comparison = new Bitmap(1280 * 6, 720);
+        using var frame = new Bitmap(1280, 720);
+        using var comparisonGraphics = Graphics.FromImage(comparison);
+        var renderer = new GameRenderer();
+
+        void Capture(int panel)
+        {
+            using (var frameGraphics = Graphics.FromImage(frame))
+            {
+                frameGraphics.Clear(Color.Black);
+                renderer.Draw(frameGraphics, frame.Size, world, null, null,
+                    line.ContinuousToolRackCenter);
+            }
+            comparisonGraphics.DrawImageUnscaled(frame, panel * 1280, 0);
+        }
+
+        Capture(0); // fully closed, initial weapon hidden
+        for (var step = 0; step < 30; step++) world.Step(Dt);
+        Capture(1); // opening
+        for (var step = 0; step < 40; step++) world.Step(Dt);
+        Capture(2); // open, weapon available
+        Assert(tool.BeginGrab(tool.Position), "snapshot could not take the presented weapon");
+        dumbwaiter.NotifyWeaponTaken();
+        tool.SetGrabTarget(tool.Position - new Vector2(150f, 0f));
+        for (var step = 0; step < 26; step++) world.Step(Dt);
+        Capture(3); // weapon taken, closing
+        for (var step = 0; step < 50; step++) world.Step(Dt);
+        Capture(4); // closed while weapon remains in play
+        dumbwaiter.TrySpawnDebugToken(new Vector2(360f, line.DeckY - 58f));
+        for (var step = 0; step < 26; step++) world.Step(Dt);
+        Capture(5); // physical token on the conveyor
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Dumbwaiter state snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteBloodShipmentSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            powered: false,
+            continuousFlow: true);
+        var world = new BlobWorld(grid) { ProcessingLine = line };
+        world.Conveyors.AddRange(line.Belts);
+        line.Basin.AddMaterial(
+            line.Basin.Left + line.Basin.Width * 0.5f,
+            line.Basin.FluidCapacity * 0.76f,
+            0f,
+            0f);
+        var shipment = new BloodShipmentSequence(
+            line.Basin,
+            GameProgression.BaseBloodRatePerGallon,
+            processedBlobs: 7,
+            processedRate: GameProgression.BaseProcessedBlobRate);
+        var renderer = new GameRenderer { BloodShipment = shipment };
+
+        using var comparison = new Bitmap(3840, 720);
+        using var graphics = Graphics.FromImage(comparison);
+
+        void DrawPanel(int panel)
+        {
+            var state = graphics.Save();
+            graphics.TranslateTransform(panel * 1280f, 0f);
+            graphics.SetClip(new Rectangle(0, 0, 1280, 720));
+            renderer.Draw(graphics, new Size(1280, 720), world, null);
+            graphics.Restore(state);
+        }
+
+        for (var i = 0; i < 54; i++) shipment.Update(Dt);
+        DrawPanel(0);
+        for (var i = 0; i < 2400 &&
+             (shipment.Stage != BloodShipmentStage.LoadingTruck ||
+              shipment.CurrentTruckFill01 < 0.42f); i++)
+            shipment.Update(Dt);
+        DrawPanel(1);
+        for (var i = 0; i < 2400 &&
+             shipment.Stage != BloodShipmentStage.TruckDeparting; i++)
+            shipment.Update(Dt);
+        DrawPanel(2);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Blood shipment snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteArsenalMenuSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            continuousFlow: true);
+        var world = new BlobWorld(grid)
+        {
+            ProcessingLine = line,
+            Knife = new PhysicalKnife(line.ContinuousToolRackCenter)
+        };
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        world.Conveyors.AddRange(line.Belts);
+        var target = BlobArchetype.ProcessingUnit.Create(
+            line.ContinuousToolRackCenter + new Vector2(215f, 0f));
+        world.Bodies.Add(target);
+        world.Knife.SelectArsenalVisual(2);
+        world.Knife.Equip(world.Knife.Position, world.Knife.Position);
+        var shotgunRotationOrigin = world.Knife.Position;
+        world.Knife.BeginRotationAdjust(shotgunRotationOrigin);
+        world.Knife.UpdateRotationAdjust(shotgunRotationOrigin + new Vector2(60f, 0f));
+        world.Knife.EndRotationAdjust();
+        world.Knife.SetGrabTarget(line.ContinuousToolRackCenter + new Vector2(82f, 0f));
+        for (var step = 0; step < 18; step++)
+            world.Knife.Step(Dt, Vector2.Zero, world.Conveyors, world.Bodies, 1280f, 720f,
+                world.TubeFeed);
+        world.Knife.BeginPrimaryAction();
+        world.Knife.Step(Dt, Vector2.Zero, world.Conveyors, world.Bodies, 1280f, 720f,
+            world.TubeFeed);
+        world.Knife.EndPrimaryAction();
+        world.Knife.BeginRotationAdjust(world.Knife.Position);
+        world.Knife.UpdateRotationAdjust(world.Knife.Position + new Vector2(58f, -34f));
+
+        using var bitmap = new Bitmap(3840, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        var renderer = new GameRenderer
+        {
+            ArsenalMenuOpen = true,
+            ArsenalMenuSelection = 3
+        };
+        graphics.SetClip(new Rectangle(0, 0, 1280, 720));
+        renderer.Draw(graphics, new Size(1280, 720), world, null);
+        graphics.ResetClip();
+        graphics.TranslateTransform(1280f, 0f);
+        graphics.SetClip(new Rectangle(0, 0, 1280, 720));
+        renderer.ArsenalMenuOpen = false;
+        renderer.Draw(graphics, new Size(1280, 720), world, null);
+        world.Knife.EndRotationAdjust();
+        world.Knife.SelectArsenalVisual(11);
+        world.Knife.Equip(world.Knife.Position, world.Knife.Position);
+        var grenadeRotationOrigin = world.Knife.Position;
+        world.Knife.BeginRotationAdjust(grenadeRotationOrigin);
+        world.Knife.UpdateRotationAdjust(grenadeRotationOrigin + new Vector2(55f, 0f));
+        world.Knife.EndRotationAdjust();
+        world.Knife.SetGrabTarget(grenadeRotationOrigin);
+        world.Knife.BeginPrimaryAction();
+        world.Knife.SetGrabTarget(grenadeRotationOrigin + new Vector2(145f, 74f));
+        for (var step = 0; step < 8; step++)
+            world.Knife.Step(Dt, new Vector2(0f, 980f), world.Conveyors, world.Bodies,
+                1280f, 720f, world.TubeFeed, grid);
+        graphics.ResetClip();
+        graphics.TranslateTransform(1280f, 0f);
+        graphics.SetClip(new Rectangle(0, 0, 1280, 720));
+        renderer.DebugDraw = true;
+        renderer.Draw(graphics, new Size(1280, 720), world, null);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Arsenal menu snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteFaceSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        var world = new BlobWorld(grid) { Gravity = Vector2.Zero };
+        var neutral = BlobArchetype.ProcessingUnit.Create(new Vector2(510f, 330f));
+        var blinking = BlobArchetype.ProcessingUnit.Create(new Vector2(640f, 330f));
+        var hurt = BlobArchetype.ProcessingUnit.Create(new Vector2(770f, 330f));
+        for (var step = 0; step < 720 && blinking.FaceExpression != BlobFaceExpression.Blink; step++)
+            blinking.AdvanceFaceAnimation(Dt);
+        hurt.DamageBonds(hurt.Center, hurt.Radius * 2f, 0.01f);
+        world.Bodies.Add(neutral);
+        world.Bodies.Add(blinking);
+        world.Bodies.Add(hurt);
+
         using var bitmap = new Bitmap(1280, 720);
         using var graphics = Graphics.FromImage(bitmap);
         new GameRenderer().Draw(graphics, bitmap.Size, world, null);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
-        Console.WriteLine($"Station snapshot: {Path.GetFullPath(outputPath)}");
+        Console.WriteLine($"Face snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteBasinOverflowSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            continuousFlow: true);
+        var world = new BlobWorld(grid) { ProcessingLine = line };
+        world.Conveyors.AddRange(line.Belts);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        line.Basin.AddMaterial(
+            line.Basin.Left + line.Basin.Width * 0.5f,
+            line.Basin.FluidCapacity,
+            180f,
+            0f);
+        for (var i = 0; i < 18; i++)
+        {
+            var x = line.Basin.Left + line.Basin.Width * (0.12f + i % 6 * 0.15f);
+            var particle = new GranularParticle
+            {
+                Position = new Vector2(x, line.Basin.FluidTop + 2f),
+                PreviousPosition = new Vector2(x, line.Basin.FluidTop - 3f - i % 4),
+                Radius = 1.8f + i % 3 * 0.35f,
+                Lifetime = 12f,
+                Kind = GranularKind.Blood,
+                SplatterOnImpact = true
+            };
+            line.TryCollectBasinInflow(ref particle, Dt);
+            world.Granular.Particles.Add(particle);
+        }
+        for (var step = 0; step < 360; step++) world.Step(Dt);
+
+        using var bitmap = new Bitmap(1280, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Full-basin drain/overflow snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteGranularOverflowSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            continuousFlow: true);
+        var world = new BlobWorld(grid)
+        {
+            ProcessingLine = line,
+            Gravity = Vector2.Zero
+        };
+        world.Conveyors.AddRange(line.Belts);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        var pileCenters = new[] { 210f, 600f, 1045f };
+        for (var pileIndex = 0; pileIndex < pileCenters.Length; pileIndex++)
+        for (var i = 0; i < 76; i++)
+        {
+            var position = new Vector2(
+                pileCenters[pileIndex] + i % 8 * 2.4f,
+                line.DeckY - 10f - i / 8 % 4 * 2.1f);
+            world.Granular.Particles.Add(new GranularParticle
+            {
+                Position = position,
+                PreviousPosition = position,
+                Radius = 1.8f + i % 3 * 0.25f,
+                Lifetime = 30f,
+                RestFrames = 40,
+                ForegroundSupportFrames = 18,
+                Kind = (i + pileIndex) % 3 == 0
+                    ? GranularKind.Tissue
+                    : GranularKind.Blood,
+                Appearance = (GranularAppearance)((i + pileIndex) % 3)
+            });
+        }
+        for (var step = 0; step < 84; step++) world.Step(Dt);
+
+        using var bitmap = new Bitmap(1280, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine(
+            $"Dense granular foreground-overflow snapshot ({world.Granular.ForegroundSpills.Count} active): " +
+            Path.GetFullPath(outputPath));
+        return 0;
+    }
+
+    public static int WriteCleaverEffectsSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize,
+            continuousFlow: true);
+        var knife = new PhysicalKnife(new Vector2(640f, 300f));
+        var world = new BlobWorld(grid)
+        {
+            ProcessingLine = line,
+            Knife = knife,
+            Gravity = Vector2.Zero
+        };
+        world.Conveyors.AddRange(line.Belts);
+        world.Lighting.ConfigureProcessingStation();
+        world.Lighting.SetFactoryPower(true);
+        var body = BlobArchetype.ProcessingUnit.Create(new Vector2(606f, 350f));
+        world.Bodies.Add(body);
+        var cursor = knife.Position;
+        if (!knife.Equip(knife.Position, cursor) || !knife.BeginPrimaryAction()) return 1;
+        for (var step = 0; step < 24; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            world.Step(Dt);
+        }
+
+        using var partialCharge = new Bitmap(1280, 720);
+        using (var partialGraphics = Graphics.FromImage(partialCharge))
+            new GameRenderer().Draw(partialGraphics, partialCharge.Size, world, null);
+
+        for (var step = 0; step < 72; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            world.Step(Dt);
+        }
+
+        using var charge = new Bitmap(1280, 720);
+        using (var chargeGraphics = Graphics.FromImage(charge))
+            new GameRenderer().Draw(chargeGraphics, charge.Size, world, null);
+
+        if (!knife.EndPrimaryAction()) return 1;
+        for (var step = 0; step < 70 && !knife.HeavyImpactActive; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            world.Step(Dt);
+        }
+        if (!knife.HeavyImpactActive) return 1;
+        for (var step = 0; step < 5; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            world.Step(Dt);
+        }
+
+        using var impact = new Bitmap(1280, 720);
+        using (var impactGraphics = Graphics.FromImage(impact))
+            new GameRenderer().Draw(impactGraphics, impact.Size, world, null);
+        using var comparison = new Bitmap(3840, 720);
+        using (var graphics = Graphics.FromImage(comparison))
+        {
+            graphics.DrawImageUnscaled(partialCharge, 0, 0);
+            graphics.DrawImageUnscaled(charge, 1280, 0);
+            graphics.DrawImageUnscaled(impact, 2560, 0);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        comparison.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Cleaver charge/impact snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteDrillSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize);
+        var world = new BlobWorld(grid) { ProcessingLine = line, Gravity = Vector2.Zero };
+        world.Lighting.ConfigureProcessingStation();
+        world.Conveyors.AddRange(line.Belts);
+        var body = BlobArchetype.ProcessingUnit.Create(
+            new Vector2(line.Bays[0].CenterX, line.DeckY - 30f));
+        var parentId = body.ParentId;
+        world.Bodies.Add(body);
+        world.Step(Dt);
+        line.SetCrusherButtonHeld(true);
+        for (var i = 0; i < 100; i++) world.Step(Dt);
+        line.SetCrusherButtonHeld(false);
+        for (var i = 0; i < 80; i++) world.Step(Dt);
+
+        body = world.Bodies.Where(candidate => candidate.ParentId == parentId)
+            .OrderByDescending(candidate => candidate.Particles.Length)
+            .First();
+        body.ApplyTranslation(new Vector2(line.Bays[1].CenterX - body.Center.X,
+            line.DeckY - 30f - body.Center.Y), preserveVelocity: true);
+        body.AddImpulse(-body.AverageVelocity(Dt), Dt);
+        world.Step(Dt);
+        line.SetDrillLeverHeld(true);
+        for (var i = 0; i < 150; i++)
+        {
+            world.Step(Dt);
+            if (line.DrillDamagePulses > 0 && line.DrillRecoil > 0.9f) break;
+        }
+
+        using var bitmap = new Bitmap(1280, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Drill impact snapshot: {Path.GetFullPath(outputPath)}");
         return 0;
     }
 
@@ -2045,6 +3214,33 @@ public static class SelfTests
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
         Console.WriteLine($"Drum snapshot: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    public static int WriteWorkerSnapshot(string outputPath)
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        var line = new ProcessingLine(DestructibleGrid.ProcessingDeckRow * grid.CellSize);
+        var world = new BlobWorld(grid) { ProcessingLine = line };
+        world.Lighting.ConfigureProcessingStation();
+        world.Conveyors.AddRange(line.Belts);
+        line.Basin.AddMaterial(line.Basin.Left + 20f, ProcessingLine.FactoryWorkerCost + 6_000f,
+            180f, 0f);
+        var shop = line.BloodShopItemBounds(0);
+        line.TryActivateBloodShop(new Vector2(shop.Left + shop.Width * 0.5f,
+            shop.Top + shop.Height * 0.5f));
+        world.Bodies.Add(BlobArchetype.ProcessingUnit.Create(
+            new Vector2(line.Bays[0].CenterX, line.DeckY - 30f)));
+        for (var i = 0; i < 2_100 && line.FactoryWorkers[0].Activity != FactoryWorkerActivity.Operating; i++)
+            world.Step(Dt);
+
+        using var bitmap = new Bitmap(1280, 720);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        bitmap.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"Worker snapshot: {Path.GetFullPath(outputPath)}");
         return 0;
     }
 
@@ -2261,6 +3457,50 @@ public static class SelfTests
         Assert(blob.GrabbedParticle >= 0, "grab did not select a tissue particle");
     }
 
+    private static void RepresentationSchedulerPrioritizesAndCapsActiveTissue()
+    {
+        var defaults = new RepresentationScheduler();
+        Assert(defaults.ReducedTissueBudget == 12,
+            "ordinary active-tissue budget did not default to twelve bodies");
+
+        var scheduler = new RepresentationScheduler
+        {
+            FullTissueBudget = 3,
+            ReducedTissueBudget = 2
+        };
+        var bodies = new List<SoftBody>();
+        for (var i = 0; i < 4; i++)
+            bodies.Add(new SoftBody(new Vector2(80f + i * 90f, 100f), 45f, 31));
+
+        var grabbed = new SoftBody(new Vector2(500f, 100f), 45f, 31);
+        grabbed.BeginGrab(grabbed.Center);
+        var topologyDirty = new SoftBody(new Vector2(590f, 100f), 45f, 31);
+        var broken = topologyDirty.DamageBonds(
+            topologyDirty.Center,
+            topologyDirty.ParticleSpacing * 0.8f,
+            2f);
+        Assert(broken > 0 && topologyDirty.TopologyDirty,
+            "scheduler priority regression could not create dirty topology");
+        var impacted = new SoftBody(new Vector2(680f, 100f), 45f, 31)
+        {
+            LastImpact = 131f
+        };
+        bodies.Add(grabbed);
+        bodies.Add(topologyDirty);
+        bodies.Add(impacted);
+
+        scheduler.Apply(bodies);
+
+        Assert(grabbed.Mode == SimulationMode.FullTissue &&
+               topologyDirty.Mode == SimulationMode.FullTissue &&
+               impacted.Mode == SimulationMode.FullTissue,
+            "critical active bodies did not retain full-tissue priority");
+        Assert(bodies.Count(body => body.Mode == SimulationMode.ReducedTissue) == 2,
+            "ordinary reduced-tissue bodies exceeded their configured budget");
+        Assert(bodies.Count(body => body.Mode == SimulationMode.ShapeProxy) == 2,
+            "ordinary bodies beyond the active budget were not demoted to shape proxies");
+    }
+
     private static void ImpactDamageDestroysCell()
     {
         var grid = new DestructibleGrid(4, 4, 32);
@@ -2276,6 +3516,25 @@ public static class SelfTests
         var broken = blob.DamageBonds(blob.Center, blob.ParticleSpacing * 0.8f, 2f);
         Assert(broken > 0, "damage did not break tissue bonds");
         Assert(blob.TopologyDirty, "bond break did not queue topology work");
+    }
+
+    private static void BlobFacesBlinkAndReactToDamage()
+    {
+        var blob = new SoftBody(new Vector2(100f, 100f), 50f, 37);
+        var blinkObserved = false;
+        for (var step = 0; step < 720; step++)
+        {
+            blob.AdvanceFaceAnimation(Dt);
+            blinkObserved |= blob.FaceExpression == BlobFaceExpression.Blink;
+        }
+        Assert(blinkObserved, "deterministic face timer never produced an occasional blink");
+
+        blob.DamageBonds(blob.Center, blob.Radius * 2f, 0.01f);
+        Assert(blob.FaceExpression == BlobFaceExpression.Hurt,
+            "contact-local tissue damage did not immediately override the blink with a hurt face");
+        for (var step = 0; step < 72; step++) blob.AdvanceFaceAnimation(Dt);
+        Assert(blob.FaceExpression != BlobFaceExpression.Hurt,
+            "hurt expression did not release after its short reaction window");
     }
 
     private static void InteriorPointDamageRedirects()
@@ -2795,7 +4054,7 @@ public static class SelfTests
         var cutEnd = blob.Center.X + blob.Radius * 1.25f;
         for (var x = cutStart; x < cutEnd; x += 20f)
             DamageGestureProfile.Slice(blob, new Vector2(x, cutY), new Vector2(MathF.Min(x + 20f, cutEnd), cutY));
-        using var bitmap = new Bitmap(640, 480);
+        using var bitmap = new Bitmap(1280, 720);
         using var graphics = Graphics.FromImage(bitmap);
         var renderer = new GameRenderer();
         for (var step = 0; step < 120; step++)
@@ -3410,7 +4669,7 @@ public static class SelfTests
         pusher.EndGrab(Vector2.Zero, Dt);
         var peakSeparation = pressedDistance;
         var peakRecoverySpeed = 0f;
-        for (var step = 0; step < 90; step++)
+        for (var step = 0; step < 120; step++)
         {
             world.Step(Dt);
             peakSeparation = MathF.Max(peakSeparation, Vector2.Distance(pusher.Center, passive.Center));
@@ -3968,8 +5227,9 @@ public static class SelfTests
         var conveyor = new ConveyorBelt(new Vector2(100f, 100f), 320f, 38f, 0f);
         conveyor.DepositBlood(conveyor.Position + new Vector2(90f, 0f), -Vector2.UnitY, 0.05f);
         for (var step = 0; step < 18000; step++) conveyor.Step(Dt);
-        Assert(conveyor.BloodStains.Count == 1 && conveyor.BloodStains[0].Wetness <= 0.001f &&
-               conveyor.BloodStains[0].Amount >= 0.01f,
+        Assert(conveyor.BloodStains.Count >= 1 &&
+               conveyor.BloodStains.All(mark => mark.Wetness <= 0.001f) &&
+               conveyor.BloodStains.Sum(mark => mark.Amount) >= 0.01f,
             "conveyor stain auto-deleted after drying instead of waiting for cleaning");
     }
 
@@ -4267,6 +5527,172 @@ public static class SelfTests
             "settled-pool seepage failed to coalesce after the soft performance threshold");
     }
 
+    private static void DenseGranularPilesBecomeForegroundSpills()
+    {
+        var sparseChance =
+            GranularMaterialSystem.ForegroundTransitionChanceForDensity(1);
+        var moderateChance =
+            GranularMaterialSystem.ForegroundTransitionChanceForDensity(10);
+        var piledChance =
+            GranularMaterialSystem.ForegroundTransitionChanceForDensity(40);
+        Assert(sparseChance > 0f &&
+               moderateChance > sparseChance &&
+               piledChance > moderateChance * 8f,
+            "foreground selection was not occasional at low density and strongly pile-weighted");
+
+        var grid = new DestructibleGrid(40, 22, 32);
+        var world = new BlobWorld(grid) { Gravity = Vector2.Zero };
+        const int physicalMatterCount = 72;
+        for (var i = 0; i < physicalMatterCount; i++)
+        {
+            var position = new Vector2(
+                385f + i % 6 * 2.2f,
+                180f + i / 6 % 4 * 2.1f);
+            world.Granular.Particles.Add(new GranularParticle
+            {
+                Position = position,
+                PreviousPosition = position,
+                Radius = 1.8f + i % 3 * 0.2f,
+                Lifetime = 30f,
+                RestFrames = 40,
+                ForegroundSupportFrames = 18,
+                Kind = (i & 1) == 0 ? GranularKind.Blood : GranularKind.Tissue,
+                Appearance = (GranularAppearance)(i % 3)
+            });
+        }
+        const int acidCount = 28;
+        for (var i = 0; i < acidCount; i++)
+        {
+            var position = new Vector2(710f + i % 5 * 2f, 180f + i / 5 * 2f);
+            world.Granular.Particles.Add(new GranularParticle
+            {
+                Position = position,
+                PreviousPosition = position,
+                Radius = 2f,
+                Lifetime = 30f,
+                RestFrames = 40,
+                Kind = GranularKind.Acid
+            });
+        }
+
+        for (var step = 0; step < 72; step++) world.Step(Dt);
+
+        var spills = world.Granular.ForegroundSpills;
+        var remainingPhysicalMatter = world.Granular.Particles.Count(particle =>
+            particle.Kind is GranularKind.Blood or GranularKind.Tissue);
+        Assert(spills.Count > 0,
+            "dense physical matter never transitioned into a foreground fall");
+        Assert(spills.Any(spill => spill.Kind == GranularKind.Blood) &&
+               spills.Any(spill => spill.Kind == GranularKind.Tissue),
+            "foreground overflow did not preserve both blood and tissue material");
+        Assert(spills.All(spill => MathF.Abs(spill.Position.X - 392f) < 30f),
+            "foreground overflow drifted away from the local pile X position");
+        Assert(world.Granular.Particles.Count(particle => particle.Kind == GranularKind.Acid) == acidCount,
+            "acid was incorrectly converted by the blood/tissue overflow tier");
+        Assert(world.Granular.ForegroundSpillConvertedTotal ==
+               physicalMatterCount - remainingPhysicalMatter,
+            "foreground transition silently lost or manufactured physical pixels");
+        Assert(spills.Count <= GranularMaterialSystem.ForegroundSpillCapacity,
+            "foreground spill representation exceeded its hard performance cap");
+
+        var leadingY = spills.Max(spill => spill.Position.Y);
+        for (var step = 0; step < 18; step++) world.Step(Dt);
+        Assert(world.Granular.ForegroundSpills.Max(spill => spill.Position.Y) > leadingY + 25f,
+            "foreground overflow did not visibly fall down the screen");
+
+        using var baseline = new Bitmap(1280, 720);
+        using var baselineGraphics = Graphics.FromImage(baseline);
+        var renderWorld = new BlobWorld(new DestructibleGrid(40, 22, 32));
+        var renderer = new GameRenderer();
+        renderer.Draw(baselineGraphics, baseline.Size, renderWorld, null);
+        renderWorld.Granular.ForegroundSpills.Add(new ForegroundGranularSpill
+        {
+            Position = new Vector2(500f, 400f),
+            Velocity = new Vector2(0f, 320f),
+            Radius = 2.8f,
+            Lifetime = 2f,
+            Kind = GranularKind.Tissue,
+            Appearance = GranularAppearance.BlobMint,
+            Variation = 31
+        });
+        using var rendered = new Bitmap(1280, 720);
+        using var renderedGraphics = Graphics.FromImage(rendered);
+        renderer.Draw(renderedGraphics, rendered.Size, renderWorld, null);
+        var changedPixels = 0;
+        for (var y = 360; y <= 410; y++)
+        for (var x = 485; x <= 515; x++)
+            if (rendered.GetPixel(x, y).ToArgb() != baseline.GetPixel(x, y).ToArgb())
+                changedPixels++;
+        Assert(changedPixels is > 0 and <= 36,
+            $"one foreground source rendered as {changedPixels} pixels instead of one particle-sized square");
+
+        var basinGrid = new DestructibleGrid(40, 22, 32);
+        basinGrid.BuildProcessingStation();
+        basinGrid.OpenContinuousConveyorPortals();
+        var line = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * basinGrid.CellSize,
+            continuousFlow: true);
+        var basinWorld = new BlobWorld(basinGrid)
+        {
+            ProcessingLine = line,
+            Gravity = Vector2.Zero
+        };
+        var basinX = line.Basin.Left + line.Basin.Width * 0.45f;
+        var surfaceY = line.Basin.SurfaceYAt(basinX);
+        basinWorld.Granular.ForegroundSpills.Add(new ForegroundGranularSpill
+        {
+            Position = new Vector2(basinX, surfaceY - 9f),
+            Velocity = new Vector2(0f, 330f),
+            Radius = 2.2f,
+            Lifetime = 2f,
+            Kind = GranularKind.Blood,
+            Variation = 17
+        });
+        for (var step = 0; step < 24; step++) basinWorld.Step(Dt);
+        Assert(basinWorld.Granular.ForegroundSpills.Count == 0 &&
+               basinWorld.Granular.ForegroundSpillCollectedTotal == 1,
+            "a foreground blood pixel above the basin did not enter the basin");
+        Assert(line.Basin.StoredVolume > 0f && line.Basin.TotalDeposited > 0f,
+            "foreground blood entered the basin visually without increasing authoritative blood");
+        Assert(basinWorld.Granular.Particles.Count == 0,
+            "basin collection manufactured a replacement granular pixel");
+
+        line.Basin.AddMaterial(
+            basinX,
+            line.Basin.RemainingCapacity,
+            0f,
+            0f);
+        var fullStoredVolume = line.Basin.StoredVolume;
+        var overflowBefore = line.Basin.TotalOverflowed;
+        basinWorld.Granular.ForegroundSpills.Add(new ForegroundGranularSpill
+        {
+            Position = new Vector2(
+                basinX,
+                line.Basin.SurfaceYAt(basinX) - 4f),
+            Velocity = new Vector2(0f, 330f),
+            Radius = 2.2f,
+            Lifetime = 2f,
+            Kind = GranularKind.Blood,
+            Variation = 29
+        });
+        for (var step = 0; step < 8; step++) basinWorld.Step(Dt);
+        Assert(basinWorld.Granular.ForegroundSpills.Count == 0 &&
+               basinWorld.Granular.ForegroundSpillReemittedTotal == 1 &&
+               basinWorld.Granular.Particles.Count == 1 &&
+               MathF.Abs(line.Basin.StoredVolume - fullStoredVolume) < 0.001f &&
+               line.Basin.TotalOverflowed > overflowBefore,
+            "a full basin did not return the same foreground pixel to physical overflow");
+        var reemitted = basinWorld.Granular.Particles[0];
+        var reemittedVelocity =
+            (reemitted.Position - reemitted.PreviousPosition) / Dt;
+        Assert((reemitted.Position.X < line.Basin.Left ||
+                reemitted.Position.X > line.Basin.Right) &&
+               MathF.Abs(reemittedVelocity.X) > 20f,
+            "full-basin foreground blood remained a steady 2.5D diagonal instead of ejecting physically");
+        Assert(line.Basin.FrontOverflowStains.Count == 0,
+            "foreground full-basin impact recreated a front-glass trail");
+    }
+
     private static void ConveyorCarriesBlob()
     {
         var grid = new DestructibleGrid(30, 18, 32);
@@ -4318,17 +5744,43 @@ public static class SelfTests
             "conveyor-local blood did not advance with the moving belt material");
         Assert(circulated.SurfaceNormal.Y > 0.45f || MathF.Abs(circulated.SurfaceNormal.X) > 0.45f,
             "conveyor stain remained on the top instead of circulating around an end/return run");
+        var dripBelt = new ConveyorBelt(new Vector2(100f, 100f), 220f, 40f, 120f);
         for (var deposit = 0; deposit < 14; deposit++)
-            loopBelt.DepositBlood(loopBelt.Position + new Vector2(70f, 0f), -Vector2.UnitY, 0.20f);
-        for (var step = 0; step < 960 && loopBelt.TransientDrops.Count == 0; step++) loopBelt.Step(Dt);
-        Assert(loopBelt.TransientDrops.Count > 0, "dense conveyor pool never shed an occasional underside pixel");
-        var transientPosition = loopBelt.TransientDrops[0].Position;
-        var transientLifetime = loopBelt.TransientDrops[0].Lifetime;
-        for (var step = 0; step < 8; step++) loopBelt.Step(Dt);
-        Assert(loopBelt.TransientDrops.Count <= 6, "conveyor exceeded its transient blood-pixel cap");
-        Assert(loopBelt.TransientDrops.Count == 0 ||
-               (loopBelt.TransientDrops[0].Position.Y > transientPosition.Y &&
-                loopBelt.TransientDrops[0].Lifetime < transientLifetime),
+            dripBelt.DepositBlood(dripBelt.Position + new Vector2(70f, 0f), -Vector2.UnitY, 0.20f);
+        for (var step = 0; step < 90 && dripBelt.DripEmitters.Count == 0; step++)
+            dripBelt.Step(Dt);
+        Assert(dripBelt.DripEmitters.Count > 0,
+            "dense wet blood on the conveyor never established a falling drip point");
+        for (var step = 0; step < 30 && dripBelt.TransientDrops.Count == 0; step++)
+            dripBelt.Step(Dt);
+        Assert(dripBelt.TransientDrops.Count > 0,
+            "conveyor drip point never released a falling blood pixel");
+        Assert(dripBelt.BloodStains.All(mark => !mark.IsDrip),
+            "conveyor created a persistent paint trail when only falling droplets were requested");
+        var stationaryDripX = dripBelt.DripEmitters[0].LocalX;
+        var stationaryDripVariation = dripBelt.DripEmitters[0].Variation;
+        var stationaryDripCount = dripBelt.DripEmitters.Count;
+        var movingFlatCoordinate = dripBelt.BloodStains.First(mark => !mark.IsDrip).LoopCoordinate;
+        for (var step = 0; step < 120; step++) dripBelt.Step(Dt);
+        var sameDripPoint = dripBelt.DripEmitters.First(emitter =>
+            emitter.Variation == stationaryDripVariation);
+        Assert(MathF.Abs(sameDripPoint.LocalX - stationaryDripX) < 0.01f,
+            $"conveyor drip point followed the moving tread instead of staying at its origin " +
+            $"({stationaryDripX:0.0} -> {sameDripPoint.LocalX:0.0})");
+        Assert(dripBelt.DripEmitters.Count == stationaryDripCount,
+            "one moving belt stain repeatedly created drip points along the conveyor length");
+        Assert(dripBelt.BloodStains.Any(mark => !mark.IsDrip &&
+            MathF.Abs(mark.LoopCoordinate - movingFlatCoordinate) > 20f),
+            "stationary runoff fix accidentally stopped ordinary belt pigment from circulating");
+        for (var step = 0; step < 960 && dripBelt.TransientDrops.Count == 0; step++) dripBelt.Step(Dt);
+        Assert(dripBelt.TransientDrops.Count > 0, "dense conveyor pool never shed an occasional underside pixel");
+        var transientPosition = dripBelt.TransientDrops[0].Position;
+        var transientLifetime = dripBelt.TransientDrops[0].Lifetime;
+        for (var step = 0; step < 8; step++) dripBelt.Step(Dt);
+        Assert(dripBelt.TransientDrops.Count <= 6, "conveyor exceeded its transient blood-pixel cap");
+        Assert(dripBelt.TransientDrops.Count == 0 ||
+               (dripBelt.TransientDrops[0].Position.Y > transientPosition.Y &&
+                dripBelt.TransientDrops[0].Lifetime < transientLifetime),
             "conveyor underside pixel became a persistent staining trail");
     }
 
@@ -4358,6 +5810,2097 @@ public static class SelfTests
         Assert(maximumSpawned <= GranularMaterialSystem.BloodSpawnBudgetPerStep + GranularMaterialSystem.TissueSpawnBudgetPerStep,
             $"one step spawned {maximumSpawned} material pixels");
         Assert(world.Granular.Particles.Count <= GranularMaterialSystem.ParticleCapacity, "granular system exceeded its global cap");
+    }
+
+    private static void ContinuousFlowUsesSingleAutomaticLine()
+    {
+        var line = new ProcessingLine(480f, powered: true, continuousFlow: true);
+        Assert(line.ContinuousFlowMode, "continuous-flow mode was not retained");
+        Assert(line.Belts.Count == 1, "continuous flow did not replace segmented transfers with one belt");
+        Assert(line.Belts[0].Position.X < 0f && line.Belts[0].Position.X + line.Belts[0].Width > 1280f,
+            "continuous belt does not extend beyond both screen edges");
+        Assert(!line.HitCrusherButton(line.CrusherButtonCenter),
+            "continuous-flow machinery still accepted manual button input");
+
+        var body = BlobArchetype.ProcessingUnit.Create(new Vector2(line.Bays[0].CenterX, line.DeckY - 30f));
+        var bodies = new List<SoftBody> { body };
+        var granular = new List<GranularParticle>();
+        for (var i = 0; i < 480; i++)
+            line.PreStep(bodies, granular, Dt);
+        Assert(line.LockedBody is null && line.CrusherTravel < 0.001f,
+            "removed machinery still captured or processed a passing blob");
+
+        line.RegisterDoorwayBlood(new Vector2(line.DoorwayBounds.Left, line.DoorwayBounds.Top + 20f),
+            new Vector2(line.DoorwayBounds.Left - 2f, line.DoorwayBounds.Top + 20f), 2f, 140f);
+        Assert(line.DoorwayStains.Count == 0,
+            "continuous portal recorded a legacy stain in unsupported doorway air");
+        Assert(line.ProcessedCount == 0,
+            "a blob created inside the factory was counted without entering through the left portal");
+
+        var entering = BlobArchetype.ProcessingUnit.Create(Vector2.Zero);
+        var entryY = line.DeckY - entering.Radius - 4f;
+        entering.ApplyTranslation(new Vector2(-entering.Radius - 8f, entryY) - entering.Center,
+            preserveVelocity: false);
+        bodies.Add(entering);
+        line.PreStep(bodies, granular, Dt);
+        Assert(line.ProcessedCount == 0, "processed counter advanced before the blob entered the factory");
+        entering.ApplyTranslation(new Vector2(32f + entering.Radius, entryY) - entering.Center,
+            preserveVelocity: false);
+        line.PreStep(bodies, granular, Dt);
+        Assert(line.ProcessedCount == 0,
+            "untouched left-portal entry incorrectly earned processed credit");
+        DamageGestureProfile.Bite(entering, entering.Center);
+        line.PreStep(bodies, granular, Dt);
+        Assert(line.ProcessedCount == 1,
+            "an entered blob's first real damage did not increment the processed counter");
+        DamageGestureProfile.Bite(entering, entering.Center + Vector2.UnitX * 2f);
+        line.PreStep(bodies, granular, Dt);
+        Assert(line.ProcessedCount == 1, "one entering lineage incremented the processed counter twice");
+
+        var oneHit = BlobArchetype.ProcessingUnit.Create(Vector2.Zero);
+        oneHit.ApplyTranslation(new Vector2(-oneHit.Radius - 8f, entryY) - oneHit.Center,
+            preserveVelocity: false);
+        bodies.Add(oneHit);
+        line.PreStep(bodies, granular, Dt);
+        oneHit.ApplyTranslation(new Vector2(32f + oneHit.Radius, entryY) - oneHit.Center,
+            preserveVelocity: false);
+        line.PreStep(bodies, granular, Dt);
+        var oneHitCenter = oneHit.Center;
+        oneHit.DamageLine(
+            oneHitCenter - Vector2.UnitX * oneHit.Radius,
+            oneHitCenter + Vector2.UnitX * oneHit.Radius,
+            oneHit.Radius * 2f,
+            100f,
+            maximumBreaks: int.MaxValue);
+        line.ObserveProcessedDamage(bodies);
+        bodies.Remove(oneHit); // Emulate lethal topology cleanup in the same fixed tick.
+        Assert(line.ProcessedCount == 2,
+            "a lethal one-hit weapon did not credit its entered lineage before body removal");
+
+        var exiting = BlobArchetype.ProcessingUnit.Create(new Vector2(1340f, line.DeckY - 28f));
+        bodies.Add(exiting);
+        line.PreStep(bodies, granular, Dt);
+        Assert(line.ProcessedCount == 2,
+            "a blob leaving through the right portal incorrectly incremented the processed counter");
+    }
+
+    private static void OverheadTubeStagesAndReleasesBodies()
+    {
+        var feed = new OverheadTubeFeed { MaximumBodiesInFactory = 1 };
+        var world = new BlobWorld(FlatGrid()) { TubeFeed = feed, Gravity = Vector2.Zero };
+        var sawHiddenReturn = false;
+        var sawConveyorEntry = false;
+        var sawVisibleVerticalTransfer = false;
+        for (var i = 0; i < 1800; i++)
+        {
+            feed.Update(world.Bodies, Dt, BlobArchetype.ProcessingUnit.Create);
+            if (world.Bodies.Count > 0)
+            {
+                var body = world.Bodies[0];
+                sawHiddenReturn |= feed.IsInHiddenReturn(body);
+                sawConveyorEntry |= feed.IsEnteringConveyor(body);
+                var conveyorHeight = feed.DeckY - body.Radius - 4f;
+                if (body.Center.X + body.Radius > 0f &&
+                    body.Center.Y > OverheadTubeFeed.GlassBottom + 8f &&
+                    body.Center.Y < conveyorHeight - 8f)
+                    sawVisibleVerticalTransfer = true;
+            }
+            world.Step(Dt);
+            if (world.Bodies.Count > 0 && sawConveyorEntry && feed.BodiesInTube == 0) break;
+        }
+        Assert(world.Bodies.Count == 1, "ceiling tube did not create exactly one bounded factory body");
+        Assert(feed.BodiesInTube == 0, "ceiling tube never released its staged body");
+        Assert(sawHiddenReturn && sawConveyorEntry,
+            "ceiling tube skipped the hidden return plumbing before conveyor entry");
+        Assert(!sawVisibleVerticalTransfer,
+            "tube body visibly descended from the ceiling instead of transferring fully offscreen");
+        Assert(world.Bodies[0].Center.X <= 100f && world.Bodies[0].Center.Y >= 420f,
+            "ceiling tube did not exit offscreen left and reintroduce the body behind the belt wall");
+    }
+
+    private static void ContinuousConveyorContainsCommittedTissue()
+    {
+        var belt = new ConveyorBelt(new Vector2(-64f, 480f), 1408f, 26f, 120f,
+            minimumWidth: 96f, systemControlled: true);
+        var particle = new Particle
+        {
+            Position = new Vector2(640f, 548f),
+            PreviousPosition = new Vector2(640f, 472f),
+            Radius = 5f
+        };
+        var contact = belt.ResolveParticle(ref particle, Dt, applyBeltVelocity: true,
+            forceTopContainment: true);
+        Assert(contact.Hit && contact.IsTop && particle.Supported,
+            "committed conveyor particle was not restored as top-supported contact");
+        Assert(MathF.Abs(particle.Position.Y - 475f) < 0.01f,
+            $"committed tissue remained beneath the belt at y={particle.Position.Y:0.0}");
+        Assert(particle.PreviousPosition.Y <= particle.Position.Y + 0.01f,
+            "containment preserved downward velocity that could immediately tunnel again");
+    }
+
+    private static void SpawnedGoreCanBypassConveyors()
+    {
+        var granular = new GranularMaterialSystem();
+        granular.BeginStep();
+        var emitted = granular.EmitBlood(
+            new WoundEvent(new Vector2(320f, 440f), Vector2.UnitY, 1f),
+            Dt,
+            GranularMaterialSystem.BloodSpawnBudgetPerStep,
+            1f);
+        var bypassBlood = granular.Particles.Count(particle =>
+            particle.Kind == GranularKind.Blood && particle.BypassConveyors);
+        Assert(emitted == GranularMaterialSystem.BloodSpawnBudgetPerStep &&
+               bypassBlood > 0 && bypassBlood < emitted / 2,
+            $"spawned blood did not retain a small deterministic conveyor-bypass fraction ({bypassBlood}/{emitted})");
+
+        var tissueSystem = new GranularMaterialSystem();
+        tissueSystem.BeginStep();
+        var detached = BlobArchetype.ProcessingUnit.Create(new Vector2(380f, 420f));
+        Assert(tissueSystem.TryEmitDetached(detached, Dt),
+            "detached tissue could not be converted for conveyor-bypass verification");
+        var tissueCount = tissueSystem.Particles.Count;
+        var bypassTissue = tissueSystem.Particles.Count(particle => particle.BypassConveyors);
+        Assert(tissueCount > 0 && bypassTissue > 0 && bypassTissue < tissueCount / 2,
+            $"spawned tissue did not retain a small deterministic conveyor-bypass fraction ({bypassTissue}/{tissueCount})");
+    }
+
+    private static void OverheadTubeBlobsTumbleWithoutInteraction()
+    {
+        var feed = new OverheadTubeFeed { MaximumBodiesInFactory = 1 };
+        var world = new BlobWorld(FlatGrid()) { TubeFeed = feed, Gravity = Vector2.Zero };
+        while (world.Bodies.Count == 0)
+            feed.Update(world.Bodies, Dt, BlobArchetype.ProcessingUnit.Create);
+        var body = world.Bodies[0];
+        var particleIndex = -1;
+        for (var i = 0; i < body.Particles.Length; i++)
+            if (body.IsPhysicalParticle(i))
+            {
+                particleIndex = i;
+                break;
+            }
+        Assert(particleIndex >= 0, "tube body had no physical particle for rotation verification");
+        var before = body.Particles[particleIndex].Position - body.Center;
+        var minimumCenterY = body.Center.Y;
+        var maximumCenterY = body.Center.Y;
+        for (var step = 0; step < 48; step++)
+        {
+            feed.Update(world.Bodies, Dt, BlobArchetype.ProcessingUnit.Create);
+            world.Step(Dt);
+            minimumCenterY = MathF.Min(minimumCenterY, body.Center.Y);
+            maximumCenterY = MathF.Max(maximumCenterY, body.Center.Y);
+        }
+        var after = body.Particles[particleIndex].Position - body.Center;
+        var cross = before.X * after.Y - before.Y * after.X;
+        Assert(MathF.Abs(cross) > 0.4f && maximumCenterY - minimumCenterY > 0.25f,
+            "distributed airflow did not visibly tumble and buffet the staged tube body");
+
+        Assert(world.PickBody(body.Center) is null, "tube body remained mouse-pickable");
+
+        var tool = new PhysicalKnife(body.Center - new Vector2(40f, 0f));
+        Assert(tool.BeginGrab(tool.Position), "tube interaction regression could not take the cleaver");
+        var linksBefore = body.BrokenLinkCount;
+        for (var step = 0; step < 20; step++)
+        {
+            tool.SetGrabTarget(body.Center - new Vector2(35f - step * 4f, 0f));
+            tool.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), world.Bodies, 1280f, 720f, feed);
+        }
+        Assert(tool.BlobContactsThisStep == 0 && body.BrokenLinkCount == linksBefore,
+            "cleaver physically contacted or damaged a blob still inside the air tube");
+        var toolUppermost = MathF.Min(
+            MathF.Min(tool.HandleStart.Y - 7f, tool.HandleEnd.Y - 7f),
+            MathF.Min(tool.BladeCoreStart.Y - 12f, tool.BladeCoreEnd.Y - 12f));
+        Assert(toolUppermost >= OverheadTubeFeed.GlassBottom - 0.01f,
+            "carried cleaver crossed through the tube's lower glass face");
+
+        var external = BlobArchetype.ProcessingUnit.Create(new Vector2(420f, 98f));
+        world.Bodies.Add(external);
+        world.Step(Dt);
+        Assert(external.Particles.Where((_, index) => external.IsPhysicalParticle(index))
+                .All(particle => particle.Position.Y - particle.Radius >= OverheadTubeFeed.GlassBottom - 0.01f),
+            "ordinary blob matter entered the sealed tube interior");
+    }
+
+    private static void OverheadTubeGlassPreservesHardImpactDamage()
+    {
+        var slingFeed = new OverheadTubeFeed();
+        var sling = new PhysicalKnife(new Vector2(320f, 300f));
+        sling.SelectArsenalVisual(8);
+        Assert(sling.Equip(sling.Position, sling.Position),
+            "tube-impact fixture could not equip its slingshot");
+        var launched = BlobArchetype.ProcessingUnit.Create(sling.Position);
+        var slingWorld = new BlobWorld(FlatGrid())
+        {
+            Gravity = Vector2.Zero,
+            TubeFeed = slingFeed,
+            Knife = sling
+        };
+        slingWorld.Bodies.Add(launched);
+        Assert(sling.BeginPrimaryAction(),
+            "tube-impact fixture could not charge its slingshot");
+        for (var step = 0; step < 135; step++) slingWorld.Step(Dt);
+        sling.EndPrimaryAction();
+        var slingDamageBefore = launched.BrokenLinkCount;
+        var maximumGlassImpact = 0f;
+        for (var step = 0; step < 120 &&
+             launched.BrokenLinkCount == slingDamageBefore; step++)
+        {
+            slingWorld.Step(Dt);
+            maximumGlassImpact = MathF.Max(
+                maximumGlassImpact, launched.LastTerrainImpact);
+        }
+        Assert(maximumGlassImpact > 430f,
+            $"tube glass did not report the slingshot's hard impact ({maximumGlassImpact:0.0})");
+        Assert(launched.BrokenLinkCount > slingDamageBefore,
+            "slingshot blob bounced from tube glass without its normal impact splatter");
+
+        var freeze = new PhysicalKnife(new Vector2(420f, 300f));
+        freeze.SelectArsenalVisual(17);
+        Assert(freeze.Equip(freeze.Position, freeze.Position),
+            "tube-impact fixture could not equip its freeze ray");
+        var frozen = BlobArchetype.ProcessingUnit.Create(new Vector2(280f, 300f));
+        Assert(freeze.BeginPrimaryAction(),
+            "tube-impact fixture could not fire its freeze ray");
+        freeze.EndPrimaryAction();
+        for (var step = 0; step < 80; step++)
+            freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { frozen }, 640f, 480f);
+        Assert(freeze.FrozenBlobs.Count == 1,
+            "freeze ray did not establish the ice state before the tube impact");
+
+        var freezeFeed = new OverheadTubeFeed();
+        var freezeWorld = new BlobWorld(FlatGrid())
+        {
+            Gravity = Vector2.Zero,
+            TubeFeed = freezeFeed,
+            Knife = freeze
+        };
+        freezeWorld.Bodies.Add(frozen);
+        frozen.ApplyTranslation(
+            new Vector2(320f, 230f) - frozen.Center,
+            preserveVelocity: false);
+        frozen.AddImpulse(new Vector2(0f, -820f), Dt);
+        var frozenDamageBefore = frozen.BrokenLinkCount;
+        for (var step = 0; step < 90 &&
+             frozen.BrokenLinkCount == frozenDamageBefore; step++)
+            freezeWorld.Step(Dt);
+        Assert(frozen.BrokenLinkCount > frozenDamageBefore &&
+               freeze.FrozenBlobs.Any(state => state.PendingSplitPropagation),
+            "frozen blob bounced from tube glass without shattering like a wall impact");
+    }
+
+    private static void ContinuousBeltUsesWallPortals()
+    {
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        for (var y = 12; y <= 16; y++)
+            Assert(!grid.Cell(0, y).IsSolid && !grid.Cell(grid.Columns - 1, y).IsSolid,
+                $"continuous conveyor portal row {y} remained physically blocked");
+        Assert(grid.Cell(0, 11).IsSolid && grid.Cell(0, 17).IsSolid &&
+               grid.Cell(grid.Columns - 1, 11).IsSolid && grid.Cell(grid.Columns - 1, 17).IsSolid,
+            "continuous portal opening leaked beyond its authored wall rim");
+    }
+
+    private static void KnifePokesPhysicalTissue()
+    {
+        var knife = new PhysicalKnife(new Vector2(320f, 300f));
+        var body = BlobArchetype.ProcessingUnit.Create(new Vector2(286f, 350f));
+        var originalCenter = body.Center;
+        Assert(knife.Equip(knife.Position, knife.Position), "cleaver test could not equip the tool from its rack");
+        var sawContact = false;
+        var sawCut = false;
+        var sawHeavyImpact = false;
+        var cursor = knife.Position;
+        Assert(knife.BeginPrimaryAction(), "equipped cleaver rejected its primary action");
+        for (var step = 0; step < 250; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { body }, 1280f, 720f);
+        }
+        Assert(knife.IsCharging && knife.WindupStrength >= 0.80f,
+            "held primary action did not charge a strong cleaver swing");
+        Assert(knife.EndPrimaryAction(), "releasing primary action did not commit the charged swing");
+        for (var step = 0; step < 58; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { body }, 1280f, 720f);
+            sawContact |= knife.BlobContactsThisStep > 0;
+            sawCut |= knife.PuncturedThisStep;
+            sawHeavyImpact |= knife.HeavyImpactActive;
+        }
+        Assert(sawContact, "cleaver passed through tissue without physical blade contact");
+        Assert(sawCut, "visible cutting edge never produced a localized cleaver strike");
+        Assert(sawHeavyImpact,
+            "fully charged cutting-edge strike produced no heavy-impact effect state");
+        Assert(body.BrokenLinkCount >= 2,
+            $"cleaver edge did not produce meaningfully strong local damage ({body.BrokenLinkCount} links)");
+        Assert(knife.BloodStains.Count > 0, "successful cleaver cut left its cutting edge perfectly clean");
+        Assert(body.Center.Y > originalCenter.Y + 0.5f,
+            "cleaver contact did not transfer readable physical displacement into the blob");
+    }
+
+    private static void CleaverFacesMovementAndOnlyEdgeDamages()
+    {
+        var knife = new PhysicalKnife(new Vector2(100f, 360f));
+        Assert(knife.HandleStart.X > knife.Position.X && knife.BladeEdgeEnd.X < knife.Position.X,
+            "cleaver was not constructed blade-left and handle-right around its grip pivot");
+        Assert(knife.BladeEdgeStart.Y > knife.BladeCoreStart.Y,
+            "cleaver cutting edge was not on the long side opposite its spine");
+        Assert(knife.Equip(knife.Position, knife.Position), "cleaver direction test could not equip the tool");
+        Assert(knife.BladeEdgeEnd.Y < knife.HandleEnd.Y - 20f,
+            "equipped cleaver did not begin in its blade-up ready pose");
+
+        var cursor = knife.Position;
+        var previousAngle = knife.Angle;
+        Assert(knife.BeginPrimaryAction(), "cleaver direction test could not begin charging");
+        for (var step = 0; step < 20; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+            Assert(MathF.Abs(knife.Angle - previousAngle) <= 0.12f,
+                "cleaver exceeded its capped physical angular speed");
+            previousAngle = knife.Angle;
+        }
+        Assert(knife.IsCharging && knife.WindupStrength > 0.20f && !knife.PrimaryChargeVisible,
+            "quick click threshold did not build a hidden initial cleaver charge");
+
+        var minimumChargedAngle = float.MaxValue;
+        var maximumChargedAngle = float.MinValue;
+        var minimumChargedX = float.MaxValue;
+        var maximumChargedX = float.MinValue;
+        for (var step = 0; step < 2; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(knife.PrimaryChargeVisible && knife.PrimaryCharge >= 0.25f && knife.PrimaryCharge <= 0.32f,
+            "fast charge bar did not reveal near one-quarter fill");
+        for (var step = 0; step < 82; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+            if (knife.WindupStrength >= 0.999f)
+            {
+                minimumChargedAngle = MathF.Min(minimumChargedAngle, knife.Angle);
+                maximumChargedAngle = MathF.Max(maximumChargedAngle, knife.Angle);
+                minimumChargedX = MathF.Min(minimumChargedX, knife.Position.X);
+                maximumChargedX = MathF.Max(maximumChargedX, knife.Position.X);
+            }
+        }
+        Assert(knife.IsCharging && knife.WindupStrength >= 0.999f &&
+               (maximumChargedAngle - minimumChargedAngle > 0.003f ||
+                maximumChargedX - minimumChargedX > 0.20f),
+            "fully charged cleaver had no visible physical shake cue");
+
+        Assert(knife.EndPrimaryAction(), "charged cleaver did not release into a swing");
+        var clickReleaseAngle = knife.Angle;
+        for (var step = 0; step < 6; step++)
+        {
+            knife.SetGrabTarget(cursor);
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(knife.ControlState == CleaverControlState.Swing && knife.ChopDirection.Y > 0.85f,
+            "primary-action release did not commit a downward assisted swing");
+        Assert(MathF.Abs(knife.Angle - clickReleaseAngle) > 1.0f,
+            "left-click swing remained visually sluggish after release");
+
+        var recoveryKnife = new PhysicalKnife(new Vector2(620f, 280f));
+        Assert(recoveryKnife.Equip(recoveryKnife.Position, recoveryKnife.Position) &&
+               recoveryKnife.BeginPrimaryAction() && recoveryKnife.EndPrimaryAction(),
+            "recovery timing test could not start a click swing");
+        for (var step = 0; step < 40 && recoveryKnife.ControlState != CleaverControlState.Recovery; step++)
+        {
+            recoveryKnife.SetGrabTarget(recoveryKnife.Position);
+            recoveryKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(recoveryKnife.ControlState == CleaverControlState.Recovery,
+            "click swing never entered its recovery phase");
+        Assert(recoveryKnife.BeginRotationAdjust(recoveryKnife.Position),
+            "right-drag rotation was rejected during melee recovery");
+        Assert(recoveryKnife.ControlState == CleaverControlState.Carry,
+            "rotation override did not cancel recovery into an editable carry state");
+        recoveryKnife.UpdateRotationAdjust(recoveryKnife.Position + new Vector2(60f, 0f));
+        recoveryKnife.EndRotationAdjust();
+        var recoverySteps = 0;
+        while (recoveryKnife.ControlState == CleaverControlState.Recovery && recoverySteps < 12)
+        {
+            recoveryKnife.SetGrabTarget(recoveryKnife.Position);
+            recoveryKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+            recoverySteps++;
+        }
+        Assert(recoveryKnife.ControlState == CleaverControlState.Carry && recoverySteps == 0,
+            $"click swing recovery was not nearly instant ({recoverySteps} fixed steps)");
+
+        var bufferedKnife = new PhysicalKnife(new Vector2(620f, 280f));
+        Assert(bufferedKnife.Equip(bufferedKnife.Position, bufferedKnife.Position) &&
+               bufferedKnife.BeginPrimaryAction() &&
+               bufferedKnife.EndPrimaryAction(),
+            "buffered-charge fixture could not start its first swing");
+        for (var step = 0;
+             step < 40 &&
+             bufferedKnife.ControlState != CleaverControlState.Recovery;
+             step++)
+            bufferedKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(bufferedKnife.ControlState == CleaverControlState.Recovery &&
+               bufferedKnife.BeginPrimaryAction(),
+            "held LMB during recovery was not accepted as a buffered charge");
+        for (var step = 0;
+             step < 20 && bufferedKnife.ControlState != CleaverControlState.Windup;
+             step++)
+            bufferedKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(bufferedKnife.IsCharging,
+            "buffered LMB did not begin charging on the first post-recovery step");
+        bufferedKnife.EndPrimaryAction();
+
+        var orientedKnife = new PhysicalKnife(new Vector2(620f, 280f));
+        Assert(orientedKnife.Equip(orientedKnife.Position, orientedKnife.Position),
+            "relative-arc cleaver test could not equip the tool");
+        Assert(orientedKnife.BeginRotationAdjust(orientedKnife.Position),
+            "relative-arc cleaver test could not begin rotation");
+        orientedKnife.UpdateRotationAdjust(orientedKnife.Position + new Vector2(60f, 0f));
+        orientedKnife.EndRotationAdjust();
+        Assert(orientedKnife.BeginPrimaryAction() && orientedKnife.EndPrimaryAction(),
+            "relative-arc cleaver test could not release a swing");
+        Assert(Vector2.Dot(orientedKnife.ChopDirection, -Vector2.UnitX) > 0.98f,
+            "cleaver swing stayed screen-down instead of rotating its original arc with the selected base");
+
+        var gestureKnife = new PhysicalKnife(new Vector2(300f, 300f));
+        Assert(gestureKnife.Equip(gestureKnife.Position, gestureKnife.Position),
+            "movement-only swing regression could not equip the cleaver");
+        var gestureCursor = gestureKnife.Position;
+        for (var step = 0; step < 32; step++)
+        {
+            gestureCursor.Y -= 3.2f;
+            gestureKnife.SetGrabTarget(gestureCursor);
+            gestureKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        for (var step = 0; step < 14; step++)
+        {
+            gestureCursor.Y += 8f;
+            gestureKnife.SetGrabTarget(gestureCursor);
+            gestureKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(gestureKnife.ControlState == CleaverControlState.Carry,
+            "vertical mouse movement still triggered the legacy cleaver swing without LMB");
+
+        var diagonalKnife = new PhysicalKnife(new Vector2(500f, 300f));
+        Assert(diagonalKnife.Equip(diagonalKnife.Position, diagonalKnife.Position), "fixed-arc swing test could not equip the cleaver");
+        var diagonalCursor = diagonalKnife.Position;
+        Assert(diagonalKnife.BeginPrimaryAction(), "fixed-arc swing test could not begin charging");
+        for (var step = 0; step < 30; step++)
+        {
+            diagonalCursor.X += 2.4f;
+            diagonalKnife.SetGrabTarget(diagonalCursor);
+            diagonalKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(diagonalKnife.EndPrimaryAction(), "fixed-arc charge did not release");
+        for (var step = 0; step < 6; step++)
+        {
+            diagonalKnife.SetGrabTarget(diagonalCursor);
+            diagonalKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(diagonalKnife.ControlState == CleaverControlState.Swing &&
+               Vector2.Dot(diagonalKnife.ChopDirection, Vector2.UnitY) > 0.98f,
+            "cursor travel distorted the melee arc away from its selected base orientation");
+
+        var responsiveKnife = new PhysicalKnife(new Vector2(760f, 240f));
+        Assert(responsiveKnife.BeginGrab(responsiveKnife.Position),
+            "responsive-carry test could not take the cleaver");
+        var carryStart = responsiveKnife.Position;
+        for (var step = 0; step < 12; step++)
+        {
+            responsiveKnife.SetGrabTarget(carryStart + new Vector2(220f, 0f));
+            responsiveKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        Assert(responsiveKnife.Position.X > carryStart.X + 40f,
+            $"assisted cleaver still lagged excessively behind a deliberate hand move ({responsiveKnife.Position.X - carryStart.X:0.0}px)");
+        Assert(responsiveKnife.ControlState == CleaverControlState.Carry,
+            "direct click-drag movement accidentally triggered the equipped-only swing action");
+
+        var bluntKnife = new PhysicalKnife(new Vector2(100f, 200f));
+        var smallBody = new SoftBody(new Vector2(108f, 200f), 12f, 24);
+        Assert(bluntKnife.BeginGrab(bluntKnife.Position), "blunt-contact test could not take the cleaver");
+        var sawPhysicalContact = false;
+        for (var step = 0; step < 12; step++)
+        {
+            bluntKnife.SetGrabTarget(new Vector2(100f + step, 200f));
+            bluntKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { smallBody }, 1280f, 720f);
+            sawPhysicalContact |= bluntKnife.BlobContactsThisStep > 0;
+            Assert(!bluntKnife.PuncturedThisStep,
+                "a non-edge cleaver contact incorrectly registered as a cutting strike");
+        }
+
+        Assert(sawPhysicalContact, "cleaver handle/spine test never made physical contact");
+        Assert(smallBody.BrokenLinkCount == 0,
+            "the cleaver handle, spine, or blade body damaged tissue without edge contact");
+    }
+
+    private static void CleaverCarriesBloodStains()
+    {
+        var knife = new PhysicalKnife(new Vector2(180f, 180f));
+        var edgeMidpoint = (knife.BladeEdgeStart + knife.BladeEdgeEnd) * 0.5f;
+        var blood = new GranularParticle
+        {
+            Position = edgeMidpoint,
+            PreviousPosition = edgeMidpoint - new Vector2(0f, 20f),
+            Radius = 2.2f,
+            Lifetime = 10f,
+            Kind = GranularKind.Blood
+        };
+        Assert(knife.ResolveBloodContact(ref blood, Dt),
+            "physical blood pixel passed through the cleaver without coating it");
+        Assert(knife.BloodStains.Count == 1 && knife.BloodStains[0].Wetness > 0.9f,
+            "cleaver blood contact did not create a fresh local stain");
+        var localPosition = knife.BloodStains[0].LocalPosition;
+
+        for (var i = 0; i < 2_400; i++)
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(knife.BloodStains.Count == 1 && knife.BloodStains[0].Wetness <= 0.01f,
+            "cleaver stain disappeared instead of drying persistently");
+        Assert(Vector2.DistanceSquared(knife.BloodStains[0].LocalPosition, localPosition) < 0.001f,
+            "cleaver stain drifted away from its rotating local surface");
+
+        var world = new BlobWorld(FlatGrid()) { Gravity = Vector2.Zero, Knife = knife };
+        using var bitmap = new Bitmap(640, 480);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null);
+        var redPixels = 0;
+        for (var y = 145; y <= 215; y++)
+        for (var x = 145; x <= 245; x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel.R > 70 && pixel.R > pixel.G * 1.35f && pixel.R > pixel.B * 1.2f) redPixels++;
+        }
+        Assert(redPixels >= 3, "persistent cleaver blood stain was not visible in the actual renderer");
+    }
+
+    private static void BloodPixelsStainBlobTissue()
+    {
+        var body = BlobArchetype.ProcessingUnit.Create(new Vector2(320f, 260f));
+        var surfaceIndex = Enumerable.Range(0, body.Particles.Length)
+            .First(body.IsSurfaceParticle);
+        var surface = body.Particles[surfaceIndex];
+        var outward = Vector2.Normalize(surface.Position - body.Center);
+        var position = surface.Position + outward * (surface.Radius + 1.5f);
+        var granular = new GranularMaterialSystem();
+        granular.Particles.Add(new GranularParticle
+        {
+            Position = position,
+            PreviousPosition = position + outward * 2f,
+            Radius = 2.2f,
+            Lifetime = 12f,
+            Kind = GranularKind.Blood
+        });
+        granular.BeginStep();
+        granular.Step(Dt, Vector2.Zero, FlatGrid(), new[] { body });
+        Assert(body.BloodStains.Count > 0,
+            "a physical blood pixel struck visible blob tissue without coating it");
+        var stain = body.BloodStains[0];
+        var before = body.BloodStainWorldPosition(stain);
+        body.AddImpulse(new Vector2(18f, 0f), Dt);
+        body.Integrate(Dt, Vector2.Zero);
+        var after = body.BloodStainWorldPosition(stain);
+        Assert(after.X > before.X,
+            "blob blood stain did not remain bound to the deforming tissue particle");
+        for (var i = 0; i < body.Particles.Length; i++)
+            body.Particles[i].PreviousPosition = body.Particles[i].Position;
+        for (var i = 0; i < 3_200; i++) body.Integrate(Dt, Vector2.Zero);
+        Assert(body.BloodStains.Count > 0 && body.BloodStains[0].Wetness <= 0.01f,
+            "blob blood stain disappeared instead of drying persistently");
+
+        var world = new BlobWorld(FlatGrid()) { Gravity = Vector2.Zero };
+        world.Bodies.Add(body);
+        using var bitmap = new Bitmap(640, 480);
+        using var graphics = Graphics.FromImage(bitmap);
+        new GameRenderer().Draw(graphics, bitmap.Size, world, null);
+        var visiblePigment = 0;
+        var renderedMark = body.BloodStainWorldPosition(body.BloodStains[0]);
+        for (var y = Math.Max(0, (int)renderedMark.Y - 10); y <= Math.Min(bitmap.Height - 1, (int)renderedMark.Y + 10); y++)
+        for (var x = Math.Max(0, (int)renderedMark.X - 10); x <= Math.Min(bitmap.Width - 1, (int)renderedMark.X + 10); x++)
+        {
+            var pixel = bitmap.GetPixel(x, y);
+            if (pixel.R > 75 && pixel.G < 150 && pixel.B < 145) visiblePigment++;
+        }
+        Assert(visiblePigment >= 2,
+            "persistent particle-bound blob stain was not visible in the actual renderer");
+    }
+
+    private static void DetachedTissueRetainsBlobColor()
+    {
+        var detached = new SoftBody(new Vector2(300f, 240f), 18f, 19);
+        var granular = new GranularMaterialSystem();
+        granular.BeginStep();
+        Assert(granular.TryEmitDetached(detached, Dt),
+            "detached tissue fixture could not emit its physical pixels");
+        var colored = granular.Particles.Count(p =>
+            p.Kind == GranularKind.Tissue && p.Appearance != GranularAppearance.Gore);
+        var gore = granular.Particles.Count(p =>
+            p.Kind == GranularKind.Tissue && p.Appearance == GranularAppearance.Gore);
+        Assert(colored > 0 && gore > 0,
+            $"detached pixels did not preserve a readable tissue/gore mix ({colored} colored, {gore} gore)");
+    }
+
+    private static void DroppedCleaverRidesWithoutRolling()
+    {
+        var belt = new ConveyorBelt(new Vector2(100f, 430f), 800f, 28f, 150f,
+            minimumWidth: 96f, systemControlled: true);
+        var knife = new PhysicalKnife(new Vector2(180f, 220f));
+        Assert(knife.BeginGrab(knife.Position), "belt-settling test could not take the cleaver");
+        for (var i = 0; i < 72; i++)
+        {
+            knife.SetGrabTarget(new Vector2(340f, 320f));
+            knife.Step(Dt, Vector2.Zero, new[] { belt }, Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        knife.EndGrab(new Vector2(80f, 30f), Dt);
+        var releaseX = knife.Position.X;
+        for (var i = 0; i < 300; i++)
+            knife.Step(Dt, new Vector2(0f, 900f), new[] { belt }, Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(knife.Position.X > releaseX + 80f,
+            $"settled cleaver did not ride in the conveyor's linear direction (x={knife.Position.X:0.0}, y={knife.Position.Y:0.0}, angle={knife.Angle:0.00})");
+        Assert(MathF.Abs(MathF.Sin(knife.Angle)) < 0.24f,
+            $"dropped cleaver remained suspended on a diagonal instead of settling broad-side-down ({knife.Angle:0.00} radians)");
+
+        var heldKnife = new PhysicalKnife(new Vector2(640f, 300f));
+        Assert(heldKnife.BeginGrab(heldKnife.Position),
+            "held conveyor-containment test could not take the cleaver");
+        for (var i = 0; i < 180; i++)
+        {
+            heldKnife.SetGrabTarget(new Vector2(640f, 610f));
+            heldKnife.Step(Dt, Vector2.Zero, new[] { belt }, Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        var lowestToolPoint = MathF.Max(
+            MathF.Max(heldKnife.HandleStart.Y + 7f, heldKnife.HandleEnd.Y + 7f),
+            MathF.Max(heldKnife.BladeCoreStart.Y + 12f, heldKnife.BladeCoreEnd.Y + 12f));
+        Assert(lowestToolPoint <= belt.Position.Y + 0.1f,
+            $"grabbed cleaver crossed below the conveyor ({lowestToolPoint:0.0} > {belt.Position.Y:0.0})");
+
+        var thrownKnife = new PhysicalKnife(new Vector2(940f, 180f));
+        Assert(thrownKnife.BeginGrab(thrownKnife.Position),
+            "throw-momentum test could not take the cleaver");
+        for (var i = 0; i < 36; i++)
+        {
+            thrownKnife.SetGrabTarget(new Vector2(1160f, 210f));
+            thrownKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        var throwRelease = thrownKnife.Position;
+        thrownKnife.EndGrab(Vector2.Zero, Dt);
+        for (var i = 0; i < 12; i++)
+            thrownKnife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(thrownKnife.Position.X > throwRelease.X + 35f,
+            $"released cleaver discarded its simulated throw momentum ({thrownKnife.Position.X - throwRelease.X:0.0}px travel)");
+    }
+
+    private static void KnifeReturnsToHolster()
+    {
+        var holster = new Vector2(640f, 275f);
+        var knife = new PhysicalKnife(holster);
+        Assert(knife.BeginGrab(holster), "cleaver could not be taken from its centered rack");
+        for (var i = 0; i < 10; i++)
+        {
+            knife.SetGrabTarget(holster + new Vector2(72f, 8f));
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        }
+        knife.EndGrab(Vector2.Zero, Dt);
+        Assert(knife.IsReturningToHolster, "cleaver released near the rack did not begin its magnetic return");
+        for (var i = 0; i < 120; i++)
+            knife.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(knife.IsHolstered && Vector2.DistanceSquared(knife.Position, holster) < 0.01f,
+            "returning cleaver did not fly back and attach to its authored wall socket");
+    }
+
+    private static void ArsenalSelectionSwapsCenteredTool()
+    {
+        var holster = new Vector2(640f, 300f);
+        var tool = new PhysicalKnife(holster);
+        Assert(tool.Equip(holster, holster), "default cleaver could not be equipped before inventory swap");
+
+        tool.SelectArsenalVisual(4);
+        Assert(tool.ArsenalVisualVariant == 4, "inventory selection did not change the centered physical tool");
+        Assert(tool.IsHolstered && !tool.IsGrabbed && tool.Position == holster,
+            "inventory swap did not reset the selected tool into the existing centered rack");
+        Assert(tool.HitTest(holster), "selected arsenal sprite was not pickable at the rack socket");
+        Assert(tool.BeginGrab(holster), "selected arsenal tool could not be left-dragged from the rack");
+        tool.SelectArsenalVisual(8);
+        Assert(tool.IsHolstered && !tool.IsGrabbed,
+            "swapping while a tool was held did not safely return the replacement to the rack");
+        Assert(tool.Equip(holster, holster), "selected arsenal tool could not be equipped with E semantics");
+
+        var mountBelt = new ConveyorBelt(new Vector2(120f, 460f), 1040f, 32f, 0f,
+            systemControlled: true);
+        tool.SetGrabTarget(new Vector2(640f, 326f));
+        tool.Step(Dt, Vector2.Zero, new[] { mountBelt }, Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(tool.PlacementPreviewValid && tool.SlingshotHeightIndex == 1 &&
+               tool.PlaceAtPreview() && tool.IsDeployed,
+            "slingshot LMB placement preview did not snap to the selected conveyor and height");
+        var mountedSlingBody = BlobArchetype.ProcessingUnit.Create(tool.SlingshotCradlePosition);
+        mountedSlingBody.BeginGrab(mountedSlingBody.Center);
+        Assert(mountedSlingBody.IsGrabbed,
+            "slingshot test could not physically carry its blob ammunition");
+        tool.Step(Dt, Vector2.Zero, new[] { mountBelt }, new[] { mountedSlingBody }, 1280f, 720f);
+        Assert(tool.SlingshotBody == mountedSlingBody && !mountedSlingBody.IsGrabbed,
+            "bringing a grabbed blob to the rubber cradle did not auto-load it");
+        Assert(tool.CanBeginSlingshotPull(mountedSlingBody.Center) && tool.BeginPrimaryAction(),
+            "deployed slingshot would not let the player re-grab its loaded blob");
+        tool.SetGrabTarget(tool.SlingshotCradlePosition - new Vector2(88f, 0f));
+        for (var step = 0; step < 36; step++)
+            tool.Step(Dt, Vector2.Zero, new[] { mountBelt }, new[] { mountedSlingBody }, 1280f, 720f);
+        tool.EndPrimaryAction();
+        tool.Step(Dt, Vector2.Zero, new[] { mountBelt }, new[] { mountedSlingBody }, 1280f, 720f);
+        Assert(tool.ArsenalShotSerial > 0 && mountedSlingBody.AverageVelocity(Dt).X > 0f,
+            "mounted slingshot did not launch opposite its physical pull direction");
+
+        tool.SelectArsenalVisual(8);
+        Assert(tool.Equip(holster, holster),
+            "slingshot could not be re-equipped for side-wall placement");
+        tool.SetGrabTarget(new Vector2(16f, 320f));
+        tool.Step(Dt, Vector2.Zero, new[] { mountBelt },
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(tool.PlacementPreviewValid &&
+               MathF.Abs(tool.PlacementPreviewAngle - MathF.PI * 0.5f) < 0.01f &&
+               tool.PlaceAtPreview() &&
+               tool.SlingshotCradlePosition.X > tool.Position.X + 80f,
+            "left-wall slingshot preview did not rotate its forks east into the room");
+
+        tool.SelectArsenalVisual(9);
+        Assert(tool.Equip(holster, holster), "pike could not be equipped for wall placement");
+        var pikeBelt = new ConveyorBelt(new Vector2(300f, 460f), 700f, 34f, 0f,
+            systemControlled: true);
+        tool.SetGrabTarget(new Vector2(920f, 500f));
+        tool.Step(Dt, Vector2.Zero, new[] { pikeBelt },
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(!tool.PlacementPreviewVisible && !tool.PlacementPreviewValid,
+            "wall pike still ghosted or placed below/too close to a conveyor");
+        Assert(tool.BeginRotationAdjust(tool.Position),
+            "pike could not orient its placement preview");
+        tool.UpdateRotationAdjust(tool.Position - new Vector2(60f, 0f));
+        tool.EndRotationAdjust();
+        tool.SetGrabTarget(new Vector2(920f, 240f));
+        tool.Step(Dt, Vector2.Zero, new[] { pikeBelt },
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(tool.PlacementPreviewValid && tool.PlaceAtPreview() && tool.IsDeployed,
+            "pike LMB placement preview did not accept a background wall tile");
+        var mountedPikeBody = BlobArchetype.ProcessingUnit.Create(
+            (tool.BladeEdgeStart + tool.BladeEdgeEnd) * 0.5f);
+        mountedPikeBody.AddImpulse(new Vector2(280f, 0f), Dt);
+        var mountedPikeDamage = mountedPikeBody.BrokenLinkCount;
+        var fixedPikePosition = tool.Position;
+        for (var step = 0; step < 4; step++)
+            tool.Step(Dt, Vector2.Zero, new[] { pikeBelt },
+                new[] { mountedPikeBody }, 1280f, 720f);
+        Assert(mountedPikeBody.BrokenLinkCount > mountedPikeDamage,
+            $"wall-mounted pike did not passively puncture incoming physical matter " +
+            $"(edge={tool.BladeEdgeStart}->{tool.BladeEdgeEnd}, body={mountedPikeBody.Center}, " +
+            $"velocity={mountedPikeBody.AverageVelocity(Dt)}, spacing={mountedPikeBody.ParticleSpacing:0.0})");
+        Assert(tool.Position == fixedPikePosition && tool.PikePinCount == 1,
+            "placed wall pike moved under blob force or failed to retain the impaled blob");
+        var retainedPikeCenter = mountedPikeBody.Center;
+        mountedPikeBody.AddImpulse(new Vector2(0f, 560f), Dt);
+        for (var step = 0; step < 16; step++)
+            tool.Step(Dt, new Vector2(0f, 980f), new[] { pikeBelt },
+                new[] { mountedPikeBody }, 1280f, 720f);
+        Assert(tool.PikePinCount == 1 &&
+               Vector2.Distance(mountedPikeBody.Center, retainedPikeCenter) < 36f,
+            "an impaled blob slid through the pike instead of remaining attached at the puncture");
+
+        tool.SelectArsenalVisual(-1);
+        Assert(tool.ArsenalVisualVariant == -1 && tool.IsHolstered && tool.HitTest(holster),
+            "cleaver inventory entry did not restore the original centered tool");
+    }
+
+    private static void WeaponDumbwaiterRerollsOneWeapon()
+    {
+        var socket = new Vector2(640f, 300f);
+        var tool = new PhysicalKnife(socket);
+        var dumbwaiter = new WeaponDumbwaiter(socket);
+        var grid = new DestructibleGrid(40, 22, 32);
+        dumbwaiter.PrepareInitialDelivery(-1, tool);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed &&
+               dumbwaiter.DoorFrame == 3 && !tool.Visible,
+            "new day did not begin with the shutter closed over the hidden weapon");
+        for (var step = 0; step < 90; step++)
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: false);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed && !tool.Visible,
+            "unpowered dumbwaiter opened before the day began");
+        Assert(dumbwaiter.BeginInitialOpening(),
+            "breaker latch could not immediately start the initial dumbwaiter opening");
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Opening,
+            "powered dumbwaiter did not begin opening on the first simulation tick");
+        var displayRateDoorPositions = new HashSet<int>();
+        for (var displayFrame = 0; displayFrame < 30; displayFrame++)
+        {
+            // Two 120 Hz simulation steps represent one ~60 Hz paint interval.
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+            displayRateDoorPositions.Add((int)MathF.Round(dumbwaiter.DoorClosure * 1000f));
+        }
+        Assert(displayRateDoorPositions.Count >= 24,
+            $"dumbwaiter opening exposed only {displayRateDoorPositions.Count} display-rate positions");
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Open &&
+               dumbwaiter.DoorFrame == 0 && tool.Visible && tool.IsHolstered,
+            "powered day start did not animate open and present the first weapon");
+        Assert(tool.BeginGrab(socket), "presented dumbwaiter weapon could not be taken");
+        dumbwaiter.NotifyWeaponTaken();
+        dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closing,
+            "taking the presented weapon did not start closing the shutter");
+        for (var step = 0; step < 65; step++)
+            dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Closed &&
+               dumbwaiter.DoorFrame == 3 && tool.Visible,
+            "shutter did not remain closed after the player took the weapon");
+
+        dumbwaiter.SpawnToken(new Vector2(420f, 300f));
+        var firstToken = dumbwaiter.Token;
+        Assert(WeaponDumbwaiter.TokenRadius == 16f,
+            "reroll coin physical body did not match its 32-pixel presentation");
+        dumbwaiter.SpawnToken(new Vector2(460f, 300f));
+        Assert(ReferenceEquals(firstToken, dumbwaiter.Token),
+            "a second reroll token spawned while one was already in the system");
+        Assert(dumbwaiter.BeginTokenGrab(firstToken!.Position),
+            "physical reroll coin could not be picked up");
+        dumbwaiter.SetTokenGrabTarget(dumbwaiter.CoinSlotCenter);
+        dumbwaiter.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.ReleaseToken(dumbwaiter.CoinSlotCenter, Vector2.Zero) &&
+               dumbwaiter.TokenDeposited &&
+               dumbwaiter.ButtonArmed,
+            "releasing the physical coin over the authored slot did not arm the button");
+        Assert(dumbwaiter.Activate(1, tool) && !tool.Visible,
+            "armed dumbwaiter did not explode and hide the current weapon");
+        for (var step = 0; step < 180; step++)
+            dumbwaiter.Step(Dt, new Vector2(0f, 980f), Array.Empty<ConveyorBelt>(),
+                grid, 1280f, 720f, tool, powered: true);
+        Assert(dumbwaiter.Phase == WeaponDumbwaiterPhase.Open && tool.Visible &&
+               tool.IsHolstered && tool.ArsenalVisualVariant == 1,
+            "dumbwaiter shutter did not finish by delivering the selected replacement");
+
+        var assetRoot = Path.Combine(AppContext.BaseDirectory, "Assets");
+        using var housing = new Bitmap(Path.Combine(assetRoot, "WeaponDumbwaiter.png"));
+        using var controls = new Bitmap(Path.Combine(assetRoot, "WeaponDumbwaiterControls.png"));
+        using var coin = new Bitmap(Path.Combine(assetRoot, "WeaponRerollToken.png"));
+        Assert(housing.Size == new Size(72 * 4, 96) &&
+               controls.Size == new Size(32 * 3, 64) &&
+               coin.Size == new Size(16 * 4, 16),
+            "Pixel Forge dumbwaiter exports do not match the runtime frame contracts");
+    }
+
+    private static void SlingshotImpactsDamageBothBodies()
+    {
+        var sling = new PhysicalKnife(new Vector2(500f, 390f));
+        sling.SelectArsenalVisual(8);
+        Assert(sling.Equip(sling.Position, sling.Position) &&
+               MathF.Abs(sling.Angle) < 0.001f,
+            "held slingshot did not equip in its locked north-facing pose");
+        var launched = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 390f));
+        var struck = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 205f));
+        var world = new BlobWorld(FlatGrid())
+        {
+            Gravity = Vector2.Zero,
+            Knife = sling
+        };
+        world.Bodies.Add(launched);
+        world.Bodies.Add(struck);
+        Assert(sling.BeginPrimaryAction(),
+            "slingshot bilateral-impact fixture could not begin charging");
+        for (var step = 0; step < 96; step++) world.Step(Dt);
+        Assert(sling.EndPrimaryAction(),
+            "slingshot bilateral-impact fixture could not release");
+        var launchedDamage = launched.BrokenLinkCount;
+        var struckDamage = struck.BrokenLinkCount;
+        for (var step = 0; step < 150 &&
+             (launched.BrokenLinkCount == launchedDamage ||
+              struck.BrokenLinkCount == struckDamage); step++)
+            world.Step(Dt);
+        Assert(launched.BrokenLinkCount > launchedDamage,
+            "slingshot impact did not damage the fired blob");
+        Assert(struck.BrokenLinkCount > struckDamage,
+            "slingshot impact damaged only its ammunition and not the struck blob");
+    }
+
+    private static void ArsenalPrimaryActionsAreDistinct()
+    {
+        static (PhysicalKnife Tool, SoftBody Body) Setup(int variant, Vector2 bodyPosition)
+        {
+            var tool = new PhysicalKnife(new Vector2(640f, 300f));
+            tool.SelectArsenalVisual(variant);
+            Assert(tool.Equip(tool.Position, tool.Position), $"arsenal variant {variant} could not equip");
+            var expectedHolsterDirection = variant is >= 1 and <= 6 or 8 or 10
+                ? -Vector2.UnitX
+                : -Vector2.UnitY;
+            Assert(Vector2.Dot(tool.BaseAimDirection, expectedHolsterDirection) > 0.98f,
+                $"arsenal variant {variant} did not inherit its authored holster orientation");
+            var rotationOrigin = tool.Position;
+            if (variant == 8)
+            {
+                Assert(!tool.BeginRotationAdjust(rotationOrigin) &&
+                       !tool.RotateBaseBy(MathF.PI / 12f) &&
+                       MathF.Abs(tool.Angle) < 0.001f,
+                    "held slingshot accepted rotation instead of remaining north-facing");
+            }
+            else
+            {
+                Assert(tool.BeginRotationAdjust(rotationOrigin),
+                    $"arsenal variant {variant} rejected base-rotation control");
+                Assert(!tool.BeginPrimaryAction(),
+                    $"arsenal variant {variant} activated while its rotation control was held");
+                tool.UpdateRotationAdjust(rotationOrigin + new Vector2(60f, 0f));
+                tool.EndRotationAdjust();
+            }
+            if (variant == 7)
+                Assert(!tool.RotationAdjusting && tool.SledgeSwingRight &&
+                       Vector2.Dot(tool.BaseAimDirection, -Vector2.UnitY) > 0.98f,
+                    "sledge RMB did not toggle its swing side or incorrectly changed base rotation");
+            else if (variant == 8)
+                Assert(MathF.Abs(tool.Angle) < 0.001f,
+                    "slingshot did not retain its authored north-facing pose");
+            else
+                Assert(!tool.RotationAdjusting &&
+                       Vector2.Dot(tool.BaseAimDirection, Vector2.UnitX) > 0.98f,
+                    $"arsenal variant {variant} did not retain its right-drag base rotation");
+            tool.SetGrabTarget(new Vector2(700f, 300f));
+            for (var step = 0; step < 60; step++)
+                tool.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                    Array.Empty<SoftBody>(), 1280f, 720f);
+            var body = BlobArchetype.ProcessingUnit.Create(bodyPosition);
+            return (tool, body);
+        }
+
+        var (saber, _) = Setup(0, new Vector2(710f, 270f));
+        Assert(!saber.BeginPrimaryAction() && saber.SaberIgnited,
+            "first lightsaber LMB did not exclusively ignite the blade");
+        var saberBody = new SoftBody((saber.BladeEdgeStart + saber.BladeEdgeEnd) * 0.5f, 12f, 24);
+        var passiveCenter = saberBody.Center;
+        for (var step = 0; step < 8; step++)
+            saber.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { saberBody }, 1280f, 720f);
+        Assert(saberBody.BrokenLinkCount > 0 && saber.SaberIgnited,
+            "stationary ignited lightsaber did not cut tissue that moved into its physical blade");
+        Assert(Vector2.Distance(passiveCenter, saberBody.Center) < 1f,
+            "passive lightsaber cut depended on blunt collision force");
+        Assert(saber.BeginPrimaryAction() && saber.EndPrimaryAction(),
+            "subsequent lightsaber LMB did not use the shared cleaver swing arc");
+        Assert(saber.ControlState == CleaverControlState.Swing,
+            "lightsaber did not enter the same relative swing state as the cleaver");
+
+        var hotBladeBlood = new GranularParticle
+        {
+            Position = (saber.BladeEdgeStart + saber.BladeEdgeEnd) * 0.5f,
+            PreviousPosition = (saber.BladeEdgeStart + saber.BladeEdgeEnd) * 0.5f - new Vector2(0f, 3f),
+            Radius = 1.8f,
+            Lifetime = 10f,
+            Kind = GranularKind.Blood
+        };
+        var sizzleBefore = saber.SaberSizzleSerial;
+        Assert(saber.ResolveBloodContact(ref hotBladeBlood, Dt) &&
+               hotBladeBlood.Lifetime <= 0f &&
+               saber.SaberSizzleSerial == sizzleBefore + 1 &&
+               saber.BloodStains.Count == 0,
+            "individual blood pixel did not fizzle on the hot blade or incorrectly left a blade stain");
+        var hiltBlood = new GranularParticle
+        {
+            Position = saber.Position,
+            PreviousPosition = saber.Position - new Vector2(0f, 3f),
+            Radius = 1.8f,
+            Lifetime = 10f,
+            Kind = GranularKind.Blood
+        };
+        Assert(saber.ResolveBloodContact(ref hiltBlood, Dt) &&
+               saber.BloodStains.Count > 0 &&
+               saber.BloodStains.All(stain => stain.LocalPosition.X >= -18f),
+            "lightsaber hilt did not retain blood independently of its self-cleaning blade");
+        Assert(saber.DeigniteSaber() && !saber.SaberIgnited,
+            "dedicated Z de-ignition path did not extinguish the lightsaber");
+
+        foreach (var variant in new[] { 1, 2, 4 })
+        {
+            var (gun, target) = Setup(variant, new Vector2(850f, 300f));
+            var downstreamTarget = variant == 1
+                ? BlobArchetype.ProcessingUnit.Create(new Vector2(940f, 300f))
+                : null;
+            var gunTargets = downstreamTarget is null
+                ? new[] { target }
+                : new[] { target, downstreamTarget };
+            var liveShotLine = gun.LiveMuzzlePosition + gun.LiveBarrelDirection * 150f;
+            target.ApplyTranslation(liveShotLine - target.Center, preserveVelocity: true);
+            if (downstreamTarget is not null)
+            {
+                var downstreamLine = gun.LiveMuzzlePosition + gun.LiveBarrelDirection * 240f;
+                downstreamTarget.ApplyTranslation(
+                    downstreamLine - downstreamTarget.Center, preserveVelocity: true);
+            }
+            var positionBeforeRecoil = gun.Position;
+            var angleBeforeRecoil = gun.Angle;
+            var muzzleBeforeRecoil = gun.LiveMuzzlePosition;
+            Assert(gun.BeginPrimaryAction(), $"gun variant {variant} rejected its trigger");
+            gun.EndPrimaryAction();
+            gun.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), gunTargets, 1280f, 720f);
+            Assert(Vector2.DistanceSquared(gun.LastArsenalActionPosition, muzzleBeforeRecoil) < 1f,
+                $"gun variant {variant} projectile did not originate at its live authored muzzle");
+            for (var step = 1; step < 40; step++)
+                gun.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), gunTargets, 1280f, 720f);
+            Assert(gun.ArsenalShotSerial > 0,
+                $"gun variant {variant} behaved like a cleaver instead of firing");
+            Assert(gun.ArsenalActionEffects.All(effect => effect.Variant is not (1 or 2 or 3 or 4)),
+                $"gun variant {variant} still rendered a hitscan damage line");
+            Assert(target.BrokenLinkCount > 0,
+                $"gun variant {variant} projectile crossed its target without applying damage " +
+                $"(tool={gun.Position}, aim={gun.BaseAimDirection}, target={target.Center}, " +
+                $"projectiles={string.Join(", ", gun.ArsenalProjectiles.Select(p =>
+                    $"{p.Kind}@{p.Position} v={p.Velocity}"))})");
+            Assert(Vector2.DistanceSquared(positionBeforeRecoil, gun.Position) > 1f ||
+                   MathF.Abs(angleBeforeRecoil - gun.Angle) > 0.03f,
+                $"gun variant {variant} fired without physical grip or angular recoil");
+            if (downstreamTarget is not null)
+                Assert(target.AverageVelocity(Dt).Length() > 20f,
+                    "large nail projectile did not carry or knock back the first blob it struck");
+        }
+
+        var (pinner, pinnedBody) = Setup(1, new Vector2(1080f, 315f));
+        var pinLine = pinner.LiveMuzzlePosition + pinner.LiveBarrelDirection * 335f;
+        pinnedBody.ApplyTranslation(pinLine - pinnedBody.Center, preserveVelocity: true);
+        Assert(pinner.BeginPrimaryAction(), "nail gun rejected the wall-pinning shot");
+        pinner.EndPrimaryAction();
+        for (var step = 0; step < 180; step++)
+            pinner.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { pinnedBody }, 1280f, 720f);
+        Assert(pinner.NailPinCount > 0,
+            "large nail carried a blob toward the wall but never established a physical pin");
+
+        var (joiner, _) = Setup(1, new Vector2(840f, 300f));
+        var joinedFirst = new SoftBody(
+            joiner.LiveMuzzlePosition + joiner.LiveBarrelDirection * 90f, 25f, 28);
+        var joinedSecond = new SoftBody(
+            joiner.LiveMuzzlePosition + joiner.LiveBarrelDirection * 146f, 25f, 28);
+        Assert(joiner.BeginPrimaryAction(), "nail gun rejected the blob-joining shot");
+        joiner.EndPrimaryAction();
+        for (var step = 0; step < 90; step++)
+            joiner.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { joinedFirst, joinedSecond }, 1280f, 720f);
+        Assert(joiner.JoinedNailPinCount > 0,
+            "one nail penetrated two blobs but did not leave a physical blob-to-blob pin");
+
+        var (magnum, magnumTarget) = Setup(3, new Vector2(900f, 300f));
+        var magnumLine = magnum.LiveMuzzlePosition + magnum.LiveBarrelDirection * 170f;
+        magnumTarget.ApplyTranslation(magnumLine - magnumTarget.Center, preserveVelocity: true);
+        Assert(magnum.BeginPrimaryAction(), "magnum rejected cock/steady hold");
+        for (var step = 0; step < 60; step++)
+            magnum.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { magnumTarget }, 1280f, 720f);
+        magnum.EndPrimaryAction();
+        var secondMagnumTarget = BlobArchetype.ProcessingUnit.Create(
+            magnum.LiveMuzzlePosition + magnum.LiveBarrelDirection * 260f);
+        for (var step = 0; step < 90; step++)
+            magnum.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { magnumTarget, secondMagnumTarget }, 1280f, 720f);
+        Assert(magnum.ArsenalShotSerial == 1, "magnum did not fire exactly once on trigger release");
+        Assert(magnumTarget.BrokenLinkCount > 0 && secondMagnumTarget.BrokenLinkCount > 0,
+            "magnum projectile did not preserve its deeper multi-body penetration");
+
+        var (saw, sawTarget) = Setup(5, new Vector2(890f, 300f));
+        var sawMatterBefore = sawTarget.PhysicalParticleCount;
+        var sawLine = saw.LiveMuzzlePosition + saw.LiveBarrelDirection * 190f;
+        sawTarget.ApplyTranslation(sawLine - sawTarget.Center, preserveVelocity: true);
+        Assert(saw.BeginPrimaryAction(), "blade shooter rejected spin-up");
+        for (var step = 0; step < 45; step++)
+            saw.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { sawTarget }, 1280f, 720f);
+        saw.EndPrimaryAction();
+        for (var step = 0; step < 180; step++)
+            saw.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { sawTarget }, 1280f, 720f);
+        Assert(saw.ArsenalProjectiles.Any(projectile =>
+                projectile.Kind == ArsenalProjectileKind.SawBlade && projectile.Stuck),
+            "blade shooter projectile did not preserve penetration and then stick into a surface");
+        Assert(sawTarget.PhysicalParticleCount < sawMatterBefore,
+            "saw blade broke bonds but did not remove the material band along its visible path");
+
+        var (vacuum, vacuumTarget) = Setup(6, new Vector2(840f, 300f));
+        Assert(vacuum.BeginPrimaryAction(), "chipper vacuum rejected suction hold");
+        for (var step = 0; step < 24; step++)
+            vacuum.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { vacuumTarget }, 1280f, 720f);
+        Assert(vacuumTarget.AverageVelocity(Dt).X < -0.1f,
+            "chipper vacuum did not pull nearby blob matter toward its intake");
+
+        var (hammer, hammerTarget) = Setup(7, new Vector2(760f, 355f));
+        var hammerBelt = new ConveyorBelt(
+            new Vector2(300f, 455f), 700f, 34f, 0f, systemControlled: true);
+        hammerTarget.ApplyTranslation(
+            new Vector2(hammer.Position.X, hammerBelt.Position.Y - 26f) - hammerTarget.Center,
+            preserveVelocity: true);
+        var nearbyHammerBody = BlobArchetype.ProcessingUnit.Create(
+            new Vector2(hammer.Position.X + 145f, hammerBelt.Position.Y - 26f));
+        var hammerCenterBefore = hammerTarget.Center;
+        var hammerDamageBefore = hammerTarget.BrokenLinkCount;
+        var hammerMatterBefore = hammerTarget.PhysicalParticleCount;
+        var hammerGranular = new GranularMaterialSystem();
+        for (var particle = 0; particle < 9; particle++)
+        {
+            var position = new Vector2(
+                hammerBelt.Position.X + 45f + particle * 70f,
+                hammerBelt.Position.Y - 3f);
+            hammerGranular.Particles.Add(new GranularParticle
+            {
+                Position = position,
+                PreviousPosition = position,
+                Radius = 2.2f,
+                Lifetime = 10f,
+                Kind = particle % 3 == 0
+                    ? GranularKind.Tissue
+                    : GranularKind.Blood
+            });
+        }
+        Assert(hammer.BeginPrimaryAction(), "sledgehammer rejected charge");
+        for (var step = 0; step < 90; step++)
+            hammer.Step(Dt, Vector2.Zero, new[] { hammerBelt },
+                new[] { hammerTarget, nearbyHammerBody }, 1280f, 720f,
+                granular: hammerGranular);
+        hammer.EndPrimaryAction();
+        var observedFlatImpact = false;
+        var observedShake = false;
+        var impactFrames = 0;
+        for (var step = 0; step < 40; step++)
+        {
+            hammer.Step(Dt, Vector2.Zero, new[] { hammerBelt },
+                new[] { hammerTarget, nearbyHammerBody }, 1280f, 720f,
+                granular: hammerGranular);
+            if (hammer.ControlState != CleaverControlState.Impact) continue;
+            impactFrames++;
+            observedFlatImpact |=
+                MathF.Abs(hammer.BladeCoreStart.Y - hammer.BladeCoreEnd.Y) < 0.2f &&
+                MathF.Abs(MathF.Max(
+                              hammer.BladeEdgeStart.Y,
+                              hammer.BladeEdgeEnd.Y) -
+                          hammerBelt.Position.Y) < 0.3f;
+            observedShake |= hammer.ScreenShakeOffset.LengthSquared() > 0.01f;
+        }
+        Assert(observedFlatImpact,
+            "sledge impact did not lock its complete striking face flat to the ground");
+        Assert(impactFrames >= 6,
+            $"sledge did not visibly hold its grounded impact pose ({impactFrames} frames)");
+        Assert(observedShake,
+            "sledge impact did not produce its bounded camera shake");
+        Assert(nearbyHammerBody.AverageVelocity(Dt).Length() > 40f,
+            "fully charged sledge impact did not knock back a nearby blob with its ground AOE");
+        Assert(hammerTarget.AverageVelocity(Dt).Length() > 30f ||
+               Vector2.Distance(hammerTarget.Center, hammerCenterBefore) > 4f,
+            "sledgehammer smash did not deliver its expected high knockback and local compression");
+        Assert(hammerTarget.BrokenLinkCount > hammerDamageBefore,
+            "sledgehammer passed through its target without broad crushing damage");
+        Assert(hammerTarget.PhysicalParticleCount > 0 &&
+               hammerTarget.PhysicalParticleCount < hammerMatterBefore,
+            $"heavy impact did not destroy only the ground-side material under its hammer face " +
+            $"({hammerTarget.PhysicalParticleCount}/{hammerMatterBefore} particles remain)");
+        var convertedByCrush = Enumerable.Range(0, hammerTarget.Particles.Length)
+            .Where(hammerTarget.IsConvertedParticle)
+            .ToArray();
+        Assert(convertedByCrush.Length > 0 &&
+               convertedByCrush.All(index =>
+                   hammerTarget.Particles[index].Position.Y >= hammerBelt.Position.Y - 37f) &&
+               Enumerable.Range(0, hammerTarget.Particles.Length).Any(index =>
+                   hammerTarget.IsPhysicalParticle(index) &&
+                   hammerTarget.Particles[index].Position.Y < hammerBelt.Position.Y - 37f),
+            "heavy crush removed material outside its bounded ground-side impact band");
+        Assert(hammer.HeavyBloodBridges.Count is >= 2 and <= 3,
+            "sledge crush produced no temporary blood bridges between its face and the ground");
+        var impactGripY = hammer.Position.Y;
+        var sawBridgeStretchDuringLift = false;
+        var sawBridgeSnapBeforeRecoveryFinished = false;
+        for (var step = 0; step < 90; step++)
+        {
+            hammer.Step(Dt, Vector2.Zero, new[] { hammerBelt },
+                new[] { hammerTarget }, 1280f, 720f,
+                granular: hammerGranular);
+            if (hammer.ControlState == CleaverControlState.Recovery &&
+                hammer.Position.Y < impactGripY - 5f &&
+                hammer.HeavyBloodBridges.Count > 0)
+                sawBridgeStretchDuringLift = true;
+            if (hammer.ControlState == CleaverControlState.Recovery &&
+                hammer.HeavyBloodBridges.Count == 0)
+                sawBridgeSnapBeforeRecoveryFinished = true;
+        }
+        Assert(sawBridgeStretchDuringLift && sawBridgeSnapBeforeRecoveryFinished,
+            "heavy blood bridges did not stretch briefly during lift and snap before recovery");
+        var granularUpwardSpeeds = hammerGranular.Particles.Select(particle =>
+                -(particle.Position.Y - particle.PreviousPosition.Y) / Dt)
+            .Where(speed => speed > 100f)
+            .ToArray();
+        Assert(granularUpwardSpeeds.Length >= 7 &&
+               granularUpwardSpeeds.Max() - granularUpwardSpeeds.Min() > 70f,
+            "full sledge charge did not bounce conveyor matter to varied bounded heights");
+
+        var (slowHammer, _) = Setup(7, new Vector2(1000f, 220f));
+        var elevatedSlamStart = slowHammer.Position;
+        Assert(slowHammer.BeginPrimaryAction() && slowHammer.EndPrimaryAction(),
+            "slow-sledge timing fixture could not release its swing");
+        var overheadHead = (slowHammer.BladeCoreStart + slowHammer.BladeCoreEnd) * 0.5f;
+        Assert(overheadHead.Y < slowHammer.Position.Y - 48f &&
+               MathF.Abs(overheadHead.X - slowHammer.Position.X) <= 23f,
+            "sledge release did not begin with its head directly north of the grip");
+        for (var step = 0; step < 15; step++)
+            slowHammer.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(slowHammer.ControlState == CleaverControlState.Swing,
+            "sledgehammer completed its heavy swing as quickly as the light melee weapons");
+        for (var step = 15; step < 45 &&
+             slowHammer.ControlState == CleaverControlState.Swing; step++)
+            slowHammer.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        var groundHead = (slowHammer.BladeCoreStart + slowHammer.BladeCoreEnd) * 0.5f;
+        var expectedHorizontalDirection = slowHammer.SledgeSwingRight ? 1f : -1f;
+        Assert(slowHammer.ControlState == CleaverControlState.Impact &&
+               groundHead.Y > slowHammer.Position.Y + 10f &&
+               (groundHead.X - slowHammer.Position.X) * expectedHorizontalDirection > 35f &&
+               MathF.Abs(slowHammer.BladeCoreStart.Y -
+                         slowHammer.BladeCoreEnd.Y) < 0.2f &&
+               slowHammer.Position.Y > elevatedSlamStart.Y + 250f,
+            $"sledge did not curve from north to a west-facing, ground-parallel impact " +
+            $"(state={slowHammer.ControlState}, grip={slowHammer.Position}, " +
+            $"head={groundHead}, edge={slowHammer.BladeCoreStart}->{slowHammer.BladeCoreEnd})");
+
+        var (sling, slingBody) = Setup(8, new Vector2(750f, 300f));
+        Assert(sling.BeginPrimaryAction(), "blob slingshot rejected loading hold");
+        for (var step = 0; step < 80; step++)
+            sling.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { slingBody }, 1280f, 720f);
+        sling.EndPrimaryAction();
+        sling.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { slingBody }, 1280f, 720f);
+        Assert(sling.ArsenalShotSerial > 0 && slingBody.AverageVelocity(Dt).Y < -100f,
+            "north-facing held slingshot did not release its blob upward with stored impulse");
+
+        var pike = new PhysicalKnife(new Vector2(640f, 300f));
+        pike.SelectArsenalVisual(9);
+        Assert(pike.Equip(pike.Position, pike.Position), "wall pike could not be deployed from the rack");
+        var pikeTip = (pike.BladeEdgeStart + pike.BladeEdgeEnd) * 0.5f;
+        var impaled = BlobArchetype.ProcessingUnit.Create(pikeTip);
+        var beforePikeDamage = impaled.BrokenLinkCount;
+        impaled.AddImpulse(new Vector2(280f, 0f), Dt);
+        for (var step = 0; step < 4; step++)
+            pike.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { impaled }, 1280f, 720f);
+        Assert(impaled.BrokenLinkCount > beforePikeDamage,
+            $"pike did not passively puncture a blob slammed onto its physical tip " +
+            $"(edge={pike.BladeEdgeStart}->{pike.BladeEdgeEnd}, body={impaled.Center}, " +
+            $"velocity={impaled.AverageVelocity(Dt)}, spacing={impaled.ParticleSpacing:0.0})");
+
+        var (gloves, gloveTarget) = Setup(10, new Vector2(790f, 300f));
+        var gloveDamageBefore = gloveTarget.BrokenLinkCount;
+        gloves.BeginPrimaryAction();
+        for (var step = 0; step < 90; step++)
+            gloves.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { gloveTarget }, 1280f, 720f);
+        gloves.EndPrimaryAction();
+        for (var step = 0; step < 32; step++)
+            gloves.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { gloveTarget }, 1280f, 720f);
+        Assert(gloves.ArsenalShotSerial == 1 &&
+               gloveTarget.AverageVelocity(Dt).Y < -80f &&
+               gloveTarget.BrokenLinkCount > gloveDamageBefore,
+            "fully charged boxing glove did not physically uppercut, launch, and break its target");
+
+        var (grenade, grenadeTarget) = Setup(11, new Vector2(880f, 300f));
+        var grenadeHeldPosition = grenade.Position;
+        grenade.BeginPrimaryAction();
+        grenade.SetGrabTarget(grenade.Position + new Vector2(150f, 75f));
+        var grenadeBelt = new ConveyorBelt(new Vector2(300f, 455f), 700f, 34f, 0f,
+            systemControlled: true);
+        var grenadeGrid = new DestructibleGrid(40, 22, 32);
+        grenadeGrid.BuildProcessingStation();
+        grenadeGrid.OpenContinuousConveyorPortals();
+        for (var step = 0; step < 30; step++)
+            grenade.Step(Dt, new Vector2(0f, 980f), new[] { grenadeBelt },
+                new[] { grenadeTarget }, 1280f, 720f, grid: grenadeGrid);
+        Assert(Vector2.Distance(grenadeHeldPosition, grenade.Position) < 1f,
+            "grenade kept following the cursor instead of freezing at the LMB aim anchor");
+        Assert(grenade.GrenadeTrajectory.Count > 4 && grenade.GrenadeTrajectory[^1].Final,
+            "held grenade did not expose its predicted throw and landing arc");
+        Assert(grenade.GrenadeTrajectory.Any(point => point.Bounced),
+            "grenade trajectory did not mark its predicted conveyor or wall bounce");
+        var blobPreviewGrenade = new PhysicalKnife(new Vector2(400f, 300f));
+        blobPreviewGrenade.SelectArsenalVisual(11);
+        Assert(blobPreviewGrenade.Equip(
+                blobPreviewGrenade.Position,
+                blobPreviewGrenade.Position) &&
+               blobPreviewGrenade.BeginPrimaryAction(),
+            "blob-collision grenade preview fixture could not begin aiming");
+        var previewBlocker = BlobArchetype.ProcessingUnit.Create(new Vector2(505f, 300f));
+        blobPreviewGrenade.SetGrabTarget(blobPreviewGrenade.Position + Vector2.UnitX * 190f);
+        for (var step = 0; step < 3; step++)
+            blobPreviewGrenade.Step(
+                Dt,
+                Vector2.Zero,
+                Array.Empty<ConveyorBelt>(),
+                new[] { previewBlocker },
+                1280f,
+                720f);
+        Assert(blobPreviewGrenade.GrenadeTrajectory.Any(point =>
+                point.BodyContact &&
+                Vector2.Distance(point.Position, previewBlocker.Center) <=
+                previewBlocker.Radius + previewBlocker.ParticleSpacing * 2f),
+            "grenade trajectory ignored the blob collider that the live throw would hit");
+        Assert(blobPreviewGrenade.GrenadeTrajectory[^1] is
+               { BodyContact: true, Final: true } &&
+               blobPreviewGrenade.GrenadeTrajectory.Count(point => point.BodyContact) == 1,
+            "grenade trajectory kept predicting an erratic path after its first blob contact");
+
+        blobPreviewGrenade.EndPrimaryAction();
+        blobPreviewGrenade.Step(
+            Dt,
+            Vector2.Zero,
+            Array.Empty<ConveyorBelt>(),
+            new[] { previewBlocker },
+            1280f,
+            720f);
+        Vector2? previousGrenadePosition = null;
+        var maximumStationarySteps = 0;
+        var stationarySteps = 0;
+        var grenadeOverlappedTissue = false;
+        for (var step = 0; step < 100; step++)
+        {
+            blobPreviewGrenade.Step(
+                Dt,
+                Vector2.Zero,
+                Array.Empty<ConveyorBelt>(),
+                new[] { previewBlocker },
+                1280f,
+                720f);
+            var liveGrenade = blobPreviewGrenade.ArsenalProjectiles.FirstOrDefault(projectile =>
+                projectile.Kind == ArsenalProjectileKind.Grenade);
+            if (liveGrenade.Kind != ArsenalProjectileKind.Grenade) continue;
+            if (previousGrenadePosition is { } previousGrenade)
+            {
+                stationarySteps = Vector2.DistanceSquared(previousGrenade, liveGrenade.Position) < 0.16f
+                    ? stationarySteps + 1
+                    : 0;
+                maximumStationarySteps = Math.Max(maximumStationarySteps, stationarySteps);
+            }
+            previousGrenadePosition = liveGrenade.Position;
+            for (var particleIndex = 0;
+                 particleIndex < previewBlocker.Particles.Length;
+                 particleIndex++)
+            {
+                if (!previewBlocker.IsPhysicalParticle(particleIndex)) continue;
+                var particle = previewBlocker.Particles[particleIndex];
+                var minimumDistance =
+                    PhysicalKnife.ProjectileRadius(ArsenalProjectileKind.Grenade) +
+                    particle.Radius - 0.3f;
+                grenadeOverlappedTissue |=
+                    Vector2.DistanceSquared(liveGrenade.Position, particle.Position) <
+                    minimumDistance * minimumDistance;
+            }
+        }
+        Assert(!grenadeOverlappedTissue && maximumStationarySteps < 3,
+            "live grenade embedded in or stopped moving against blob particles");
+        grenade.EndPrimaryAction();
+        grenade.Step(Dt, new Vector2(0f, 980f), new[] { grenadeBelt },
+            new[] { grenadeTarget }, 1280f, 720f, grid: grenadeGrid);
+        Assert(grenade.ArsenalProjectiles.Any(projectile =>
+                projectile.Kind == ArsenalProjectileKind.Grenade &&
+                projectile.RemainingSeconds > 1.7f),
+            "holding the grenade still cooked away its post-throw fuse");
+        var grenadeEnteredSolid = false;
+        for (var step = 1; step < 220; step++)
+        {
+            grenade.Step(Dt, new Vector2(0f, 980f), new[] { grenadeBelt },
+                new[] { grenadeTarget }, 1280f, 720f, grid: grenadeGrid);
+            foreach (var projectile in grenade.ArsenalProjectiles)
+            {
+                if (projectile.Kind != ArsenalProjectileKind.Grenade) continue;
+                if (grenadeBelt.ContainsPoint(projectile.Position)) grenadeEnteredSolid = true;
+                var cellX = (int)MathF.Floor(projectile.Position.X / grenadeGrid.CellSize);
+                var cellY = (int)MathF.Floor(projectile.Position.Y / grenadeGrid.CellSize);
+                if (cellX >= 0 && cellY >= 0 && cellX < grenadeGrid.Columns && cellY < grenadeGrid.Rows &&
+                    grenadeGrid.Cell(cellX, cellY).IsSolid)
+                    grenadeEnteredSolid = true;
+            }
+        }
+        Assert(!grenadeEnteredSolid,
+            "physical grenade entered a wall or conveyor instead of colliding and bouncing");
+        Assert(grenade.ArsenalExplosionSerial == 1,
+            "grenade did not travel and produce its fixed post-throw timed explosion");
+
+        var tubeGrenade = new PhysicalKnife(new Vector2(640f, 230f));
+        tubeGrenade.SelectArsenalVisual(11);
+        Assert(tubeGrenade.Equip(tubeGrenade.Position, tubeGrenade.Position),
+            "tube grenade fixture could not equip");
+        Assert(tubeGrenade.BeginPrimaryAction(),
+            "tube grenade fixture could not begin aiming");
+        tubeGrenade.SetGrabTarget(tubeGrenade.Position - Vector2.UnitY * 180f);
+        var overheadTube = new OverheadTubeFeed();
+        for (var step = 0; step < 3; step++)
+            tubeGrenade.Step(
+                Dt,
+                new Vector2(0f, 980f),
+                Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(),
+                1280f,
+                720f,
+                overheadTube);
+        Assert(tubeGrenade.GrenadeTrajectory.Any(point =>
+                point.Bounced &&
+                point.Position.Y >= OverheadTubeFeed.GlassBottom + 3.5f &&
+                point.Position.Y <= OverheadTubeFeed.GlassBottom + 5f),
+            "grenade preview passed through the overhead tube glass");
+        tubeGrenade.EndPrimaryAction();
+        var grenadeCrossedTube = false;
+        for (var step = 0; step < 80; step++)
+        {
+            tubeGrenade.Step(
+                Dt,
+                new Vector2(0f, 980f),
+                Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(),
+                1280f,
+                720f,
+                overheadTube);
+            grenadeCrossedTube |= tubeGrenade.ArsenalProjectiles.Any(projectile =>
+                projectile.Kind == ArsenalProjectileKind.Grenade &&
+                projectile.Position.Y <
+                OverheadTubeFeed.GlassBottom +
+                PhysicalKnife.ProjectileRadius(ArsenalProjectileKind.Grenade) - 0.1f);
+        }
+        Assert(!grenadeCrossedTube,
+            "live grenade passed through the overhead tube instead of bouncing");
+
+        var (cancelGrenade, _) = Setup(11, new Vector2(880f, 300f));
+        Assert(cancelGrenade.BeginPrimaryAction(), "grenade cancel fixture could not begin aiming");
+        cancelGrenade.SetGrabTarget(cancelGrenade.Position + new Vector2(120f, -40f));
+        cancelGrenade.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(cancelGrenade.BeginRotationAdjust(cancelGrenade.Position),
+            "RMB could not cancel an active grenade throw");
+        cancelGrenade.EndRotationAdjust();
+        cancelGrenade.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(!cancelGrenade.ArsenalPrimaryHeld && cancelGrenade.GrenadeTrajectory.Count == 0 &&
+               cancelGrenade.ArsenalShotSerial == 0,
+            "RMB grenade cancel still threw or left an active aiming arc");
+
+        var (axe, axeTarget) = Setup(12, new Vector2(730f, 300f));
+        var axeStartAngle = axe.Angle;
+        var axeDamageBefore = axeTarget.BrokenLinkCount;
+        Assert(axe.BeginPrimaryAction(), "battleaxe rejected its held whirlwind attack");
+        for (var step = 0; step < 90; step++)
+            axe.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { axeTarget }, 1280f, 720f);
+        Assert(axe.ArsenalPrimaryHeld &&
+               MathF.Abs(axe.Angle - axeStartAngle) > 1f &&
+               axeTarget.BrokenLinkCount > axeDamageBefore,
+            "holding battleaxe LMB did not continuously spin and damage contacted tissue");
+        Assert(axe.EndPrimaryAction(), "battleaxe whirlwind did not stop on release");
+        for (var step = 0; step < 8; step++)
+            axe.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(), new[] { axeTarget }, 1280f, 720f);
+        Assert(!axe.ArsenalPrimaryHeld,
+            "battleaxe continued its whirlwind after LMB release");
+    }
+
+    private static void ExpandedArsenalMechanicsAreDistinct()
+    {
+        static PhysicalKnife Equipped(int variant)
+        {
+            var tool = new PhysicalKnife(new Vector2(640f, 300f));
+            tool.SelectArsenalVisual(variant);
+            Assert(tool.Equip(tool.Position, tool.Position),
+                $"expanded arsenal variant {variant} could not equip");
+            return tool;
+        }
+
+        static void Click(
+            PhysicalKnife tool,
+            IReadOnlyList<SoftBody> bodies,
+            int steps,
+            Vector2 gravity,
+            GranularMaterialSystem? granular = null)
+        {
+            Assert(tool.BeginPrimaryAction(),
+                $"expanded arsenal variant {tool.ArsenalVisualVariant} rejected LMB");
+            tool.EndPrimaryAction();
+            for (var step = 0; step < steps; step++)
+                tool.Step(Dt, gravity, Array.Empty<ConveyorBelt>(), bodies,
+                    1280f, 720f, granular: granular);
+        }
+
+        var blackHole = Equipped(13);
+        var blackHoleTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        var blackHoleMatterBefore = blackHoleTarget.PhysicalParticleCount;
+        var blackHoleGore = new GranularMaterialSystem();
+        Click(blackHole, new[] { blackHoleTarget }, 260, Vector2.Zero, blackHoleGore);
+        Assert(blackHoleTarget.PhysicalParticleCount < blackHoleMatterBefore &&
+               blackHoleGore.Particles.Count > 0,
+            "mini black hole did not pull apart a nearby blob and spit physical gore");
+
+        var ratGun = Equipped(14);
+        var ratTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        var ratDamageBefore = ratTarget.BrokenLinkCount;
+        Click(ratGun, new[] { ratTarget }, 220, Vector2.Zero);
+        Assert(ratGun.Rats.Any(rat => rat.Attached) &&
+               ratTarget.BrokenLinkCount > ratDamageBefore,
+            "rat projectile did not become a persistent chewing agent on its target");
+        var attachedRat = ratGun.Rats.First(rat => rat.Attached);
+        var ratHostBefore = ratTarget.Particles[attachedRat.TargetParticleIndex].Position;
+        ratTarget.ApplyTranslation(new Vector2(31f, -18f), preserveVelocity: true);
+        ratGun.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            new[] { ratTarget }, 1280f, 720f);
+        var followedRat = ratGun.Rats.First(rat => rat.Attached);
+        var ratHostAfter = ratTarget.Particles[followedRat.TargetParticleIndex].Position;
+        Assert(Vector2.Distance(
+                   followedRat.Position - attachedRat.Position,
+                   ratHostAfter - ratHostBefore) < 1.5f,
+            "attached rat stayed at its world landing point instead of following host deformation");
+
+        for (var extraRat = 0; extraRat < 3; extraRat++)
+            Click(ratGun, new[] { ratTarget }, 90, Vector2.Zero);
+        Assert(ratGun.Rats.Count(rat => rat.Attached) >= 3,
+            "multiple-rat topology fixture failed to attach its swarm before host breakup");
+
+        DamageGestureProfile.Slice(
+            ratTarget,
+            ratTarget.Center - Vector2.UnitY * ratTarget.Radius * 1.25f,
+            ratTarget.Center + Vector2.UnitY * ratTarget.Radius * 1.25f);
+        var ratHostPieces = ratTarget.SplitDisconnectedComponents();
+        Assert(ratHostPieces.Count >= 2,
+            "rat topology-remap fixture did not split its attached host");
+        var survivingRatHost = ratHostPieces.MaxBy(piece => piece.PhysicalParticleCount)!;
+        foreach (var piece in ratHostPieces)
+            if (!ReferenceEquals(piece, survivingRatHost))
+                piece.MarkDetachedDebris(Dt);
+        ratGun.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            ratHostPieces, 1280f, 720f);
+        var remappedRats = ratGun.Rats.Where(rat => rat.Attached).ToArray();
+        Assert(remappedRats.Length >= 3 &&
+               remappedRats.All(rat =>
+                   rat.Target is not null &&
+                   ReferenceEquals(rat.Target, survivingRatHost) &&
+                   (uint)rat.TargetParticleIndex < (uint)rat.Target.Particles.Length &&
+                   rat.Target.IsPhysicalParticle(rat.TargetParticleIndex)),
+            "attached rat swarm did not safely remap host particles after the blob split");
+        Assert(!survivingRatHost.IsPhysicalParticle(survivingRatHost.Particles.Length),
+            "out-of-range physical-particle queries were not safely rejected");
+
+        var ratBurst = new GranularMaterialSystem();
+        ratBurst.BeginStep();
+        ratGun.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            Array.Empty<SoftBody>(), 1280f, 720f, granular: ratBurst);
+        Assert(ratGun.Rats.Count == 0 && ratBurst.BloodCount > 0,
+            "rat retargeted after its one host disappeared instead of bursting into blood");
+
+        var enlarger = Equipped(15);
+        var growthTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        var growthRadiusBefore = growthTarget.Radius;
+        var growthMatterBefore = growthTarget.PhysicalParticleCount;
+        var growthCenter = growthTarget.Center;
+        var growthGore = new GranularMaterialSystem();
+        Assert(enlarger.BeginPrimaryAction(), "enlarger rejected its auto-aim hold");
+        for (var step = 0; step < 420; step++)
+            enlarger.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { growthTarget }, 1280f, 720f, granular: growthGore);
+        enlarger.EndPrimaryAction();
+        Assert(growthTarget.Radius > growthRadiusBefore * 2.4f &&
+               growthTarget.PhysicalParticleCount < growthMatterBefore,
+            "enlarger did not approach 3x scale and burst its target");
+        Assert(growthGore.Particles.Count >= 16 &&
+               growthGore.Particles.Count(particle =>
+                   Vector2.Dot(particle.Position - growthCenter,
+                       particle.Position - particle.PreviousPosition) > 0f) >= 12 &&
+               growthGore.Particles.Any(particle => particle.Position.X < growthCenter.X) &&
+               growthGore.Particles.Any(particle => particle.Position.X > growthCenter.X) &&
+               growthGore.Particles.Any(particle => particle.Position.Y < growthCenter.Y) &&
+               growthGore.Particles.Any(particle => particle.Position.Y > growthCenter.Y),
+            "enlarger burst spawned inert falling gore instead of a radial explosion");
+
+        var flame = Equipped(16);
+        var flameTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        Assert(flame.BeginPrimaryAction(), "flamethrower rejected continuous fire");
+        for (var step = 0; step < 160; step++)
+            flame.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { flameTarget }, 1280f, 720f);
+        flame.EndPrimaryAction();
+        Assert(flameTarget.BrokenLinkCount > 0 &&
+               flame.BurningBlobs.Count > 0 &&
+               flame.FlamePatches.Count > 0 &&
+               flame.SmokeParticles.Count is > 0 and <= 128,
+            "flamethrower did not leave bounded pixel fire, smoke, and a persistent burning blob");
+        var travelingFlame = Equipped(16);
+        Assert(travelingFlame.BeginPrimaryAction(),
+            "flamethrower travel fixture rejected continuous fire");
+        travelingFlame.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            Array.Empty<SoftBody>(), 1280f, 720f);
+        travelingFlame.EndPrimaryAction();
+        for (var step = 0; step < 72; step++)
+            travelingFlame.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                Array.Empty<SoftBody>(), 1280f, 720f);
+        Assert(travelingFlame.ArsenalProjectiles.Any(projectile =>
+                projectile.Kind == ArsenalProjectileKind.Flame),
+            "flamethrower projectile expired in open air before reaching a surface");
+
+        var freeze = Equipped(17);
+        var supportedFreeze = BlobArchetype.ProcessingUnit.Create(new Vector2(640f, 380f));
+        var supportedCenterBefore = supportedFreeze.Center;
+        for (var particleIndex = 0;
+             particleIndex < supportedFreeze.Particles.Length;
+             particleIndex++)
+        {
+            if (!supportedFreeze.IsPhysicalParticle(particleIndex)) continue;
+            ref var particle = ref supportedFreeze.Particles[particleIndex];
+            if (particle.Position.Y < supportedCenterBefore.Y +
+                supportedFreeze.Radius * 0.30f)
+                continue;
+            particle.Contacting = true;
+            particle.ContactMemory = 6;
+            particle.PreviousPosition = particle.Position - new Vector2(0f, 4f);
+        }
+        supportedFreeze.SetFrozen(true, 8f);
+        Assert(supportedFreeze.Center.Y <= supportedCenterBefore.Y - 7.5f &&
+               supportedFreeze.AverageVelocity(Dt).Length() < 0.1f,
+            "grounded freeze expansion bounced instead of quietly shifting above its new ice edge");
+
+        var frozenTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        Click(freeze, new[] { frozenTarget }, 48, Vector2.Zero);
+        Assert(freeze.FrozenBlobs.Count == 1,
+            "freeze projectile did not put the hit blob into an ice block");
+        var ordinaryParticleRadius = frozenTarget.ParticleSpacing * 0.58f;
+        Assert(frozenTarget.IsFrozen &&
+               frozenTarget.FrozenCollisionPadding >= 7.5f &&
+               frozenTarget.Particles
+                   .Where((_, index) => frozenTarget.IsPhysicalParticle(index))
+                   .All(particle => particle.Radius > ordinaryParticleRadius + 7f),
+            "frozen blob collider did not expand to the surrounding ice shell");
+        frozenTarget.RegisterHitReaction(2f);
+        for (var step = 0; step < 600; step++)
+            frozenTarget.AdvanceFaceAnimation(Dt);
+        Assert(frozenTarget.FaceExpression == BlobFaceExpression.Neutral,
+            "frozen blob continued blinking or playing hurt-face motion");
+        for (var step = 0; step < 70; step++)
+            freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { frozenTarget }, 1280f, 720f);
+        var frozenDamageBefore = frozenTarget.BrokenLinkCount;
+        frozenTarget.LastTerrainImpact = 500f;
+        freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            new[] { frozenTarget }, 1280f, 720f);
+        Assert(freeze.FrozenBlobs.Count == 1 &&
+               freeze.FrozenBlobs[0].PendingSplitPropagation &&
+               frozenTarget.BrokenLinkCount > frozenDamageBefore,
+            "thrown ice block did not shatter its blob on a hard impact");
+        var splitCenter = frozenTarget.Center;
+        frozenTarget.DamageLine(
+            splitCenter - Vector2.UnitY * frozenTarget.Radius,
+            splitCenter + Vector2.UnitY * frozenTarget.Radius,
+            frozenTarget.ParticleSpacing * 1.1f, 24f, maximumBreaks: 256);
+        var frozenChildren = frozenTarget.SplitDisconnectedComponents()
+            .Where(child => child.PhysicalParticleCount > 3)
+            .ToArray();
+        Assert(frozenChildren.Length > 0,
+            "frozen shatter did not produce any physical child chunks");
+        freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            frozenChildren, 1280f, 720f);
+        Assert(freeze.FrozenBlobs.Count == frozenChildren.Length &&
+               frozenChildren.All(child => freeze.FrozenBlobs.Any(state =>
+                   ReferenceEquals(state.Body, child) && state.Generation >= 1)),
+            "ice state did not propagate to the chunks produced by a frozen shatter");
+        foreach (var frozenChild in frozenChildren)
+        {
+            frozenChild.LastTerrainImpact = 0f;
+            frozenChild.LastImpact = 0f;
+        }
+        for (var step = 0; step < 70; step++)
+            freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                frozenChildren, 1280f, 720f);
+        var terminalFrozen = frozenChildren[0];
+        terminalFrozen.LastTerrainImpact = 500f;
+        var frozenGore = new GranularMaterialSystem();
+        freeze.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+            frozenChildren, 1280f, 720f, granular: frozenGore);
+        Assert(freeze.FrozenBlobs.Count < frozenChildren.Length &&
+               terminalFrozen.IsCrumbling &&
+               !terminalFrozen.IsFrozen &&
+               frozenGore.Particles.Count > 0,
+            "second impact did not terminally shatter a frozen child into ordinary gore");
+
+        var lightning = Equipped(18);
+        var lightningFirst = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        var lightningSecond = BlobArchetype.ProcessingUnit.Create(new Vector2(420f, 300f));
+        Click(lightning, new[] { lightningFirst, lightningSecond }, 80, Vector2.Zero);
+        Assert(lightningFirst.BrokenLinkCount > 0 && lightningSecond.BrokenLinkCount > 0,
+            "lightning seed did not arc from the first struck blob to a nearby blob");
+
+        var acid = Equipped(19);
+        var acidTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(505f, 265f));
+        var acidDamageBefore = acidTarget.BrokenLinkCount;
+        var acidGranular = new GranularMaterialSystem();
+        var acidGrid = new DestructibleGrid(40, 22, 32);
+        Assert(acid.BeginPrimaryAction(), "acid lobber rejected charge");
+        for (var step = 0; step < 45; step++)
+            acid.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { acidTarget }, 1280f, 720f,
+                granular: acidGranular);
+        acid.EndPrimaryAction();
+        for (var step = 0; step < 180; step++)
+        {
+            acid.Step(Dt, new Vector2(0f, 980f), Array.Empty<ConveyorBelt>(),
+                new[] { acidTarget }, 1280f, 720f,
+                granular: acidGranular);
+            acidGranular.BeginStep();
+            acidGranular.Step(
+                Dt,
+                new Vector2(0f, 980f),
+                acidGrid,
+                new[] { acidTarget });
+        }
+        Assert(acidGranular.AcidCount >= 12 &&
+               acidTarget.BrokenLinkCount > acidDamageBefore,
+            "acid ball did not burst into physical corrosive pixels that burn tissue");
+        Assert(acidGranular.Particles.Where(particle =>
+                    particle.Kind == GranularKind.Acid)
+                .Select(particle => particle.Position.X)
+                .Distinct()
+                .Count() >= 5,
+            "acid burst remained a single hovering pool instead of spreading physically");
+        var acidLine = new ProcessingLine(
+            DestructibleGrid.ProcessingDeckRow * 32f,
+            continuousFlow: true);
+        var acidDrainProbe = new GranularParticle
+        {
+            Position = new Vector2(
+                acidLine.ContinuousDrainCollectorBounds.Left + 12f,
+                acidLine.ContinuousDrainCollectorBounds.Top + 5f),
+            PreviousPosition = new Vector2(
+                acidLine.ContinuousDrainCollectorBounds.Left + 10f,
+                acidLine.ContinuousDrainCollectorBounds.Top + 5f),
+            Radius = 2f,
+            Lifetime = 5f,
+            Kind = GranularKind.Acid
+        };
+        Assert(!acidLine.RouteThroughContinuousEndDrain(ref acidDrainProbe, Dt) &&
+               !acidLine.TryCollectBasinInflow(ref acidDrainProbe, Dt),
+            "physical acid was incorrectly routed into the blood basin");
+        var acidConveyor = new ConveyorBelt(
+            new Vector2(320f, 390f),
+            420f,
+            28f,
+            150f);
+        var flowingAcid = new GranularMaterialSystem();
+        flowingAcid.Particles.Add(new GranularParticle
+        {
+            Position = new Vector2(430f, acidConveyor.Position.Y - 5f),
+            PreviousPosition = new Vector2(430f, acidConveyor.Position.Y - 5f),
+            Radius = 2.4f,
+            Lifetime = 8f,
+            Kind = GranularKind.Acid
+        });
+        var acidStartX = flowingAcid.Particles[0].Position.X;
+        for (var step = 0; step < 120; step++)
+        {
+            flowingAcid.BeginStep();
+            flowingAcid.Step(
+                Dt,
+                new Vector2(0f, 980f),
+                acidGrid,
+                Array.Empty<SoftBody>(),
+                new[] { acidConveyor });
+        }
+        Assert(flowingAcid.AcidCount == 1 &&
+               flowingAcid.Particles[0].Position.X > acidStartX + 18f,
+            "acid pixel floated in world space instead of riding the conveyor like blood");
+
+        var water = Equipped(20);
+        var waterTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(500f, 300f));
+        var tearExplosionBefore = water.ArsenalExplosionSerial;
+        var tearGore = new GranularMaterialSystem();
+        for (var tear = 0; tear < 5; tear++)
+            Click(water, new[] { waterTarget }, 70, Vector2.Zero, tearGore);
+        Assert(waterTarget.AverageVelocity(Dt).Length() > 20f &&
+               waterTarget.HitFlash01 > 0f &&
+               water.ArsenalExplosionSerial > tearExplosionBefore &&
+               tearGore.Particles.Count > 0,
+            "water doll tears lacked the red hit response or five-hit explosive payoff");
+
+        var baseball = Equipped(21);
+        var baseballTarget = BlobArchetype.ProcessingUnit.Create(new Vector2(430f, 300f));
+        Assert(baseball.BeginPrimaryAction() && baseball.EndPrimaryAction(),
+            "bat loadout did not lob its ball on the first LMB");
+        for (var step = 0; step < 12; step++)
+            baseball.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { baseballTarget }, 1280f, 720f);
+        Assert(baseball.BaseballInPlay,
+            "baseball did not remain as a physical re-hittable projectile");
+        Assert(baseball.BeginPrimaryAction() && baseball.EndPrimaryAction(),
+            "bat did not activate after its ball was in play");
+        for (var step = 0; step < 90; step++)
+            baseball.Step(Dt, Vector2.Zero, Array.Empty<ConveyorBelt>(),
+                new[] { baseballTarget }, 1280f, 720f);
+        Assert(baseballTarget.BrokenLinkCount > 0,
+            $"batted baseball did not become the promised high-speed damaging projectile " +
+            $"(target={baseballTarget.Center}, shots={baseball.ArsenalShotSerial}, " +
+            $"ball={string.Join(", ", baseball.ArsenalProjectiles.Select(projectile =>
+                $"{projectile.Kind}@{projectile.Position} v={projectile.Velocity}"))})");
+    }
+
+    private static void ExplosiveFracturesHaveVariedSpin()
+    {
+        var center = new Vector2(500f, 300f);
+        var body = BlobArchetype.ProcessingUnit.Create(center);
+        body.AddRadialExplosion(center, 300f, 860f, Dt);
+        var cutRadius = MathF.Max(3f, body.ParticleSpacing * 0.78f);
+        body.DamageLine(
+            center - Vector2.UnitX * body.Radius,
+            center + Vector2.UnitX * body.Radius,
+            cutRadius, 22f, maximumBreaks: 128);
+        body.DamageLine(
+            center - Vector2.UnitY * body.Radius,
+            center + Vector2.UnitY * body.Radius,
+            cutRadius, 22f, maximumBreaks: 128);
+        body.DamageLine(
+            center + new Vector2(-body.Radius, -body.Radius),
+            center + new Vector2(body.Radius, body.Radius),
+            cutRadius, 20f, maximumBreaks: 96);
+        body.DamageLine(
+            center + new Vector2(-body.Radius, body.Radius),
+            center + new Vector2(body.Radius, -body.Radius),
+            cutRadius, 20f, maximumBreaks: 96);
+
+        var fragments = body.SplitDisconnectedComponents();
+        Assert(fragments.Count >= 3,
+            $"explosive fracture produced too few chunks for launch variation ({fragments.Count})");
+
+        var outwardFragments = 0;
+        var clockwiseFragments = 0;
+        var counterClockwiseFragments = 0;
+        var spinningFragments = 0;
+        foreach (var fragment in fragments)
+        {
+            var radial = fragment.Center - center;
+            if (radial.LengthSquared() > 0.001f &&
+                Vector2.Dot(fragment.AverageVelocity(Dt), Vector2.Normalize(radial)) > 150f)
+                outwardFragments++;
+
+            if (fragment.PhysicalParticleCount < 2) continue;
+            var averageVelocity = fragment.AverageVelocity(Dt);
+            var angularNumerator = 0f;
+            var angularDenominator = 0f;
+            foreach (var particleIndex in Enumerable.Range(0, fragment.Particles.Length))
+            {
+                if (!fragment.IsPhysicalParticle(particleIndex)) continue;
+                var offset = fragment.Particles[particleIndex].Position - fragment.Center;
+                var relativeVelocity =
+                    (fragment.Particles[particleIndex].Position -
+                     fragment.Particles[particleIndex].PreviousPosition) / Dt -
+                    averageVelocity;
+                angularNumerator +=
+                    offset.X * relativeVelocity.Y - offset.Y * relativeVelocity.X;
+                angularDenominator += offset.LengthSquared();
+            }
+            if (angularDenominator <= 0.001f) continue;
+            var angularVelocity = angularNumerator / angularDenominator;
+            if (MathF.Abs(angularVelocity) < 0.45f) continue;
+            spinningFragments++;
+            if (angularVelocity < 0f) clockwiseFragments++;
+            else counterClockwiseFragments++;
+        }
+
+        Assert(outwardFragments >= Math.Max(2, fragments.Count - 1),
+            $"explosive chunks lost their outward launch ({outwardFragments}/{fragments.Count})");
+        Assert(spinningFragments >= 2 &&
+               clockwiseFragments > 0 &&
+               counterClockwiseFragments > 0,
+            $"explosive chunks did not receive varied two-way spin " +
+            $"(spinning={spinningFragments}, cw={clockwiseFragments}, ccw={counterClockwiseFragments})");
+    }
+
+    private static void ContinuousEndDrainRoutesMatter()
+    {
+        var line = new ProcessingLine(480f, powered: true, continuousFlow: true);
+        var midBelt = new GranularParticle
+        {
+            Position = new Vector2(620f, line.DeckY + 2f),
+            PreviousPosition = new Vector2(618f, line.DeckY + 2f),
+            Radius = 2f,
+            Kind = GranularKind.Blood
+        };
+        Assert(!line.RouteThroughContinuousEndDrain(ref midBelt, Dt),
+            "blood disappeared into a drain before traversing the full conveyor");
+
+        // The retired per-bay drain routine used to attract material toward these
+        // five centers even in continuous mode. Collision resolution must now leave
+        // every old aperture position completely untouched.
+        foreach (var bay in line.Bays)
+        {
+            var formerDrain = new Particle
+            {
+                Position = new Vector2(bay.CenterX + 18f, line.DeckY - 1f),
+                PreviousPosition = new Vector2(bay.CenterX + 15f, line.DeckY - 1f),
+                Radius = 2f,
+                InverseMass = 1f
+            };
+            var originalPosition = formerDrain.Position;
+            var originalPrevious = formerDrain.PreviousPosition;
+            line.ResolveGranular(ref formerDrain, Dt, GranularKind.Blood);
+            Assert(formerDrain.Position == originalPosition && formerDrain.PreviousPosition == originalPrevious,
+                $"continuous-belt blood was still attracted toward retired drain at x={bay.CenterX:0}");
+        }
+
+        var blood = midBelt;
+        blood.Position = new Vector2(line.ContinuousDrainCollectorBounds.Left +
+                                     line.ContinuousDrainCollectorBounds.Width * 0.5f, line.DeckY + 1f);
+        blood.PreviousPosition = blood.Position - new Vector2(2f, 0f);
+        Assert(line.RouteThroughContinuousEndDrain(ref blood, Dt),
+            "the single exit collector rejected blood at its opening");
+        for (var step = 0; step < 180; step++)
+            line.RouteThroughContinuousEndDrain(ref blood, Dt);
+        Assert(blood.Position.X < line.Basin.Right && blood.Position.Y > line.Basin.Top,
+            $"blood jammed before the basin pipe mouth ({blood.Position})");
+
+        var tissue = midBelt;
+        tissue.Kind = GranularKind.Tissue;
+        tissue.Position = new Vector2(line.ContinuousDrainCollectorBounds.Left +
+                                      line.ContinuousDrainCollectorBounds.Width * 0.5f + 8f, line.DeckY + 1f);
+        tissue.PreviousPosition = tissue.Position;
+        Assert(line.RouteThroughContinuousEndDrain(ref tissue, Dt),
+            "granular tissue chunk was rejected by the single exit collector");
+
+        var grid = new DestructibleGrid(40, 22, 32);
+        grid.BuildProcessingStation();
+        grid.OpenContinuousConveyorPortals();
+        var integratedLine = new ProcessingLine(480f, powered: true, continuousFlow: true);
+        var granular = new GranularMaterialSystem();
+        granular.Particles.Add(new GranularParticle
+        {
+            Position = new Vector2(integratedLine.ContinuousDrainPipeEntry.X - 8f, integratedLine.DeckY + 1f),
+            PreviousPosition = new Vector2(integratedLine.ContinuousDrainPipeEntry.X - 10f, integratedLine.DeckY + 1f),
+            Radius = 2.3f,
+            Lifetime = 20f,
+            Kind = GranularKind.Blood
+        });
+        granular.Particles.Add(new GranularParticle
+        {
+            Position = new Vector2(integratedLine.ContinuousDrainPipeEntry.X + 8f, integratedLine.DeckY + 1f),
+            PreviousPosition = new Vector2(integratedLine.ContinuousDrainPipeEntry.X + 6f, integratedLine.DeckY + 1f),
+            Radius = 2.8f,
+            Lifetime = 20f,
+            Kind = GranularKind.Tissue,
+            Appearance = GranularAppearance.BlobMint
+        });
+        var noBodies = new List<SoftBody>();
+        for (var step = 0; step < 600; step++)
+        {
+            integratedLine.PreStep(noBodies, granular.Particles, Dt);
+            granular.BeginStep();
+            granular.Step(Dt, new Vector2(0f, 980f), grid, noBodies,
+                integratedLine.Belts, processingLine: integratedLine);
+        }
+        Assert(integratedLine.Basin.StoredVolume > 0f && granular.Particles.Count == 0,
+            $"integrated end drain left matter jammed instead of feeding the basin " +
+            $"({granular.Particles.Count} pixels at {string.Join(", ", granular.Particles.Select(p => p.Position))}, " +
+            $"{integratedLine.Basin.StoredVolume:0.00} stored)");
+    }
+
+    private static void BlobPersonalitiesProduceVariedHops()
+    {
+        var population = new List<SoftBody>(48);
+        for (var index = 0; index < 48; index++)
+            population.Add(BlobArchetype.ProcessingUnit.Create(new Vector2(320f, 380f)));
+        var playful = population.Where(body => body.PersonalityCanHop).ToArray();
+        var quiet = population.Where(body => !body.PersonalityCanHop).ToArray();
+        Assert(playful.Length >= 12 && quiet.Length >= 8,
+            $"personality distribution did not retain both playful and quiet blobs " +
+            $"({playful.Length} playful / {quiet.Length} quiet)");
+        Assert(playful.Max(body => body.PersonalityHopSpeed) -
+               playful.Min(body => body.PersonalityHopSpeed) > 55f &&
+               playful.Max(body => body.PersonalityJumpiness) -
+               playful.Min(body => body.PersonalityJumpiness) > 0.45f,
+            "playful blobs did not receive meaningful height and cadence variance");
+
+        var jumper = playful[0];
+        var groundWorld = new BlobWorld(FlatGrid())
+        {
+            EnableBlobPersonalities = true
+        };
+        groundWorld.Bodies.Add(jumper);
+        var launchY = float.NaN;
+        var highestY = float.MaxValue;
+        var stepsAfterLaunch = 0;
+        for (var step = 0; step < 1800; step++)
+        {
+            var hopsBefore = jumper.PersonalityHopCount;
+            groundWorld.Step(Dt);
+            if (jumper.PersonalityHopCount > hopsBefore)
+            {
+                launchY = jumper.Center.Y;
+                highestY = launchY;
+                stepsAfterLaunch = 0;
+            }
+            if (float.IsNaN(launchY)) continue;
+            highestY = MathF.Min(highestY, jumper.Center.Y);
+            stepsAfterLaunch++;
+            if (stepsAfterLaunch >= 120) break;
+        }
+        var rise = launchY - highestY;
+        Assert(jumper.PersonalityHopCount > 0 &&
+               jumper.LastPersonalityHopSpeed >= 145f &&
+               rise >= 7f && rise <= 78f,
+            $"supported personality hop was missing or physically unreasonable " +
+            $"(speed {jumper.LastPersonalityHopSpeed:0.0}, rise {rise:0.0})");
+
+        var quietBody = quiet[0];
+        var quietCenter = quietBody.Center;
+        for (var particleIndex = 0;
+             particleIndex < quietBody.Particles.Length;
+             particleIndex++)
+        {
+            ref var particle = ref quietBody.Particles[particleIndex];
+            if (particle.Position.Y < quietCenter.Y) continue;
+            particle.Supported = true;
+            particle.SupportMemory = 10;
+        }
+        for (var step = 0; step < 1800; step++)
+            Assert(!quietBody.TryApplyPersonalityHop(Dt, inTube: false),
+                "quiet personality unexpectedly generated a hop");
+
+        SoftBody? tubePersonality = null;
+        var tubeFeed = new OverheadTubeFeed
+        {
+            SpawnInterval = 30f,
+            MaximumBodiesInFactory = 1,
+            EnableBlobPersonalities = true
+        };
+        var tubeWorld = new BlobWorld(FlatGrid())
+        {
+            Gravity = Vector2.Zero,
+            TubeFeed = tubeFeed,
+            EnableBlobPersonalities = true
+        };
+        SoftBody CreatePlayfulTubeBody(Vector2 position)
+        {
+            SoftBody candidate;
+            do
+            {
+                candidate = BlobArchetype.ProcessingUnit.Create(position);
+            } while (!candidate.PersonalityCanHop);
+            tubePersonality = candidate;
+            return candidate;
+        }
+
+        for (var step = 0;
+             step < 1000 &&
+             (tubePersonality is null || tubePersonality.PersonalityHopCount == 0);
+             step++)
+        {
+            tubeFeed.Update(tubeWorld.Bodies, Dt, CreatePlayfulTubeBody);
+            tubeWorld.Step(Dt);
+        }
+        Assert(tubePersonality is
+               {
+                   PersonalityHopCount: > 0,
+                   LastPersonalityHopWasInTube: true
+               } &&
+               tubePersonality.LastPersonalityHopSpeed >= 60f &&
+               tubePersonality.LastPersonalityHopSpeed <= 150f,
+            "playful personality did not contribute a bounded air-assisted tube hop");
     }
 
     private static DestructibleGrid FlatGrid()

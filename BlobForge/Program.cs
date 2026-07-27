@@ -39,6 +39,14 @@ internal static class Program
         {
             return SelfTests.RunGranularSimulationBenchmark();
         }
+        if (args.Contains("--factory-stress-benchmark", StringComparer.OrdinalIgnoreCase))
+        {
+            return SelfTests.RunFactoryStressBenchmark();
+        }
+        if (args.Contains("--spread-population-benchmark", StringComparer.OrdinalIgnoreCase))
+        {
+            return SelfTests.RunSpreadPopulationBenchmark();
+        }
         var snapshotArgument = Array.FindIndex(args,
             argument => argument.Equals("--station-snapshot", StringComparison.OrdinalIgnoreCase));
         if (snapshotArgument >= 0)
@@ -48,6 +56,89 @@ internal static class Program
                 : Path.Combine(AppContext.BaseDirectory, "station-preview.png");
             return SelfTests.WriteStationSnapshot(output);
         }
+        var arsenalMenuSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--arsenal-menu-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (arsenalMenuSnapshotArgument >= 0)
+        {
+            var output = arsenalMenuSnapshotArgument + 1 < args.Length
+                ? args[arsenalMenuSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "arsenal-menu-preview.png");
+            return SelfTests.WriteArsenalMenuSnapshot(output);
+        }
+        var dumbwaiterSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--dumbwaiter-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (dumbwaiterSnapshotArgument >= 0)
+        {
+            var output = dumbwaiterSnapshotArgument + 1 < args.Length
+                ? args[dumbwaiterSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "dumbwaiter-preview.png");
+            return SelfTests.WriteDumbwaiterSnapshot(output);
+        }
+        var basinOverflowSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--basin-overflow-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (basinOverflowSnapshotArgument >= 0)
+        {
+            var output = basinOverflowSnapshotArgument + 1 < args.Length
+                ? args[basinOverflowSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "basin-overflow-preview.png");
+            return SelfTests.WriteBasinOverflowSnapshot(output);
+        }
+        var bloodShipmentSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--blood-shipment-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (bloodShipmentSnapshotArgument >= 0)
+        {
+            var output = bloodShipmentSnapshotArgument + 1 < args.Length
+                ? args[bloodShipmentSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "blood-shipment-preview.png");
+            return SelfTests.WriteBloodShipmentSnapshot(output);
+        }
+        var payoutHandoffSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--payout-handoff-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (payoutHandoffSnapshotArgument >= 0)
+        {
+            var output = payoutHandoffSnapshotArgument + 1 < args.Length
+                ? args[payoutHandoffSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "payout-handoff-preview.png");
+            ApplicationConfiguration.Initialize();
+            using var window = new GameWindow();
+            return window.WritePayoutHandoffSnapshot(output);
+        }
+        var granularOverflowSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--granular-overflow-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (granularOverflowSnapshotArgument >= 0)
+        {
+            var output = granularOverflowSnapshotArgument + 1 < args.Length
+                ? args[granularOverflowSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "granular-overflow-preview.png");
+            return SelfTests.WriteGranularOverflowSnapshot(output);
+        }
+        var cleaverEffectsSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--cleaver-effects-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (cleaverEffectsSnapshotArgument >= 0)
+        {
+            var output = cleaverEffectsSnapshotArgument + 1 < args.Length
+                ? args[cleaverEffectsSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "cleaver-effects-preview.png");
+            return SelfTests.WriteCleaverEffectsSnapshot(output);
+        }
+        var faceSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--face-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (faceSnapshotArgument >= 0)
+        {
+            var output = faceSnapshotArgument + 1 < args.Length
+                ? args[faceSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "face-preview.png");
+            return SelfTests.WriteFaceSnapshot(output);
+        }
+        var drillSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--drill-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (drillSnapshotArgument >= 0)
+        {
+            var output = drillSnapshotArgument + 1 < args.Length
+                ? args[drillSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "drill-preview.png");
+            return SelfTests.WriteDrillSnapshot(output);
+        }
         var drumSnapshotArgument = Array.FindIndex(args,
             argument => argument.Equals("--drum-snapshot", StringComparison.OrdinalIgnoreCase));
         if (drumSnapshotArgument >= 0)
@@ -56,6 +147,15 @@ internal static class Program
                 ? args[drumSnapshotArgument + 1]
                 : Path.Combine(AppContext.BaseDirectory, "drum-preview.png");
             return SelfTests.WriteDrumSnapshot(output);
+        }
+        var workerSnapshotArgument = Array.FindIndex(args,
+            argument => argument.Equals("--worker-snapshot", StringComparison.OrdinalIgnoreCase));
+        if (workerSnapshotArgument >= 0)
+        {
+            var output = workerSnapshotArgument + 1 < args.Length
+                ? args[workerSnapshotArgument + 1]
+                : Path.Combine(AppContext.BaseDirectory, "worker-preview.png");
+            return SelfTests.WriteWorkerSnapshot(output);
         }
         var drumLoadSnapshotArgument = Array.FindIndex(args,
             argument => argument.Equals("--drum-load-snapshot", StringComparison.OrdinalIgnoreCase));

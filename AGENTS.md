@@ -11,7 +11,8 @@ Before changing the project:
 3. Read `BlobForge/docs/CORE_GAME_REQUIREMENTS.md` when making gameplay or physics decisions.
 4. Read `BlobForge/docs/ENGINE_ARCHITECTURE.md` only for longer-term engine direction.
 5. Read `PixelForgeStudio/README.md` before art-tool or asset work.
-6. Inspect the current source and tests. Source code plus passing regressions are more authoritative than an old chat or a stale paragraph in documentation.
+6. Read `BlobForge/docs/ART_STYLE_BIBLE.md` before creating, revising, or reviewing BlobForge raster art.
+7. Inspect the current source and tests. Source code plus passing regressions are more authoritative than an old chat or a stale paragraph in documentation.
 
 Do not restart the project from an archived design. Continue from the working vertical slice and preserve behavior that the user did not ask to change.
 
@@ -56,6 +57,7 @@ These requirements recur throughout the project history and are more important t
 - Clicking anywhere on a pickable blob should produce a stable center/whole-body grab rather than stretching one edge particle. The grab should track strongly without desynchronizing, preserve believable throwing momentum and recoil, and remain constrained by walls and other matter even if the cursor moves outside the room.
 - Blob-on-blob support should come from deformation, friction, mass, and a lower blob forming a cradle. Do not fake stacking with glue/sticky constraints, and do not make piles weightless. Blobs may mush deeply against each other but may not permanently intertwine or occupy the same material space.
 - Damage is local. A tool or cursor damages only material it actually touches; unaffected perimeter regions should not globally dent or reshape without a physical reason.
+- Heavy-designated crushing attacks seek a real supporting surface, drive their crushing face and held grip to that surface, and destroy only the bounded ground-side material beneath the face. Heavy lift-off may retain short-lived liquid blood bridges between the weapon and support; this flavor effect must remain bounded and reusable by future heavy tools.
 - A single right-click/gouge and a held right-drag slice are distinct gestures. A slice previews along the traversed body path and commits when it exits another edge or when the button is released; a click removes a localized chunk. Preserve these semantics unless the user explicitly redesigns the controls.
 - Removed/detached matter should match the actual excised silhouette, remain visible, collide as a real deformable piece, and then shed/dissipate progressively into pixels after impact when appropriate. Do not replace it with a generic circle, delete it instantly, or stagger its disappearance as an obvious canned sequence.
 - Wounds emit blood according to location and severity, then taper naturally. Blood and tissue must not remain trapped inside intact blob matter, and damage must not manufacture or silently erase large amounts of matter.
@@ -78,7 +80,7 @@ These requirements recur throughout the project history and are more important t
 - Loose blood/tissue travels through visible machine drains into the glass basin. Suspended drops can float briefly and dissolve into the conserved cellular fluid rather than disappearing on contact.
 - The basin contains its blood: no stains should appear beneath it. Interior glass, walls, submerged pipe portions, and pipe-mouth edges may become wet or stained in physically plausible ways.
 - Basin bubbles begin only around 35% fill. Diego is currently disabled/dormant; preserve his art and code. If re-enabled, he is a basin inhabitant that may consume stored blood, walks in the correct direction, renders in front of the blood but behind the front glass, and must not destabilize the fluid.
-- At 100% basin capacity, machinery turns red and locks safely. It must never crash or overfill. The in-world blood-exchange/shop foundation can spend basin value and is intended to host later upgrades.
+- At 100% basin capacity, conveyors, machinery, workers, tools, and the physical blood drain remain operational. Routed matter must still visibly travel through the normal funnel and enter the tank, but it adds no stored/spendable value; each incoming physical amount displaces an equal or smaller physical spill over the basin lips. The in-world blood-exchange/shop foundation can spend basin value and restore reserve capacity.
 - The final conveyor transfers blobs and loose matter into a physically containing output cart. The cart and doorway can receive blood stains without matter clipping through the cart walls.
 - Pause Settings currently contains fullscreen, debug, gravity, and persistent Master/SFX/Music volume sliders. Existing game and machinery cues use the SFX bus; the reserved future music channel uses the Music bus. Per-asset sound-file selection does not belong in the in-game Settings screen.
 - New major machinery/gameplay components should expose an authoring/configuration cue path and per-cue gain routed through the SFX bus. Player Settings should expose bus volumes, not development-time file pickers.
@@ -140,7 +142,7 @@ If the editor lacks a capability required for the requested asset, extend `Pixel
 - Preserve deterministic sleep, containment, back-pressure, one-blob-per-machine ownership, and safe release behavior.
 - Never fix a visual problem by changing current gameplay functionality unless the user asks for that change.
 - Do not hide transitions behind foreground sprites. Validate layer order at the beginning, middle, and end of every machine animation.
-- At basin capacity, clamp safely and lock the line; never pass invalid negative/overflow dimensions or values into GDI+.
+- At basin capacity, clamp stored value safely without closing the physical inlet path; never pass invalid negative/overflow dimensions or values into GDI+. Excess routed and direct impacts remain physical overflow outside the authoritative stored value.
 - Audio state updates must remain transition-based/idempotent. Do not restart looping media every 120 Hz update.
 
 ## Source guide

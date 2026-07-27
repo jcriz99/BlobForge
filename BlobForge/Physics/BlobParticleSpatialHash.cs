@@ -1,4 +1,6 @@
 using System.Numerics;
+using System.Buffers;
+using BlobForge.World;
 
 namespace BlobForge.Physics;
 
@@ -8,7 +10,8 @@ internal sealed class BlobParticleSpatialHash
     private readonly Dictionary<long, List<ParticleHandle>> _buckets = new();
     private readonly List<List<ParticleHandle>> _activeBuckets = new(64);
 
-    public int BuildAndResolve(IReadOnlyList<SoftBody> bodies, float dt)
+    public int BuildAndResolve(IReadOnlyList<SoftBody> bodies, float dt,
+        OverheadTubeFeed? tubeFeed = null)
     {
         foreach (var bucket in _activeBuckets) bucket.Clear();
         _activeBuckets.Clear();
@@ -47,6 +50,7 @@ internal sealed class BlobParticleSpatialHash
                     {
                         if (handle.BodyIndex <= bodyIndex) continue;
                         var bodyB = bodies[handle.BodyIndex];
+                        if (tubeFeed is not null && tubeFeed.Contains(bodyA) != tubeFeed.Contains(bodyB)) continue;
                         ref var b = ref bodyB.Particles[handle.ParticleIndex];
                         if (!ResolvePair(bodyA, ref a, bodyB, ref b, dt)) continue;
                         contacts++;
@@ -54,33 +58,50 @@ internal sealed class BlobParticleSpatialHash
                 }
             }
         }
-        contacts += ResolveBodyGuards(bodies, dt);
-        // Maintain continuous hull separation during XPBD solving, but with a
-        // tiny translation budget so the correction cannot fight a distributed
-        // grab and stretch the held body. The world performs one larger bounded
-        // cleanup after all local particle iterations.
-        contacts += BlobHullCollision.ResolveAll(bodies, dt, 0.75f);
-        return contacts;
+        return contacts + ResolveBodyGuards(bodies, dt, tubeFeed);
     }
 
-    private static int ResolveBodyGuards(IReadOnlyList<SoftBody> bodies, float dt)
+    private static int ResolveBodyGuards(IReadOnlyList<SoftBody> bodies, float dt,
+        OverheadTubeFeed? tubeFeed)
     {
-        var contacts = 0;
-        for (var i = 0; i < bodies.Count; i++)
-        for (var j = i + 1; j < bodies.Count; j++)
+        var centers = ArrayPool<Vector2>.Shared.Rent(Math.Max(1, bodies.Count));
+        var averageVelocities = ArrayPool<Vector2>.Shared.Rent(Math.Max(1, bodies.Count));
+        for (var bodyIndex = 0; bodyIndex < bodies.Count; bodyIndex++)
         {
+            centers[bodyIndex] = bodies[bodyIndex].Center;
+            averageVelocities[bodyIndex] = bodies[bodyIndex].AverageVelocity(dt);
+        }
+        var contacts = 0;
+        ulong[]? candidates = null;
+        try
+        {
+        candidates = BlobBodyBroadPhase.RentCandidatePairs(
+            bodies, centers.AsSpan(0, bodies.Count), 0.68f,
+            excludeDetachedDebris: true, tubeFeed: tubeFeed,
+            candidateCount: out var candidateCount);
+        for (var candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++)
+        {
+            var candidate = candidates[candidateIndex];
+            var i = BlobBodyBroadPhase.FirstBodyIndex(candidate);
+            var j = BlobBodyBroadPhase.SecondBodyIndex(candidate);
             var a = bodies[i];
             var b = bodies[j];
+            if (tubeFeed is not null && tubeFeed.Contains(a) != tubeFeed.Contains(b)) continue;
             if (a.IsDetachedDebris || b.IsDetachedDebris) continue;
             if (a.IsSleeping && b.IsSleeping) continue;
-            var delta = b.Center - a.Center;
+            var delta = centers[j] - centers[i];
             var minimumDistance = (a.Radius + b.Radius) * 0.68f;
+            if (a.IsFrozen || b.IsFrozen)
+                minimumDistance = MathF.Max(
+                    minimumDistance,
+                    a.Radius + a.FrozenCollisionPadding +
+                    b.Radius + b.FrozenCollisionPadding);
             var distanceSq = delta.LengthSquared();
             if (distanceSq >= minimumDistance * minimumDistance) continue;
 
             var distance = MathF.Sqrt(MathF.Max(0.0001f, distanceSq));
             var normal = distanceSq < 0.0001f ? Vector2.UnitX : delta / distance;
-            var approachSpeed = -Vector2.Dot(b.AverageVelocity(dt) - a.AverageVelocity(dt), normal);
+            var approachSpeed = -Vector2.Dot(averageVelocities[j] - averageVelocities[i], normal);
             var penetration = minimumDistance - distance;
             if ((a.IsSleeping || b.IsSleeping) && (approachSpeed > 52f || penetration > 4f))
             {
@@ -95,15 +116,26 @@ internal sealed class BlobParticleSpatialHash
             var inverseMass = inverseMassA + inverseMassB;
             if (inverseMass <= 0f) continue;
             var amount = MathF.Min(penetration * 0.18f, 2f);
-            a.ApplyTranslation(-normal * amount * (inverseMassA / inverseMass), preserveVelocity: true);
-            b.ApplyTranslation(normal * amount * (inverseMassB / inverseMass), preserveVelocity: true);
-            a.YieldGrabTargetToSeparation(-normal * amount * (inverseMassA / inverseMass));
-            b.YieldGrabTargetToSeparation(normal * amount * (inverseMassB / inverseMass));
+            var correctionA = -normal * amount * (inverseMassA / inverseMass);
+            var correctionB = normal * amount * (inverseMassB / inverseMass);
+            a.ApplyTranslation(correctionA, preserveVelocity: true);
+            b.ApplyTranslation(correctionB, preserveVelocity: true);
+            a.YieldGrabTargetToSeparation(correctionA);
+            b.YieldGrabTargetToSeparation(correctionB);
+            centers[i] += correctionA;
+            centers[j] += correctionB;
             a.MarkSupportedByBody(normal);
             b.MarkSupportedByBody(-normal);
             contacts++;
         }
         return contacts;
+        }
+        finally
+        {
+            if (candidates is not null) ArrayPool<ulong>.Shared.Return(candidates);
+            ArrayPool<Vector2>.Shared.Return(centers);
+            ArrayPool<Vector2>.Shared.Return(averageVelocities);
+        }
     }
 
     private static bool ResolvePair(SoftBody bodyA, ref Particle a, SoftBody bodyB, ref Particle b, float dt)
@@ -181,9 +213,10 @@ internal sealed class BlobParticleSpatialHash
             a.PreviousPosition += impulse * dt;
             b.PreviousPosition -= impulse * dt;
         }
-        var bodyAxis = bodyB.Center - bodyA.Center;
-        if (bodyA.IsGrabbed && !bodyB.IsGrabbed) bodyB.ApplyPressureDamping(bodyAxis, dt);
-        else if (bodyB.IsGrabbed && !bodyA.IsGrabbed) bodyA.ApplyPressureDamping(-bodyAxis, dt);
+        if (bodyA.IsGrabbed && !bodyB.IsGrabbed)
+            bodyB.ApplyPressureDamping(bodyB.Center - bodyA.Center, dt);
+        else if (bodyB.IsGrabbed && !bodyA.IsGrabbed)
+            bodyA.ApplyPressureDamping(bodyA.Center - bodyB.Center, dt);
         return true;
     }
 

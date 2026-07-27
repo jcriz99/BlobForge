@@ -7,7 +7,15 @@ namespace BlobForge.Physics;
 public enum GranularKind : byte
 {
     Tissue,
-    Blood
+    Blood,
+    Acid
+}
+
+public enum GranularAppearance : byte
+{
+    Gore,
+    BlobMint,
+    BlobTeal
 }
 
 public struct GranularParticle
@@ -17,17 +25,47 @@ public struct GranularParticle
     public float Radius;
     public float Lifetime;
     public GranularKind Kind;
+    public GranularAppearance Appearance;
     public byte RestFrames;
     public bool SplatterOnImpact;
+    public bool BypassConveyors;
+    // Enclosed drain transit remains visible, but it must not be pushed back
+    // into the collector by generic pile/blob contacts.
+    public bool InContinuousDrain;
+    public float CorrosionCooldown;
+    // Foreground depth-fall is a support/pile behavior. Airborne wound spray
+    // and freshly granulated detached tissue must stay in normal 2D physics.
+    public byte ForegroundSupportFrames;
+}
+
+public struct ForegroundGranularSpill
+{
+    public Vector2 Position;
+    public Vector2 Velocity;
+    public float Radius;
+    public float Lifetime;
+    public GranularKind Kind;
+    public GranularAppearance Appearance;
+    public byte Variation;
 }
 
 public sealed class GranularMaterialSystem
 {
     public const int ParticleCapacity = 5000;
+    public const int ForegroundSpillCapacity = 256;
     public const int BloodSpawnBudgetPerStep = 28;
     public const int TissueSpawnBudgetPerStep = 256;
     private const float GranularHashCellSize = 7f;
     private const float BlobHashCellSize = 34f;
+    private const float DensePileCellWidth = 32f;
+    private const float DensePileCellHeight = 24f;
+    private const float DensePileMaximumSpeed = 150f;
+    private const int DensePileThreshold = 20;
+    private const int DensePileScanStride = 6;
+    private const int DensePileSpillBaseBudget = 8;
+    private const int DensePileSpillMaximumBudget = 32;
+    private const int DensePileMaximumColumns = 64;
+    private const int DensePileMaximumRows = 40;
 
     private readonly Dictionary<long, List<int>> _granularBuckets = new();
     private readonly Dictionary<long, List<BlobParticleHandle>> _blobBuckets = new();
@@ -36,15 +74,24 @@ public sealed class GranularMaterialSystem
     private readonly List<List<BlobParticleHandle>> _activeBlobBuckets = new(64);
     private readonly List<List<int>> _activeBlobBodyBuckets = new(64);
     private readonly List<ContainmentContourCache> _blobContainmentContours = new();
+    private readonly int[] _densePileCounts =
+        new int[DensePileMaximumColumns * DensePileMaximumRows];
     private int _bloodBudgetRemaining;
     private int _tissueBudgetRemaining;
     private uint _randomState = 0xA341316Cu;
     private int _stepSerial;
 
     public List<GranularParticle> Particles { get; } = new(ParticleCapacity);
+    public List<ForegroundGranularSpill> ForegroundSpills { get; } =
+        new(ForegroundSpillCapacity);
     public int BloodCount => Particles.Count(p => p.Kind == GranularKind.Blood);
     public int TissuePixelCount => Particles.Count(p => p.Kind == GranularKind.Tissue);
+    public int AcidCount => Particles.Count(p => p.Kind == GranularKind.Acid);
     public int SourceTissueConvertedTotal { get; private set; }
+    public int ForegroundSpillConvertedTotal { get; private set; }
+    public int ForegroundSpillExpiredTotal { get; private set; }
+    public int ForegroundSpillCollectedTotal { get; private set; }
+    public int ForegroundSpillReemittedTotal { get; private set; }
     public int SpawnedThisStep { get; private set; }
     public int BloodSpawnedThisStep { get; private set; }
     public int BloodSplatteredThisStep { get; private set; }
@@ -81,7 +128,8 @@ public sealed class GranularMaterialSystem
                 Radius = NextFloat(1.6f, 2.7f),
                 Lifetime = NextFloat(12f, 22f),
                 Kind = GranularKind.Blood,
-                SplatterOnImpact = Next01() < 0.30f
+                SplatterOnImpact = Next01() < 0.30f,
+                BypassConveyors = Next01() < 0.14f
             });
         }
         _bloodBudgetRemaining -= count;
@@ -99,7 +147,8 @@ public sealed class GranularMaterialSystem
             Radius = emission.Radius,
             Lifetime = 8f + (emission.Variation & 7) * 0.55f,
             Kind = GranularKind.Blood,
-            SplatterOnImpact = false
+            SplatterOnImpact = false,
+            BypassConveyors = (emission.Variation & 7) == 0
         });
         _bloodBudgetRemaining--;
         BloodSpawnedThisStep++;
@@ -130,7 +179,9 @@ public sealed class GranularMaterialSystem
                     PreviousPosition = position - velocity * dt,
                     Radius = NextFloat(2.1f, 3.4f),
                     Lifetime = NextFloat(26f, 44f),
-                    Kind = GranularKind.Tissue
+                    Kind = GranularKind.Tissue,
+                    Appearance = NextTissueAppearance(),
+                    BypassConveyors = Next01() < 0.10f
                 });
             }
         }
@@ -158,7 +209,9 @@ public sealed class GranularMaterialSystem
                 PreviousPosition = position - velocity * dt,
                 Radius = NextFloat(2.1f, 3.4f),
                 Lifetime = NextFloat(26f, 44f),
-                Kind = GranularKind.Tissue
+                Kind = GranularKind.Tissue,
+                Appearance = NextTissueAppearance(),
+                BypassConveyors = Next01() < 0.10f
             });
         }
         return true;
@@ -179,7 +232,9 @@ public sealed class GranularMaterialSystem
             PreviousPosition = position - velocity * dt,
             Radius = NextFloat(2.1f, 3.4f),
             Lifetime = NextFloat(26f, 44f),
-            Kind = GranularKind.Tissue
+            Kind = GranularKind.Tissue,
+            Appearance = NextTissueAppearance(),
+            BypassConveyors = Next01() < 0.10f
         });
         _tissueBudgetRemaining--;
         return true;
@@ -194,9 +249,13 @@ public sealed class GranularMaterialSystem
         IReadOnlyList<SoftBody> bodies,
         IReadOnlyList<ConveyorBelt>? conveyors = null,
         HoldingChamber? holdingChamber = null,
-        ProcessingLine? processingLine = null)
+        ProcessingLine? processingLine = null,
+        PhysicalKnife? knife = null)
     {
         _stepSerial++;
+        var worldWidth = grid.Columns * grid.CellSize;
+        var worldHeight = grid.Rows * grid.CellSize;
+        UpdateForegroundSpills(dt, worldWidth, worldHeight, processingLine);
         var bucketStart = Stopwatch.GetTimestamp();
         BuildBlobBuckets(bodies);
         var integrationStart = Stopwatch.GetTimestamp();
@@ -206,11 +265,15 @@ public sealed class GranularMaterialSystem
         {
             var granular = Particles[i];
             granular.Lifetime -= dt;
+            granular.CorrosionCooldown =
+                MathF.Max(0f, granular.CorrosionCooldown - dt);
+            if (granular.ForegroundSupportFrames > 0)
+                granular.ForegroundSupportFrames--;
             if (granular.Lifetime <= 0f ||
                 granular.Position.X < -64f || granular.Position.X > grid.Columns * grid.CellSize + 64f ||
                 granular.Position.Y > grid.Rows * grid.CellSize + 96f)
             {
-                Particles.RemoveAt(i);
+                RemoveParticleAtSwapBack(i);
                 continue;
             }
 
@@ -219,24 +282,40 @@ public sealed class GranularMaterialSystem
             // quarter of dormant pixels each 120 Hz step (every pixel at 30 Hz)
             // so destroyed terrain wakes them within 25 ms without spending the
             // full grid/blob collision cost on dense motionless pools.
-            if (granular.RestFrames > 24 && ((i + _stepSerial) & 3) != 0)
+            if (!granular.InContinuousDrain &&
+                granular.RestFrames > 24 && ((i + _stepSerial) & 3) != 0)
             {
                 Particles[i] = granular;
                 continue;
             }
 
-            var damping = granular.Kind == GranularKind.Blood ? 0.991f : 0.977f;
+            var damping = granular.Kind is GranularKind.Blood or GranularKind.Acid
+                ? 0.991f
+                : 0.977f;
             var velocity = (granular.Position - granular.PreviousPosition) * damping;
             var incomingSpeed = velocity.Length() / dt;
             granular.PreviousPosition = granular.Position;
             granular.Position += velocity + gravity * dt2;
 
+            if (granular.Kind == GranularKind.Blood &&
+                knife?.ResolveBloodContact(ref granular, dt) == true &&
+                granular.Lifetime <= 0f)
+            {
+                RemoveParticleAtSwapBack(i);
+                continue;
+            }
+
+            var routedThroughContinuousDrain =
+                granular.Kind != GranularKind.Acid &&
+                processingLine?.RouteThroughContinuousEndDrain(ref granular, dt) == true;
+
             // Basin conversion must happen in the same granular integration pass.
             // Waiting for the next 120 Hz world pre-step allowed a fast droplet to
             // cross the tank and paint the structural floor underneath it first.
-            if (processingLine?.TryCollectBasinInflow(granular, dt) == true)
+            if (granular.Kind != GranularKind.Acid &&
+                processingLine?.TryCollectBasinInflow(ref granular, dt) == true)
             {
-                Particles.RemoveAt(i);
+                RemoveParticleAtSwapBack(i);
                 continue;
             }
 
@@ -254,7 +333,9 @@ public sealed class GranularMaterialSystem
                 granular.Position = proxy.Position;
                 granular.PreviousPosition = proxy.PreviousPosition;
             }
-            var collision = grid.ResolveParticle(ref proxy, dt);
+            var collision = routedThroughContinuousDrain
+                ? default
+                : grid.ResolveParticle(ref proxy, dt);
             granular.Position = proxy.Position;
             granular.PreviousPosition = proxy.PreviousPosition;
             var protectedByBasin = collision.Hit &&
@@ -263,7 +344,7 @@ public sealed class GranularMaterialSystem
             {
                 PaintGridSplatter(grid, collision, MathF.Max(incomingSpeed, collision.Impact));
                 BloodSplatteredThisStep++;
-                Particles.RemoveAt(i);
+                RemoveParticleAtSwapBack(i);
                 continue;
             }
             // A visible pool of settled blood must keep feeding the surface
@@ -287,7 +368,8 @@ public sealed class GranularMaterialSystem
                     collision.Normal,
                     stainAmount);
             }
-            if (conveyors is not null)
+            var conveyorSupportHit = false;
+            if (!routedThroughContinuousDrain && !granular.BypassConveyors && conveyors is not null)
             {
                 var splatteredOnConveyor = false;
                 foreach (var conveyor in conveyors)
@@ -295,6 +377,7 @@ public sealed class GranularMaterialSystem
                     if (!conveyor.ContainsPoint(proxy.Position, proxy.Radius)) continue;
                     var conveyorContact = conveyor.ResolveParticle(ref proxy, dt, true);
                     if (!conveyorContact.Hit) continue;
+                    conveyorSupportHit = true;
                     granular.Position = proxy.Position;
                     granular.PreviousPosition = proxy.PreviousPosition;
                     if (granular.Kind == GranularKind.Blood && granular.SplatterOnImpact && incomingSpeed >= 45f)
@@ -316,14 +399,16 @@ public sealed class GranularMaterialSystem
                 }
                 if (splatteredOnConveyor)
                 {
-                    Particles.RemoveAt(i);
+                    RemoveParticleAtSwapBack(i);
                     continue;
                 }
             }
 
-            ResolveBlobContact(ref granular, bodies, dt);
+            if (!granular.InContinuousDrain)
+                ResolveBlobContact(ref granular, bodies, dt);
             var chamberContact = SurfaceContact.None;
-            if (granular.Kind == GranularKind.Blood && holdingChamber is not null)
+            if (!granular.InContinuousDrain &&
+                granular.Kind == GranularKind.Blood && holdingChamber is not null)
             {
                 proxy.Position = granular.Position;
                 proxy.PreviousPosition = granular.PreviousPosition;
@@ -332,7 +417,7 @@ public sealed class GranularMaterialSystem
                 granular.PreviousPosition = proxy.PreviousPosition;
             }
             var machineContact = SurfaceContact.None;
-            if (processingLine is not null)
+            if (!granular.InContinuousDrain && processingLine is not null)
             {
                 if (granular.Kind == GranularKind.Blood)
                     processingLine.RegisterDoorwayBlood(
@@ -358,6 +443,12 @@ public sealed class GranularMaterialSystem
             {
                 granular.RestFrames = 0;
             }
+            if (collision.Hit ||
+                chamberContact.Hit ||
+                machineContact.Hit ||
+                cartContainment.Hit ||
+                conveyorSupportHit)
+                granular.ForegroundSupportFrames = 18;
             Particles[i] = granular;
         }
 
@@ -372,6 +463,7 @@ public sealed class GranularMaterialSystem
             for (var i = 0; i < Particles.Count; i++)
             {
                 var granular = Particles[i];
+                if (granular.InContinuousDrain) continue;
                 if (!processingLine.CouldNeedCartContainment(
                         granular.Position,
                         granular.PreviousPosition,
@@ -395,6 +487,7 @@ public sealed class GranularMaterialSystem
             for (var i = 0; i < Particles.Count; i++)
             {
                 var granular = Particles[i];
+                if (granular.InContinuousDrain) continue;
                 if (granular.Kind != GranularKind.Blood) continue;
                 var proxy = new Particle
                 {
@@ -409,7 +502,177 @@ public sealed class GranularMaterialSystem
                 Particles[i] = granular;
             }
         }
+        if (_stepSerial % DensePileScanStride == 0)
+            ConvertDensePilesToForegroundSpills(dt, worldWidth, worldHeight);
         LastContactSolveMs = Stopwatch.GetElapsedTime(contactStart).TotalMilliseconds;
+    }
+
+    private void UpdateForegroundSpills(
+        float dt,
+        float worldWidth,
+        float worldHeight,
+        ProcessingLine? processingLine)
+    {
+        for (var i = ForegroundSpills.Count - 1; i >= 0; i--)
+        {
+            var spill = ForegroundSpills[i];
+            spill.Lifetime -= dt;
+            spill.Velocity.Y = MathF.Min(540f, spill.Velocity.Y + 135f * dt);
+            spill.Position += spill.Velocity * dt;
+            var basinContact = processingLine?.TryCollectForegroundSpill(
+                ref spill,
+                dt) ?? ForegroundBasinContact.None;
+            if (basinContact == ForegroundBasinContact.Collected)
+            {
+                RemoveForegroundSpillAtSwapBack(i);
+                ForegroundSpillCollectedTotal++;
+                continue;
+            }
+            if (basinContact == ForegroundBasinContact.ReemitPhysical &&
+                TryReemitForegroundSpill(spill, dt))
+            {
+                RemoveForegroundSpillAtSwapBack(i);
+                ForegroundSpillReemittedTotal++;
+                continue;
+            }
+            if (spill.Lifetime <= 0f ||
+                spill.Position.Y - spill.Radius > worldHeight + 80f ||
+                spill.Position.X < -48f || spill.Position.X > worldWidth + 48f)
+            {
+                RemoveForegroundSpillAtSwapBack(i);
+                ForegroundSpillExpiredTotal++;
+                continue;
+            }
+            ForegroundSpills[i] = spill;
+        }
+    }
+
+    private bool TryReemitForegroundSpill(
+        ForegroundGranularSpill spill,
+        float dt)
+    {
+        if (Particles.Count >= ParticleCapacity) return false;
+        Particles.Add(new GranularParticle
+        {
+            Position = spill.Position,
+            PreviousPosition = spill.Position - spill.Velocity * dt,
+            Radius = spill.Radius,
+            Lifetime = MathF.Max(4f, spill.Lifetime),
+            Kind = spill.Kind,
+            Appearance = spill.Appearance,
+            SplatterOnImpact = spill.Kind == GranularKind.Blood,
+            ForegroundSupportFrames = 0
+        });
+        return true;
+    }
+
+    private void ConvertDensePilesToForegroundSpills(
+        float dt,
+        float worldWidth,
+        float worldHeight)
+    {
+        if (ForegroundSpills.Count >= ForegroundSpillCapacity ||
+            Particles.Count == 0)
+            return;
+
+        var columns = Math.Clamp(
+            (int)MathF.Ceiling(worldWidth / DensePileCellWidth),
+            1,
+            DensePileMaximumColumns);
+        var rows = Math.Clamp(
+            (int)MathF.Ceiling(worldHeight / DensePileCellHeight),
+            1,
+            DensePileMaximumRows);
+        Array.Clear(_densePileCounts, 0, columns * rows);
+        var maximumSpeedSquared = DensePileMaximumSpeed * DensePileMaximumSpeed;
+        var maximumLocalDensity = 0;
+        for (var i = 0; i < Particles.Count; i++)
+        {
+            var particle = Particles[i];
+            if (!IsDensePileCandidate(particle, dt, maximumSpeedSquared)) continue;
+            if (!TryDensePileIndex(particle.Position, columns, rows, out var densityIndex))
+                continue;
+            var density = ++_densePileCounts[densityIndex];
+            maximumLocalDensity = Math.Max(maximumLocalDensity, density);
+        }
+
+        var pressureBudget = DensePileSpillBaseBudget +
+                             Math.Max(0, maximumLocalDensity - DensePileThreshold) / 2;
+        var remainingBudget = Math.Min(
+            Math.Min(DensePileSpillMaximumBudget, pressureBudget),
+            ForegroundSpillCapacity - ForegroundSpills.Count);
+        for (var i = Particles.Count - 1; i >= 0 && remainingBudget > 0; i--)
+        {
+            var particle = Particles[i];
+            if (!IsDensePileCandidate(particle, dt, maximumSpeedSquared)) continue;
+            if (!TryDensePileIndex(particle.Position, columns, rows, out var densityIndex))
+                continue;
+            var localDensity = _densePileCounts[densityIndex];
+            if (Next01() >= ForegroundTransitionChanceForDensity(localDensity)) continue;
+
+            var physicalVelocity = (particle.Position - particle.PreviousPosition) / dt;
+            ForegroundSpills.Add(new ForegroundGranularSpill
+            {
+                Position = particle.Position + new Vector2(NextFloat(-1.5f, 1.5f), 0f),
+                Velocity = new Vector2(
+                    Math.Clamp(physicalVelocity.X * 0.08f, -12f, 12f) + NextFloat(-7f, 7f),
+                    NextFloat(270f, 390f)),
+                Radius = particle.Radius,
+                Lifetime = NextFloat(2.6f, 3.5f),
+                Kind = particle.Kind,
+                Appearance = particle.Appearance,
+                Variation = (byte)(Next01() * byte.MaxValue)
+            });
+            _densePileCounts[densityIndex]--;
+            RemoveParticleAtSwapBack(i);
+            ForegroundSpillConvertedTotal++;
+            remainingBudget--;
+        }
+    }
+
+    internal static float ForegroundTransitionChanceForDensity(int localDensity)
+    {
+        if (localDensity <= 0) return 0f;
+        if (localDensity <= 4)
+            return 0.00045f + (localDensity - 1) * 0.00035f;
+        if (localDensity <= 12)
+            return 0.0015f + (localDensity - 4) * 0.00145f;
+        if (localDensity <= DensePileThreshold)
+            return 0.0131f + (localDensity - 12) * 0.0052f;
+        return Math.Clamp(
+            0.065f + (localDensity - DensePileThreshold) * 0.025f,
+            0.065f,
+            0.90f);
+    }
+
+    private static bool IsDensePileCandidate(
+        GranularParticle particle,
+        float dt,
+        float maximumSpeedSquared)
+    {
+        if (particle.InContinuousDrain ||
+            particle.ForegroundSupportFrames == 0 ||
+            particle.Kind is not (GranularKind.Blood or GranularKind.Tissue))
+            return false;
+        var velocity = (particle.Position - particle.PreviousPosition) / dt;
+        return velocity.LengthSquared() <= maximumSpeedSquared;
+    }
+
+    private static bool TryDensePileIndex(
+        Vector2 position,
+        int columns,
+        int rows,
+        out int index)
+    {
+        var x = (int)MathF.Floor(position.X / DensePileCellWidth);
+        var y = (int)MathF.Floor(position.Y / DensePileCellHeight);
+        if ((uint)x >= (uint)columns || (uint)y >= (uint)rows)
+        {
+            index = -1;
+            return false;
+        }
+        index = y * columns + x;
+        return true;
     }
 
     private void PaintGridSplatter(DestructibleGrid grid, CollisionResult collision, float speed)
@@ -525,6 +788,7 @@ public sealed class GranularMaterialSystem
     private void ResolveBlobContact(ref GranularParticle granular, IReadOnlyList<SoftBody> bodies, float dt)
     {
         var cell = Cell(granular.Position, BlobHashCellSize);
+        var depositedBlood = false;
         for (var y = cell.Y - 1; y <= cell.Y + 1; y++)
         for (var x = cell.X - 1; x <= cell.X + 1; x++)
         {
@@ -553,10 +817,44 @@ public sealed class GranularMaterialSystem
                     body.Wake();
                 granular.Position += normal * penetration * 0.94f;
 
+                if (!depositedBlood && granular.Kind == GranularKind.Blood &&
+                    (incomingImpact > 10f || penetration > 1.4f))
+                {
+                    body.DepositBloodStain(
+                        handle.ParticleIndex,
+                        tissue.Position + normal * tissue.Radius,
+                        0.08f + Math.Clamp(incomingImpact * 0.0022f, 0f, 0.30f));
+                    depositedBlood = true;
+                }
+
+                if (granular.Kind == GranularKind.Acid &&
+                    granular.CorrosionCooldown <= 0f)
+                {
+                    var corrosionPoint =
+                        tissue.Position + normal * tissue.Radius;
+                    body.DamageLine(
+                        corrosionPoint,
+                        corrosionPoint,
+                        granular.Radius * 1.65f + 2f,
+                        1.55f,
+                        maximumBreaks: 1);
+                    body.DamageBonds(
+                        corrosionPoint,
+                        granular.Radius * 2.4f + 3f,
+                        1.25f);
+                    body.RegisterHitReaction(0.72f, 0.10f);
+                    granular.CorrosionCooldown = 0.105f;
+                    granular.Lifetime =
+                        MathF.Max(0.4f, granular.Lifetime - 0.055f);
+                }
+
                 if (normalSpeed < 0f)
                 {
                     var tangent = velocity - normal * normalSpeed;
-                    var restitution = granular.Kind == GranularKind.Blood ? 0.07f : 0.14f;
+                    var restitution = granular.Kind is
+                        GranularKind.Blood or GranularKind.Acid
+                        ? 0.07f
+                        : 0.14f;
                     var bounced = tangent * 0.74f - normal * normalSpeed * restitution;
                     granular.PreviousPosition = granular.Position - bounced * dt;
                 }
@@ -565,6 +863,14 @@ public sealed class GranularMaterialSystem
 
         if (granular.Kind == GranularKind.Blood)
             EjectBloodFromBlobInterior(ref granular, bodies, dt);
+    }
+
+    private GranularAppearance NextTissueAppearance()
+    {
+        var sample = Next01();
+        if (sample < 0.30f) return GranularAppearance.BlobMint;
+        if (sample < 0.42f) return GranularAppearance.BlobTeal;
+        return GranularAppearance.Gore;
     }
 
     private void EjectBloodFromBlobInterior(
@@ -648,6 +954,7 @@ public sealed class GranularMaterialSystem
         _activeGranularBuckets.Clear();
         for (var i = 0; i < Particles.Count; i++)
         {
+            if (Particles[i].InContinuousDrain) continue;
             var cell = Cell(Particles[i].Position, GranularHashCellSize);
             var key = Key(cell.X, cell.Y);
             if (!_granularBuckets.TryGetValue(key, out var bucket))
@@ -662,6 +969,7 @@ public sealed class GranularMaterialSystem
         for (var i = 0; i < Particles.Count; i++)
         {
             var a = Particles[i];
+            if (a.InContinuousDrain) continue;
             var cell = Cell(a.Position, GranularHashCellSize);
             // Visit each unordered neighboring cell pair exactly once. The old
             // 3x3 scan traversed both A->B and B->A, then discarded half using
@@ -688,6 +996,7 @@ public sealed class GranularMaterialSystem
         {
             if (sameCell && otherIndex <= particleIndex) continue;
             var b = Particles[otherIndex];
+            if (b.InContinuousDrain) continue;
             if (a.RestFrames > 12 && b.RestFrames > 12) continue;
             var delta = b.Position - a.Position;
             var minDistance = a.Radius + b.Radius;
@@ -709,6 +1018,22 @@ public sealed class GranularMaterialSystem
         if (Particles.Count >= ParticleCapacity) Particles.RemoveRange(0, Math.Min(64, Particles.Count));
         Particles.Add(particle);
         SpawnedThisStep++;
+    }
+
+    private void RemoveParticleAtSwapBack(int index)
+    {
+        var last = Particles.Count - 1;
+        if ((uint)index >= (uint)Particles.Count) return;
+        if (index != last) Particles[index] = Particles[last];
+        Particles.RemoveAt(last);
+    }
+
+    private void RemoveForegroundSpillAtSwapBack(int index)
+    {
+        var last = ForegroundSpills.Count - 1;
+        if ((uint)index >= (uint)ForegroundSpills.Count) return;
+        if (index != last) ForegroundSpills[index] = ForegroundSpills[last];
+        ForegroundSpills.RemoveAt(last);
     }
 
     private static (int X, int Y) Cell(Vector2 position, float cellSize)

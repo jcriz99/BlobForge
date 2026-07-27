@@ -24,6 +24,7 @@ internal static class BlobContourBuilder
     public static Contour BuildShell(SoftBody body)
     {
         var cohesiveDamage = !body.IsCrumbling && (body.HasLocalDamage || body.IsDetachedDebris);
+        var healthyConvexHull = !body.IsCrumbling && !cohesiveDamage;
         var contour = body.IsCrumbling
             ? BuildActiveHull(body)
             : cohesiveDamage
@@ -36,17 +37,33 @@ internal static class BlobContourBuilder
             contour = BuildCohesiveContour(body);
         }
         if (contour.Points.Length < 3) contour = BuildActiveHull(body);
-        if (contour.Points.Length < 3 || !IsValid(contour.Points)) return Contour.Empty;
+        if (contour.Points.Length < 3 ||
+            (healthyConvexHull ? !HasFiniteArea(contour.Points) : !IsValid(contour.Points)))
+            return Contour.Empty;
 
         var center = body.Center;
-        var shell = (Vector2[])contour.Points.Clone();
+        // Every builder below returns an owned point array. Expand that array in
+        // place instead of cloning one more contour-sized buffer on every render
+        // and collision query.
+        var shell = contour.Points;
         for (var i = 0; i < shell.Length; i++)
         {
-            if (contour.WoundPoints[i]) continue;
+            if (contour.WoundPoints.Length == shell.Length && contour.WoundPoints[i]) continue;
             var direction = shell[i] - center;
             if (direction.LengthSquared() > 0.0001f)
                 shell[i] += Vector2.Normalize(direction) * body.ParticleSpacing * SkinExpansion;
         }
+        // BuildHealthyHull is a convex hull whose center lies inside it. Moving
+        // its vertices outward along their center rays preserves angular order,
+        // cannot introduce a crossing, and continues to contain the unexpanded
+        // material. The general O(n^2) intersection and containment repair below
+        // is required for wound seams and crumbling components, but only repeats
+        // already-proven work for the common intact-body path used by rendering
+        // and every hull-collision pass.
+        if (healthyConvexHull)
+            return HasFiniteArea(shell)
+                ? new Contour(shell, contour.WoundPoints, contour.ParticleIndices)
+                : Contour.Empty;
         if (IsValid(shell) && RepairPhysicalContainment(body, shell, contour.ParticleIndices))
             return new Contour(shell, contour.WoundPoints, contour.ParticleIndices);
         if (cohesiveDamage)
@@ -143,47 +160,99 @@ internal static class BlobContourBuilder
 
     private static Contour BuildHealthyHull(SoftBody body)
     {
-        var indices = Enumerable.Range(0, body.Particles.Length)
-            .Where(body.IsSurfaceParticle)
-            .ToArray();
-        return BuildHull(body, indices);
+        var policy = Policies.GetOrCreateValue(body);
+        if (policy.SurfaceTopologyRevision != body.TopologyRevision)
+        {
+            var count = 0;
+            for (var index = 0; index < body.Particles.Length; index++)
+                if (body.IsSurfaceParticle(index)) count++;
+            policy.SurfaceParticles = new int[count];
+            count = 0;
+            for (var index = 0; index < body.Particles.Length; index++)
+                if (body.IsSurfaceParticle(index)) policy.SurfaceParticles[count++] = index;
+            policy.SurfaceTopologyRevision = body.TopologyRevision;
+        }
+        return BuildHull(body, policy.SurfaceParticles, policy.SurfaceParticles.Length, policy);
     }
 
     private static Contour BuildActiveHull(SoftBody body)
     {
-        var indices = Enumerable.Range(0, body.Particles.Length)
-            .Where(body.IsPhysicalParticle)
-            .ToArray();
-        return BuildHull(body, indices);
+        var policy = Policies.GetOrCreateValue(body);
+        if (policy.ActiveParticleScratch.Length < body.Particles.Length)
+            policy.ActiveParticleScratch = new int[body.Particles.Length];
+        var count = 0;
+        for (var index = 0; index < body.Particles.Length; index++)
+            if (body.IsPhysicalParticle(index)) policy.ActiveParticleScratch[count++] = index;
+        return BuildHull(body, policy.ActiveParticleScratch, count, policy);
     }
 
     private static Contour BuildHull(SoftBody body, int[] indices)
-    {
-        if (indices.Length < 3) return Contour.Empty;
-        Array.Sort(indices, (a, b) =>
-        {
-            var x = body.Particles[a].Position.X.CompareTo(body.Particles[b].Position.X);
-            return x != 0 ? x : body.Particles[a].Position.Y.CompareTo(body.Particles[b].Position.Y);
-        });
+        => BuildHull(body, indices, indices.Length, Policies.GetOrCreateValue(body));
 
-        var hull = new List<int>(indices.Length * 2);
-        foreach (var index in indices)
+    private static Contour BuildHull(
+        SoftBody body,
+        int[] indices,
+        int indexCount,
+        ContourPolicy policy)
+    {
+        if (indexCount < 3) return Contour.Empty;
+        // Boundary populations are small. Allocation-free insertion sorting is
+        // faster here than constructing a captured comparer for Array.Sort.
+        for (var index = 1; index < indexCount; index++)
         {
-            while (hull.Count >= 2 && Cross(body, hull[^2], hull[^1], index) <= 0f) hull.RemoveAt(hull.Count - 1);
-            hull.Add(index);
+            var value = indices[index];
+            var cursor = index - 1;
+            while (cursor >= 0 && CompareParticlePosition(body, indices[cursor], value) > 0)
+            {
+                indices[cursor + 1] = indices[cursor];
+                cursor--;
+            }
+            indices[cursor + 1] = value;
         }
-        var lowerCount = hull.Count;
-        for (var i = indices.Length - 2; i >= 0; i--)
+
+        var required = indexCount * 2;
+        if (policy.HullIndexScratch.Length < required)
+            policy.HullIndexScratch = new int[required];
+        var hull = policy.HullIndexScratch;
+        var hullCount = 0;
+        for (var indexPosition = 0; indexPosition < indexCount; indexPosition++)
         {
-            var index = indices[i];
-            while (hull.Count > lowerCount && Cross(body, hull[^2], hull[^1], index) <= 0f) hull.RemoveAt(hull.Count - 1);
-            hull.Add(index);
+            var particleIndex = indices[indexPosition];
+            while (hullCount >= 2 && Cross(body, hull[hullCount - 2], hull[hullCount - 1], particleIndex) <= 0f)
+                hullCount--;
+            hull[hullCount++] = particleIndex;
         }
-        if (hull.Count > 1) hull.RemoveAt(hull.Count - 1);
-        var points = hull.Select(index => body.Particles[index].Position).ToArray();
+        var lowerCount = hullCount;
+        for (var i = indexCount - 2; i >= 0; i--)
+        {
+            var particleIndex = indices[i];
+            while (hullCount > lowerCount &&
+                   Cross(body, hull[hullCount - 2], hull[hullCount - 1], particleIndex) <= 0f)
+                hullCount--;
+            hull[hullCount++] = particleIndex;
+        }
+        if (hullCount > 1) hullCount--;
+        if (policy.HullPointOutput.Length != hullCount)
+        {
+            policy.HullPointOutput = new Vector2[hullCount];
+            policy.HullParticleOutput = new int[hullCount];
+        }
+        var points = policy.HullPointOutput;
+        var particleIndices = policy.HullParticleOutput;
+        for (var i = 0; i < hullCount; i++)
+        {
+            particleIndices[i] = hull[i];
+            points[i] = body.Particles[hull[i]].Position;
+        }
         return points.Length >= 3
-            ? new Contour(points, new bool[points.Length], hull.ToArray())
+            ? new Contour(points, Array.Empty<bool>(), particleIndices)
             : Contour.Empty;
+    }
+
+    private static int CompareParticlePosition(SoftBody body, int a, int b)
+    {
+        var x = body.Particles[a].Position.X.CompareTo(body.Particles[b].Position.X);
+        return x != 0 ? x : body.Particles[a].Position.Y.CompareTo(body.Particles[b].Position.Y);
     }
 
     private static float Cross(SoftBody body, int origin, int a, int b)
@@ -212,8 +281,13 @@ internal static class BlobContourBuilder
             return BuildHull(body, policy.CohesiveParticles);
 
         var best = policy.BoundaryLoop;
-        var materialPoints = best.Select(index => body.Particles[index].Position).ToArray();
-        var points = (Vector2[])materialPoints.Clone();
+        if (policy.MaterialPointScratch.Length < best.Length)
+            policy.MaterialPointScratch = new Vector2[best.Length];
+        if (policy.CohesivePointOutput.Length != best.Length)
+            policy.CohesivePointOutput = new Vector2[best.Length];
+        var points = policy.CohesivePointOutput;
+        for (var index = 0; index < best.Length; index++)
+            points[index] = policy.MaterialPointScratch[index] = body.Particles[best[index]].Position;
         Array.Clear(policy.ProjectionSum);
         Array.Clear(policy.ProjectionCount);
         foreach (var group in policy.SegmentGroups)
@@ -290,10 +364,10 @@ internal static class BlobContourBuilder
         for (var i = 0; i < points.Length; i++)
         {
             if (policy.WoundPoints[i]) continue;
-            var displacement = points[i] - materialPoints[i];
+            var displacement = points[i] - policy.MaterialPointScratch[i];
             var length = displacement.Length();
             if (length > maximumSmoothingTravel)
-                points[i] = materialPoints[i] + displacement * (maximumSmoothingTravel / length);
+                points[i] = policy.MaterialPointScratch[i] + displacement * (maximumSmoothingTravel / length);
         }
 
         if (IsValid(points)) return new Contour(points, policy.WoundPoints, policy.BoundaryLoop);
@@ -509,9 +583,7 @@ internal static class BlobContourBuilder
 
     internal static bool IsValid(ReadOnlySpan<Vector2> points)
     {
-        if (points.Length < 3 || MathF.Abs(PolygonArea(points)) < 1f) return false;
-        for (var i = 0; i < points.Length; i++)
-            if (!float.IsFinite(points[i].X) || !float.IsFinite(points[i].Y)) return false;
+        if (!HasFiniteArea(points)) return false;
         for (var i = 0; i < points.Length; i++)
         {
             var a0 = points[i];
@@ -522,6 +594,14 @@ internal static class BlobContourBuilder
                 if (SegmentsProperlyIntersect(a0, a1, points[j], points[(j + 1) % points.Length])) return false;
             }
         }
+        return true;
+    }
+
+    private static bool HasFiniteArea(ReadOnlySpan<Vector2> points)
+    {
+        if (points.Length < 3 || MathF.Abs(PolygonArea(points)) < 1f) return false;
+        for (var i = 0; i < points.Length; i++)
+            if (!float.IsFinite(points[i].X) || !float.IsFinite(points[i].Y)) return false;
         return true;
     }
 
@@ -554,7 +634,13 @@ internal static class BlobContourBuilder
     private sealed class ContourPolicy
     {
         public int TopologyRevision { get; set; } = -1;
+        public int SurfaceTopologyRevision { get; set; } = -1;
         public bool ForceCohesiveHull { get; set; }
+        public int[] SurfaceParticles { get; set; } = Array.Empty<int>();
+        public int[] ActiveParticleScratch { get; set; } = Array.Empty<int>();
+        public int[] HullIndexScratch { get; set; } = Array.Empty<int>();
+        public Vector2[] HullPointOutput { get; set; } = Array.Empty<Vector2>();
+        public int[] HullParticleOutput { get; set; } = Array.Empty<int>();
         public int[] CohesiveParticles { get; set; } = Array.Empty<int>();
         public int[] BoundaryLoop { get; set; } = Array.Empty<int>();
         public bool[] WoundPoints { get; set; } = Array.Empty<bool>();
@@ -562,6 +648,8 @@ internal static class BlobContourBuilder
         public Vector2[] ProjectionSum { get; set; } = Array.Empty<Vector2>();
         public int[] ProjectionCount { get; set; } = Array.Empty<int>();
         public Vector2[] SmoothingScratch { get; set; } = Array.Empty<Vector2>();
+        public Vector2[] MaterialPointScratch { get; set; } = Array.Empty<Vector2>();
+        public Vector2[] CohesivePointOutput { get; set; } = Array.Empty<Vector2>();
     }
 
     private readonly record struct MeshEdge

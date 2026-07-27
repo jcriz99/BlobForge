@@ -31,11 +31,17 @@ public sealed class BlobWorld
     public LightingRig Lighting { get; } = new();
     public HoldingChamber? HoldingChamber { get; set; }
     public ProcessingLine? ProcessingLine { get; set; }
+    public OverheadTubeFeed? TubeFeed { get; set; }
+    public PhysicalKnife? Knife { get; set; }
+    public WeaponDumbwaiter? WeaponDumbwaiter { get; set; }
     public DestructibleGrid Grid { get; }
     public Vector2 Gravity { get; set; } = new(0f, 980f);
+    public bool EnableBlobPersonalities { get; set; }
     public double LastSimulationMs { get; private set; }
     public double LastBodyPhysicsMs { get; private set; }
     public double LastGranularSimulationMs { get; private set; }
+    public double LastBlobParticleCollisionMs { get; private set; }
+    public double LastHullCollisionMs { get; private set; }
     public int LastConstraintIterations { get; private set; }
     public int ContactsThisStep { get; private set; }
     public int BlobContactsThisStep { get; private set; }
@@ -63,6 +69,11 @@ public sealed class BlobWorld
         Lighting.Step(dt);
         HoldingChamber?.Step(dt);
         ProcessingLine?.PreStep(Bodies, Granular.Particles, dt);
+        WeaponDumbwaiter?.Step(dt, Gravity, Conveyors, Grid,
+            Grid.Columns * Grid.CellSize, Grid.Rows * Grid.CellSize, Knife,
+            ProcessingLine is { } line && (line.Powered || line.PoweringUp));
+        Knife?.Step(dt, Gravity, Conveyors, Bodies, Grid.Columns * Grid.CellSize,
+            Grid.Rows * Grid.CellSize, TubeFeed, Grid, Granular);
         if (ProcessingLine is not null)
         {
             _dispatchedParentBuffer.Clear();
@@ -85,6 +96,7 @@ public sealed class BlobWorld
             foreach (var body in Bodies)
                 if (chamber.IsInFeedEnvelope(body)) body.Wake();
         _scheduler.Apply(Bodies);
+        foreach (var body in Bodies) body.AdvanceFaceAnimation(dt);
         ContactsThisStep = 0;
         BlobContactsThisStep = 0;
         TopologySplitsThisStep = 0;
@@ -92,11 +104,21 @@ public sealed class BlobWorld
         LastConstraintIterations = 0;
 
         var maxIterations = 0;
+        var grabbedBodyPresent = false;
+        long blobParticleCollisionTicks = 0;
+        long hullCollisionTicks = 0;
         foreach (var body in Bodies)
         {
+            grabbedBodyPresent |= body.IsGrabbed;
+            var wasSleeping = body.IsSleeping;
             body.BeginImpactStep();
-            body.PrepareConstraintSolve();
+            if (!wasSleeping) body.PrepareConstraintSolve();
             body.Integrate(dt, Gravity);
+            TubeFeed?.ConstrainBody(body, dt);
+            // A tube event may wake a body after sleeping integration returned.
+            // Reset its XPBD lambdas before it joins this step's solver, while
+            // leaving truly dormant bodies completely out of constraint setup.
+            if (wasSleeping && !body.IsSleeping) body.PrepareConstraintSolve();
             if (!body.IsSleeping)
                 maxIterations = Math.Max(maxIterations, ModeSettings.For(body.Mode).SolverIterations);
         }
@@ -107,13 +129,29 @@ public sealed class BlobWorld
             {
                 if (body.IsSleeping || iteration >= ModeSettings.For(body.Mode).SolverIterations) continue;
                 body.SolveConstraintIteration(dt);
+                if (TubeFeed?.ConstrainBody(body, dt) == true) continue;
                 ResolveWorld(body, dt);
+                ContactsThisStep += TubeFeed?.ResolveExteriorBody(body, dt) ?? 0;
                 LastConstraintIterations++;
             }
             foreach (var body in Bodies) body.BeginPressureContactPass();
-            var blobContacts = _blobHash.BuildAndResolve(Bodies, dt);
+            var blobParticleStart = Stopwatch.GetTimestamp();
+            var blobContacts = _blobHash.BuildAndResolve(Bodies, dt, TubeFeed);
+            blobParticleCollisionTicks += Stopwatch.GetTimestamp() - blobParticleStart;
             BlobContactsThisStep += blobContacts;
             ContactsThisStep += blobContacts;
+            // Local surface particles are the actual blob contact solver and run on
+            // every XPBD pass. The convex hull is the deep-overlap safety guard; an
+            // alternating cadence keeps pressure/backstop behavior continuous without
+            // rebuilding every damaged contour on consecutive sub-iterations.
+            if (grabbedBodyPresent || (iteration & 1) == 0)
+            {
+                var hullStart = Stopwatch.GetTimestamp();
+                var hullContacts = BlobHullCollision.ResolveAll(Bodies, dt, 1f, TubeFeed);
+                hullCollisionTicks += Stopwatch.GetTimestamp() - hullStart;
+                BlobContactsThisStep += hullContacts;
+                ContactsThisStep += hullContacts;
+            }
         }
 
         var arenaLeft = Grid.CellSize;
@@ -121,25 +159,52 @@ public sealed class BlobWorld
         var arenaBottom = Grid.Rows * Grid.CellSize + 96f;
         foreach (var body in Bodies)
         {
+            if (TubeFeed?.ConstrainBody(body, dt) == true) continue;
             if (!body.IsSleeping) ResolveWorld(body, dt);
-            if (ProcessingLine?.IsInTransit(body) != true)
+            ContactsThisStep += TubeFeed?.ResolveExteriorBody(body, dt) ?? 0;
+            if (body.IsSleeping) continue;
+            if (ProcessingLine?.IsInTransit(body) != true &&
+                ProcessingLine?.IsContinuousPortalTransit(body) != true)
                 body.EnforceArenaBounds(arenaLeft, arenaRight, 0f, arenaBottom, dt);
         }
         foreach (var body in Bodies) body.BeginPressureContactPass();
-        var finalHullContacts = BlobHullCollision.ResolveAll(Bodies, dt);
+        var finalHullStart = Stopwatch.GetTimestamp();
+        var finalHullContacts = BlobHullCollision.ResolveAll(Bodies, dt, tubeFeed: TubeFeed);
+        hullCollisionTicks += Stopwatch.GetTimestamp() - finalHullStart;
         BlobContactsThisStep += finalHullContacts;
         ContactsThisStep += finalHullContacts;
         foreach (var body in Bodies)
         {
+            if (TubeFeed?.ConstrainBody(body, dt) == true) continue;
             if (!body.IsSleeping) ResolveWorld(body, dt);
-            if (ProcessingLine?.IsInTransit(body) != true)
+            ContactsThisStep += TubeFeed?.ResolveExteriorBody(body, dt) ?? 0;
+            if (body.IsSleeping) continue;
+            if (ProcessingLine?.IsInTransit(body) != true &&
+                ProcessingLine?.IsContinuousPortalTransit(body) != true)
                 body.EnforceArenaBounds(arenaLeft, arenaRight, 0f, arenaBottom, dt);
         }
 
         foreach (var body in Bodies) body.ApplyResidualPressureDamping(dt);
         foreach (var body in Bodies) body.ApplyRestingViscosity(dt);
         foreach (var body in Bodies) body.ApplyDamagedShapeRecovery(dt);
+        if (EnableBlobPersonalities) foreach (var body in Bodies)
+        {
+            if (TubeFeed?.Contains(body) == true) continue;
+            var personalityAllowed =
+                ProcessingLine?.Powered != false &&
+                ProcessingLine?.IsLocked(body) != true &&
+                ProcessingLine?.HasEnteredBayOne(body) != true &&
+                ProcessingLine?.IsContinuousPortalTransit(body) != true &&
+                (HoldingChamber is null || !HoldingChamber.IsInFeedEnvelope(body));
+            body.TryApplyPersonalityHop(dt, inTube: false, allowed: personalityAllowed);
+        }
         foreach (var body in Bodies) body.UpdateSleep(dt);
+        // Sample once after weapons, machinery, impacts and the full contact solve,
+        // but before topology can turn a lethal one-step break into detached pieces.
+        // This catches both weapon cuts and high-speed wall/blob impacts without a
+        // second per-step body scan.
+        WeaponDumbwaiter?.ObserveDamage(Bodies, ProcessingLine?.Powered == true);
+        ProcessingLine?.ObserveProcessedDamage(Bodies);
         ProcessTopology(TopologyBodiesPerStep, dt);
         RegisterPendingWounds(dt);
         UpdateDetachedChunks(dt);
@@ -152,13 +217,15 @@ public sealed class BlobWorld
             var granularDt = MathF.Min(_granularAccumulator, 1f / 30f);
             _granularAccumulator = 0f;
             var granularStart = Stopwatch.GetTimestamp();
-            Granular.Step(granularDt, Gravity, Grid, Bodies, Conveyors, HoldingChamber, ProcessingLine);
+            Granular.Step(granularDt, Gravity, Grid, Bodies, Conveyors, HoldingChamber, ProcessingLine, Knife);
             granularElapsed = Stopwatch.GetElapsedTime(granularStart).TotalMilliseconds;
             LastGranularSimulationMs = granularElapsed;
         }
         _timer.Stop();
         LastSimulationMs = _timer.Elapsed.TotalMilliseconds;
         LastBodyPhysicsMs = Math.Max(0d, LastSimulationMs - granularElapsed);
+        LastBlobParticleCollisionMs = blobParticleCollisionTicks * 1000d / Stopwatch.Frequency;
+        LastHullCollisionMs = hullCollisionTicks * 1000d / Stopwatch.Frequency;
     }
 
     private void ProcessTopology(int bodyBudget, float dt)
@@ -416,8 +483,12 @@ public sealed class BlobWorld
 
             foreach (var conveyor in Conveyors)
             {
-                if (!conveyor.ContainsPoint(particle.Position, particle.Radius)) continue;
-                var contact = conveyor.ResolveParticle(ref particle, dt, true);
+                var forceTopContainment = conveyor.IsSystemControlled &&
+                                          _conveyorCommittedParents.Contains(body.ParentId) &&
+                                          particle.Position.X >= conveyor.Position.X - particle.Radius &&
+                                          particle.Position.X <= conveyor.Position.X + conveyor.Width + particle.Radius;
+                if (!forceTopContainment && !conveyor.ContainsPoint(particle.Position, particle.Radius)) continue;
+                var contact = conveyor.ResolveParticle(ref particle, dt, true, forceTopContainment);
                 if (!contact.Hit) continue;
                 if (contact.IsTop) _conveyorCommittedParents.Add(body.ParentId);
                 ContactsThisStep++;
@@ -464,6 +535,7 @@ public sealed class BlobWorld
         foreach (var body in Bodies)
         {
             if (!body.IsPickable) continue;
+            if (TubeFeed?.Contains(body) == true) continue;
             if (ProcessingLine?.HasEnteredBayOne(body) == true) continue;
             if (ProcessingLine?.IsLocked(body) == true) continue;
             if (HoldingChamber is not null &&

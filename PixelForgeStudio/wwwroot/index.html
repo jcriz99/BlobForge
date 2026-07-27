@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Pixel Forge Studio</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="project-browser.css">
+  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="project-browser.css?v=5">
+  <link rel="stylesheet" href="production.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -30,6 +31,7 @@
       <button class="tool" data-tool="picker" title="Picker (I)">⌾<small>Picker</small></button>
       <button class="tool" data-tool="line" title="Line (L)">╱<small>Line</small></button>
       <button class="tool" data-tool="rect" title="Rectangle (R)">□<small>Rect</small></button>
+      <button class="tool" data-tool="select" title="Rectangular selection/mask (S)">⌗<small>Select</small></button>
       <div class="rail-break"></div>
       <button id="undo" class="tool" title="Undo (Ctrl+Z)">↶<small>Undo</small></button>
       <button id="redo" class="tool" title="Redo (Ctrl+Y)">↷<small>Redo</small></button>
@@ -41,9 +43,9 @@
         <div><strong id="projectTitle">No project</strong><span id="dimensions"></span></div>
         <div class="zoom-control"><button id="zoomOut">−</button><span id="zoomLabel">1200%</span><button id="zoomIn">+</button></div>
       </div>
-      <div id="canvasWrap" class="canvas-wrap"><canvas id="canvas" width="32" height="32"></canvas><div id="cursorInfo">x 0 · y 0</div></div>
+      <div id="canvasWrap" class="canvas-wrap" title="Mouse wheel: zoom · Shift + wheel: scroll artwork"><canvas id="canvas" width="32" height="32"></canvas><div id="cursorInfo">x 0 · y 0</div></div>
       <div class="timeline">
-        <div class="timeline-head"><strong>Animation</strong><button id="play">▶</button><button id="addFrame">+ Frame</button><button id="deleteFrame">−</button><label><input id="onion" type="checkbox"> Onion</label></div>
+        <div class="timeline-head"><strong>Animation</strong><select id="animationClip" title="Named animation clip"><option value="">All frames</option></select><button id="addClip" title="Add animation clip">+ Clip</button><button id="deleteClip" title="Delete selected clip">− Clip</button><button id="play">▶</button><button id="addFrame">+ Frame</button><button id="deleteFrame">−</button><label><input id="onion" type="checkbox"> Onion</label><label title="Previous onion frames">−<input id="onionPrev" type="number" min="0" max="4" value="1"></label><label title="Next onion frames">+<input id="onionNext" type="number" min="0" max="4" value="1"></label></div>
         <div id="frames" class="frames"></div>
       </div>
     </section>
@@ -53,6 +55,27 @@
         <div class="section-title"><strong>Palette</strong><span id="colorHex">#0b1020</span></div>
         <div id="palette" class="palette"></div>
         <div class="color-add"><input id="colorInput" type="color" value="#ffcc66"><button id="addColor">Add color</button></div>
+      </section>
+      <section class="panel inspector-section production-section">
+        <div class="section-title"><strong>Art Direction</strong><button id="refreshReport" title="Refresh production report">↻</button></div>
+        <label class="check-row"><input id="paletteLocked" type="checkbox"> Lock approved palette</label>
+        <label>Approved reference<select id="referenceSelect"><option value="">None</option></select></label>
+        <label class="range-row">Overlay <input id="referenceOpacity" type="range" min="0" max="1" step="0.05" value="0.35"><span id="referenceOpacityLabel">35%</span></label>
+        <div class="validation-row"><label><input id="validateTileX" type="checkbox"> Tile X</label><label><input id="validateTileY" type="checkbox"> Tile Y</label><label><input id="validateLoop" type="checkbox"> Loop</label><label><input id="validateFrames" type="checkbox"> Frame drift</label><label><input id="validateAttachments" type="checkbox"> Motion tracks</label></div>
+        <div class="production-buttons"><button id="showContactSheet">Contact sheet</button><button id="showComparison">Compare</button></div>
+        <div class="selection-panel">
+          <small id="selectionStatus">No selection mask</small>
+          <div class="production-buttons"><button id="copySelection">Copy</button><button id="pasteSelection">Paste</button><button id="flipSelectionH">Flip H</button><button id="flipSelectionV">Flip V</button><button id="rotateSelection">180°</button></div>
+        </div>
+        <div class="attachment-editor">
+          <strong>Attachment points</strong>
+          <div class="attachment-inputs"><input id="attachmentName" placeholder="name"><input id="attachmentX" type="number" min="0" placeholder="x"><input id="attachmentY" type="number" min="0" placeholder="y"><button id="addAttachment">+</button></div>
+          <label class="check-row"><input id="attachmentCurrentFrame" type="checkbox"> Key on current frame for motion tracking</label>
+          <div id="attachmentList"></div>
+        </div>
+        <label>Runtime asset<input id="runtimeAssetName" placeholder="Auto from project name"></label>
+        <div class="production-buttons"><button id="sendToBlobForge">Send to BlobForge</button><button id="previewInBlobForge" class="accent">Preview in game</button></div>
+        <div id="productionReport" class="production-report">Report loading…</div>
       </section>
       <section class="panel inspector-section layers-section">
         <div class="section-title"><strong>Layers</strong><div><button id="addLayer">+</button><button id="deleteLayer">−</button></div></div>
@@ -74,7 +97,11 @@
       <div class="dialog-actions"><button type="button" id="cancelNew">Cancel</button><button class="accent" value="create">Create project</button></div>
     </form>
   </dialog>
+  <dialog id="previewDialog" class="preview-dialog">
+    <div class="preview-dialog-head"><div><h2 id="previewDialogTitle">Preview</h2><p id="previewDialogNote"></p></div><button id="closePreviewDialog">Close</button></div>
+    <div class="preview-image-wrap"><img id="previewDialogImage" alt="Pixel art production preview"></div>
+  </dialog>
   <div id="toast" role="status"></div>
-  <script src="app.js"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

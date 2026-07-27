@@ -737,6 +737,19 @@ public sealed class DestructibleGrid
         for (var y = 14; y <= 17; y++) Set(Columns - 1, y, CellMaterial.Air);
     }
 
+    public void OpenContinuousConveyorPortals()
+    {
+        // Five cell-high apertures clear the canonical 72 px blob silhouette plus
+        // the complete 26 px belt. Foreground portal art supplies the tighter rim.
+        for (var y = 12; y <= 16; y++)
+        {
+            Set(0, y, CellMaterial.Air);
+            Set(Columns - 1, y, CellMaterial.Air);
+        }
+        Set(0, 17, CellMaterial.Steel);
+        Set(Columns - 1, 17, CellMaterial.Steel);
+    }
+
     private bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Columns && y < Rows;
 
     private static bool TryCircleAabb(

@@ -26,14 +26,15 @@ public sealed class ProjectStore
         return cleaned.Length > 64 ? cleaned[..64] : cleaned;
     }
 
-    public IEnumerable<object> List() => Directory.EnumerateFiles(_root, "*.pixelforge.json")
+    public IEnumerable<ProjectSummary> List() => Directory.EnumerateFiles(_root, "*.pixelforge.json")
         .Select(path =>
         {
             try
             {
                 var p = JsonSerializer.Deserialize<PixelProject>(File.ReadAllText(path), _json)!;
                 p.Category = ProjectCategory.Normalize(p.Category, p.Name);
-                return new { p.Name, p.Category, p.Width, p.Height, Frames = p.FrameCount, Layers = p.Layers.Count, p.Revision, p.UpdatedAt };
+                return new ProjectSummary(p.Name, p.Category, p.Width, p.Height, p.FrameCount,
+                    p.Layers.Count, p.Revision, p.UpdatedAt);
             }
             catch { return null; }
         }).Where(x => x is not null)!;
@@ -56,12 +57,18 @@ public sealed class ProjectStore
     public async Task Save(PixelProject project, bool bumpRevision = true)
     {
         project.Validate();
+        var path = PathFor(project.Name);
+        if (project.PaletteLocked && File.Exists(path))
+        {
+            var existing = JsonSerializer.Deserialize<PixelProject>(await File.ReadAllTextAsync(path), _json);
+            if (existing is not null && !existing.Palette.SequenceEqual(project.Palette, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidDataException("Palette is locked. Unlock it before adding, removing, reordering, or replacing colors.");
+        }
         if (bumpRevision) project.Revision++;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await _gate.WaitAsync();
         try
         {
-            var path = PathFor(project.Name);
             var temp = path + ".tmp";
             await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(project, _json));
             File.Move(temp, path, true);
@@ -86,3 +93,6 @@ public sealed class ProjectStore
         return true;
     }
 }
+
+public sealed record ProjectSummary(string Name, string Category, int Width, int Height,
+    int Frames, int Layers, long Revision, DateTimeOffset UpdatedAt);

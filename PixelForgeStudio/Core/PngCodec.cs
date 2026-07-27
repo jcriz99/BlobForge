@@ -32,6 +32,37 @@ public static class PngCodec
         return EncodeRgba(w * scale, project.Height * scale, rgba);
     }
 
+    public static byte[] RenderContactSheet(PixelProject project, int scale = 4, int columns = 0, IReadOnlyList<int>? frames = null)
+    {
+        scale = Math.Clamp(scale, 1, 32);
+        frames ??= Enumerable.Range(0, project.FrameCount).ToArray();
+        if (frames.Count == 0 || frames.Any(frame => frame < 0 || frame >= project.FrameCount)) throw new InvalidDataException("Contact-sheet frames are outside the project.");
+        columns = columns <= 0 ? Math.Max(1, (int)Math.Ceiling(Math.Sqrt(frames.Count))) : Math.Clamp(columns, 1, frames.Count);
+        var rows = (frames.Count + columns - 1) / columns;
+        const int gap = 2;
+        var width = columns * project.Width + (columns - 1) * gap;
+        var height = rows * project.Height + (rows - 1) * gap;
+        var rgba = new byte[width * height * 4];
+        for (var index = 0; index < frames.Count; index++)
+        {
+            var source = Composite(project, frames[index]); var ox = (index % columns) * (project.Width + gap); var oy = (index / columns) * (project.Height + gap);
+            Blit(source, project.Width, project.Height, rgba, width, ox, oy);
+        }
+        if (scale > 1) rgba = ScaleNearest(rgba, width, height, scale);
+        return EncodeRgba(width * scale, height * scale, rgba);
+    }
+
+    public static byte[] RenderComparison(PixelProject project, int frame, PixelProject reference, int referenceFrame, int scale = 4)
+    {
+        scale = Math.Clamp(scale, 1, 32); const int gap = 4;
+        var width = project.Width + gap + reference.Width; var height = Math.Max(project.Height, reference.Height);
+        var rgba = new byte[width * height * 4];
+        Blit(Composite(project, frame), project.Width, project.Height, rgba, width, 0, 0);
+        Blit(Composite(reference, referenceFrame), reference.Width, reference.Height, rgba, width, project.Width + gap, 0);
+        if (scale > 1) rgba = ScaleNearest(rgba, width, height, scale);
+        return EncodeRgba(width * scale, height * scale, rgba);
+    }
+
     public static byte[] Composite(PixelProject project, int frame)
     {
         var output = new byte[project.Width * project.Height * 4];
@@ -69,6 +100,12 @@ public static class PngCodec
             Buffer.BlockCopy(source, si, output, di, 4);
         }
         return output;
+    }
+
+    private static void Blit(byte[] source, int sourceWidth, int sourceHeight, byte[] destination, int destinationWidth, int x, int y)
+    {
+        for (var row = 0; row < sourceHeight; row++)
+            Buffer.BlockCopy(source, row * sourceWidth * 4, destination, ((y + row) * destinationWidth + x) * 4, sourceWidth * 4);
     }
 
     public static byte[] EncodeRgba(int width, int height, byte[] rgba)

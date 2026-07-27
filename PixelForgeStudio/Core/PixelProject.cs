@@ -13,6 +13,11 @@ public sealed class PixelProject
     public List<PixelLayer> Layers { get; set; } = [];
     public List<int> FrameDurationsMs { get; set; } = [];
     public List<AnimationTag> Tags { get; set; } = [];
+    public bool PaletteLocked { get; set; }
+    public ArtReference? Reference { get; set; }
+    public List<AttachmentPoint> AttachmentPoints { get; set; } = [];
+    public ProjectValidation Validation { get; set; } = new();
+    public string RuntimeAssetName { get; set; } = "";
     public long Revision { get; set; } = 1;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
@@ -59,7 +64,34 @@ public sealed class PixelProject
                     if (layer.Frames[i][p] < -1 || layer.Frames[i][p] >= Palette.Count) layer.Frames[i][p] = -1;
             }
         }
-        Tags = Tags.Where(t => t.From >= 0 && t.To >= t.From && t.To < FrameCount).ToList();
+        Tags = Tags
+            .Where(t => !string.IsNullOrWhiteSpace(t.Name) && t.From >= 0 && t.To >= t.From && t.To < FrameCount)
+            .Select(t => new AnimationTag
+            {
+                Name = t.Name.Trim(), From = t.From, To = t.To, Loop = t.Loop,
+                Direction = t.Direction.ToLowerInvariant() is "forward" or "reverse" or "pingpong" ? t.Direction.ToLowerInvariant() : "forward"
+            })
+            .GroupBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(group => group.Last()).ToList();
+        if (Reference is not null)
+        {
+            Reference.ProjectName = ProjectStore.SanitizeName(Reference.ProjectName);
+            Reference.Frame = Math.Max(0, Reference.Frame);
+            Reference.Opacity = Math.Clamp(Reference.Opacity, 0, 1);
+        }
+        AttachmentPoints = AttachmentPoints
+            .Where(a => !string.IsNullOrWhiteSpace(a.Name))
+            .GroupBy(a => $"{a.Name.Trim().ToLowerInvariant()}\0{a.Frame?.ToString() ?? "global"}")
+            .Select(g => g.Last())
+            .Select(a => new AttachmentPoint
+            {
+                Name = a.Name.Trim(), X = Math.Clamp(a.X, 0, Width - 1), Y = Math.Clamp(a.Y, 0, Height - 1),
+                Frame = a.Frame.HasValue ? Math.Clamp(a.Frame.Value, 0, FrameCount - 1) : null
+            }).ToList();
+        Validation ??= new ProjectValidation();
+        Validation.MaxOccupancyDriftPercent = Math.Clamp(Validation.MaxOccupancyDriftPercent, 0, 1000);
+        Validation.MaxBoundsDriftPixels = Math.Clamp(Validation.MaxBoundsDriftPixels, 0, Math.Max(Width, Height));
+        Validation.MaxAttachmentStepPixels = Math.Clamp(Validation.MaxAttachmentStepPixels, 0, Math.Max(Width, Height));
+        RuntimeAssetName = RuntimeAssetName.Trim();
     }
 
     public static readonly string[] DefaultPalette =
@@ -103,6 +135,7 @@ public sealed class PixelLayer
     public string Name { get; set; } = "Layer";
     public bool Visible { get; set; } = true;
     public double Opacity { get; set; } = 1;
+    public bool FrameInvariant { get; set; }
     public List<int[]> Frames { get; set; } = [];
 
     public static PixelLayer Create(string name, int frames, int pixels) => new()
@@ -118,6 +151,34 @@ public sealed class AnimationTag
     public int From { get; set; }
     public int To { get; set; }
     public string Direction { get; set; } = "forward";
+    public bool Loop { get; set; } = true;
+}
+
+public sealed class ArtReference
+{
+    public string ProjectName { get; set; } = "";
+    public int Frame { get; set; }
+    public double Opacity { get; set; } = 0.35;
+}
+
+public sealed class AttachmentPoint
+{
+    public string Name { get; set; } = "anchor";
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int? Frame { get; set; }
+}
+
+public sealed class ProjectValidation
+{
+    public bool TileX { get; set; }
+    public bool TileY { get; set; }
+    public bool Loop { get; set; }
+    public bool FrameConsistency { get; set; }
+    public double MaxOccupancyDriftPercent { get; set; } = 20;
+    public int MaxBoundsDriftPixels { get; set; } = 2;
+    public bool AttachmentMotion { get; set; }
+    public double MaxAttachmentStepPixels { get; set; } = 8;
 }
 
 public static class ColorUtil

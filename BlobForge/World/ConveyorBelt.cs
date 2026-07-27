@@ -10,6 +10,7 @@ public sealed class ConveyorBelt
     private static int _nextId;
     private readonly List<BloodSurfaceMark> _bloodStains = new(64);
     private readonly List<TransientConveyorBloodDrop> _transientDrops = new(6);
+    private readonly List<ConveyorDripEmitter> _dripEmitters = new(10);
     private uint _paintRandomState = 0xD1B54A35u;
     private readonly float _minimumWidth;
 
@@ -24,7 +25,9 @@ public sealed class ConveyorBelt
         Id = Interlocked.Increment(ref _nextId);
         Position = position;
         _minimumWidth = Math.Clamp(minimumWidth, 24f, 96f);
-        Width = Math.Clamp(width, _minimumWidth, 520f);
+        // The playable continuous-flow line is one physical belt spanning beyond
+        // both viewport edges. Authoring belts retain their compact limit.
+        Width = Math.Clamp(width, _minimumWidth, systemControlled ? 1600f : 520f);
         Height = Math.Clamp(height, 20f, 72f);
         Speed = Math.Clamp(speed, -420f, 420f);
         IsSystemControlled = systemControlled;
@@ -40,6 +43,7 @@ public sealed class ConveyorBelt
     public bool IsSystemControlled { get; }
     public IReadOnlyList<BloodSurfaceMark> BloodStains => _bloodStains;
     public IReadOnlyList<TransientConveyorBloodDrop> TransientDrops => _transientDrops;
+    public IReadOnlyList<ConveyorDripEmitter> DripEmitters => _dripEmitters;
 
     public void Move(Vector2 delta, float arenaWidth, float arenaHeight)
     {
@@ -83,6 +87,32 @@ public sealed class ConveyorBelt
             mark.LoopCoordinate = WrapLoopCoordinate(mark.LoopCoordinate + Speed * dt);
             (mark.Position, mark.SurfaceNormal) = PointOnLoop(mark.LoopCoordinate);
             mark.Wetness = MathF.Max(0f, mark.Wetness - dt * 0.085f);
+
+            // A wet pool can establish one stationary drip point at its current
+            // location. The flat pigment keeps riding the tread, but the emitter
+            // stays on the conveyor frame and releases falling droplets only.
+            if (!mark.IsRunoffLeader && mark.SurfaceNormal.Y < -0.55f &&
+                     mark.Wetness > 0.16f && mark.Amount > 0.035f &&
+                     _dripEmitters.Count < 10)
+            {
+                mark.FlowAccumulator += dt * (1.02f + mark.Amount * 3.1f);
+                if (mark.FlowAccumulator >= 1f && !HasNearbyDripEmitter(mark.Position.X))
+                {
+                    mark.FlowAccumulator -= 1f;
+                    var variation = NextPaintVariation();
+                    var transfer = MathF.Min(0.035f, mark.Amount * 0.10f);
+                    mark.Amount -= transfer;
+                    mark.IsRunoffLeader = true;
+                    _dripEmitters.Add(new ConveyorDripEmitter
+                    {
+                        LocalX = mark.Position.X,
+                        Lifetime = 2.2f + MathF.Min(1.8f, mark.Amount * 1.1f),
+                        Intensity = Math.Clamp(0.55f + mark.Amount * 0.55f, 0.55f, 1.8f),
+                        Accumulator = 0.72f,
+                        Variation = variation
+                    });
+                }
+            }
             if (_transientDrops.Count < 6 && mark.Wetness > 0.18f && mark.Amount > 0.38f &&
                 mark.SurfaceNormal.Y > 0.45f)
             {
@@ -106,6 +136,27 @@ public sealed class ConveyorBelt
             mark.Amount = MathF.Max(PersistentPigmentFloor, mark.Amount);
             _bloodStains[i] = mark;
         }
+        for (var i = _dripEmitters.Count - 1; i >= 0; i--)
+        {
+            var emitter = _dripEmitters[i];
+            emitter.Lifetime -= dt;
+            emitter.Accumulator += dt * (3.2f + emitter.Intensity * 2.1f);
+            if (emitter.Accumulator >= 1f && _transientDrops.Count < 6)
+            {
+                emitter.Accumulator -= 1f;
+                _transientDrops.Add(new TransientConveyorBloodDrop
+                {
+                    Position = new Vector2(
+                        Math.Clamp(emitter.LocalX + (NextPaint01() - 0.5f) * 5f, 2f, Width - 2f),
+                        Height + 2f),
+                    Velocity = new Vector2((NextPaint01() - 0.5f) * 9f, 24f + NextPaint01() * 28f),
+                    Lifetime = 0.58f + NextPaint01() * 0.55f,
+                    Variation = NextPaintVariation()
+                });
+            }
+            if (emitter.Lifetime <= 0f) _dripEmitters.RemoveAt(i);
+            else _dripEmitters[i] = emitter;
+        }
         for (var i = _transientDrops.Count - 1; i >= 0; i--)
         {
             var drop = _transientDrops[i];
@@ -117,10 +168,37 @@ public sealed class ConveyorBelt
         }
     }
 
-    public SurfaceContact ResolveParticle(ref Particle particle, float dt, bool applyBeltVelocity)
+    private bool HasNearbyDripEmitter(float localX)
+    {
+        foreach (var emitter in _dripEmitters)
+            if (MathF.Abs(emitter.LocalX - localX) < 18f) return true;
+        return false;
+    }
+
+    public SurfaceContact ResolveParticle(ref Particle particle, float dt, bool applyBeltVelocity,
+        bool forceTopContainment = false)
     {
         var min = Position;
         var max = Position + new Vector2(Width, Height);
+        if (forceTopContainment &&
+            particle.Position.X >= min.X - particle.Radius &&
+            particle.Position.X <= max.X + particle.Radius &&
+            particle.Position.Y > min.Y - particle.Radius)
+        {
+            var containmentVelocity = (particle.Position - particle.PreviousPosition) / dt;
+            var containmentImpact = MathF.Max(0f, containmentVelocity.Y);
+            particle.Position.Y = min.Y - particle.Radius;
+            particle.Contacting = true;
+            particle.ContactMemory = 6;
+            particle.Supported = true;
+            particle.SupportMemory = 10;
+            var correctedX = containmentVelocity.X;
+            if (applyBeltVelocity)
+                correctedX += (Speed - correctedX) * 0.20f;
+            particle.PreviousPosition = particle.Position - new Vector2(correctedX * 0.93f, 0f) * dt;
+            return new SurfaceContact(true,
+                new Vector2(particle.Position.X, min.Y), -Vector2.UnitY, containmentImpact, true);
+        }
         var closest = Vector2.Clamp(particle.Position, min, max);
         var delta = particle.Position - closest;
         var distanceSquared = delta.LengthSquared();
@@ -194,12 +272,17 @@ public sealed class ConveyorBelt
         for (var i = _bloodStains.Count - 1; i >= searchStart; i--)
         {
             var mark = _bloodStains[i];
-            var loopDistance = MathF.Abs(mark.LoopCoordinate - incoming.LoopCoordinate);
-            loopDistance = MathF.Min(loopDistance, LoopLength - loopDistance);
-            if (mark.IsDrip != incoming.IsDrip || loopDistance > 5f) continue;
-            mark.Amount = MathF.Min(2.4f, mark.Amount + incoming.Amount);
+            if (mark.IsDrip != incoming.IsDrip) continue;
+            var distance = mark.IsDrip
+                ? MathF.Abs(mark.Position.X - incoming.Position.X)
+                : LoopDistance(mark.LoopCoordinate, incoming.LoopCoordinate);
+            if (distance > 5f) continue;
+            mark.Amount = MathF.Min(mark.IsDrip ? 0.42f : 2.4f, mark.Amount + incoming.Amount);
+            if (mark.IsDrip)
+                mark.RunoffLoad = MathF.Min(1.25f, MathF.Max(mark.RunoffLoad, incoming.RunoffLoad));
             mark.Wetness = 1f;
-            mark.Radius = Math.Clamp(2.1f + MathF.Sqrt(mark.Amount) * 5.4f, 2f, 10.5f);
+            mark.Radius = Math.Clamp(2.1f + MathF.Sqrt(mark.Amount) * 5.4f,
+                2f, mark.IsDrip ? 5.8f : 10.5f);
             _bloodStains[i] = mark;
             return;
         }
@@ -211,23 +294,33 @@ public sealed class ConveyorBelt
             {
                 var mark = _bloodStains[i];
                 if (mark.IsDrip != incoming.IsDrip) continue;
-                var loopDistance = MathF.Abs(mark.LoopCoordinate - incoming.LoopCoordinate);
-                loopDistance = MathF.Min(loopDistance, LoopLength - loopDistance);
-                if (loopDistance >= closestDistance) continue;
-                closestDistance = loopDistance;
+                var distance = mark.IsDrip
+                    ? MathF.Abs(mark.Position.X - incoming.Position.X)
+                    : LoopDistance(mark.LoopCoordinate, incoming.LoopCoordinate);
+                if (distance >= closestDistance) continue;
+                closestDistance = distance;
                 closestIndex = i;
             }
             if (closestIndex >= 0)
             {
                 var mark = _bloodStains[closestIndex];
-                mark.Amount = MathF.Min(2.4f, mark.Amount + incoming.Amount);
+                mark.Amount = MathF.Min(mark.IsDrip ? 0.42f : 2.4f, mark.Amount + incoming.Amount);
+                if (mark.IsDrip)
+                    mark.RunoffLoad = MathF.Min(1.25f, MathF.Max(mark.RunoffLoad, incoming.RunoffLoad));
                 mark.Wetness = 1f;
-                mark.Radius = Math.Clamp(2.1f + MathF.Sqrt(mark.Amount) * 5.4f, 2f, 10.5f);
+                mark.Radius = Math.Clamp(2.1f + MathF.Sqrt(mark.Amount) * 5.4f,
+                    2f, mark.IsDrip ? 5.8f : 10.5f);
                 _bloodStains[closestIndex] = mark;
                 return;
             }
         }
         _bloodStains.Add(incoming);
+    }
+
+    private float LoopDistance(float a, float b)
+    {
+        var distance = MathF.Abs(a - b);
+        return MathF.Min(distance, LoopLength - distance);
     }
 
     private float LoopRadius => Math.Clamp(Height * 0.5f, 10f, 36f);
@@ -299,6 +392,15 @@ public struct TransientConveyorBloodDrop
     public Vector2 Position;
     public Vector2 Velocity;
     public float Lifetime;
+    public byte Variation;
+}
+
+public struct ConveyorDripEmitter
+{
+    public float LocalX;
+    public float Lifetime;
+    public float Intensity;
+    public float Accumulator;
     public byte Variation;
 }
 
